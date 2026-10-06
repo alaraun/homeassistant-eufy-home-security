@@ -1,0 +1,29 @@
+{
+  "domain": "eufy_home_security",
+  "name": "Anker eufy Home Security",
+  "after_dependencies": [
+    "ffmpeg"
+  ],
+  "codeowners": [
+    "@alaraun"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "http",
+    "lovelace",
+    "media_source",
+    "stream"
+  ],
+  "documentation": "https://github.com/alaraun/homeassistant-eufy-home-security",
+  "integration_type": "hub",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/alaraun/homeassistant-eufy-home-security/issues",
+  "loggers": [
+    "eufy_home_security",
+    "firebase_messaging"
+  ],
+  "requirements": [
+    "eufy-home-security==0.1.1"
+  ],
+  "version": "0.1.0"
+}

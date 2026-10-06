@@ -1,0 +1,62 @@
+name: Bug report
+description: Something in the integration or its camera card does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A bug that shows without Home Assistant (in the `eufy-security` command line) belongs to the
+        [library](https://github.com/alaraun/python-eufy-home-security/issues).
+        Never post passwords, full serials, e-mail addresses, IP addresses, device names you
+        consider private, or recordings.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+  - type: input
+    id: integration-version
+    attributes:
+      label: Integration version
+      description: HACS, or Settings → Devices & services → Anker eufy Home Security.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: ha-version
+    attributes:
+      label: Home Assistant version and installation type
+      placeholder: 2026.9.2, Home Assistant OS
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device model and firmware
+      description: From the device page, for example T8030 (HomeBase 3) and its firmware.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        Settings → Devices & services → Anker eufy Home Security → ⋮ → Download diagnostics,
+        then drag the file here. Serials are shortened and names removed; read it before
+        attaching.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Debug log excerpt
+      description: |
+        ⋮ → Enable debug logging, reproduce, then ⋮ → Disable debug logging to download the log.
+        Paste the lines around the problem. Passwords are logged as `***` and serials shortened;
+        remove anything else you consider private.
+      render: text

@@ -1,0 +1,128 @@
+{
+  "entity": {
+    "alarm_control_panel": {
+      "guard_mode": {
+        "default": "mdi:shield-home"
+      }
+    },
+    "binary_sensor": {
+      "person_detected": {
+        "default": "mdi:account-outline",
+        "state": {
+          "on": "mdi:account"
+        }
+      },
+      "pet_detected": {
+        "default": "mdi:paw-outline",
+        "state": {
+          "on": "mdi:paw"
+        }
+      },
+      "vehicle_detected": {
+        "default": "mdi:car-outline",
+        "state": {
+          "on": "mdi:car"
+        }
+      },
+      "solar_charging": {
+        "default": "mdi:solar-power-variant-outline",
+        "state": {
+          "on": "mdi:solar-power-variant"
+        }
+      },
+      "storage_problem": {
+        "default": "mdi:harddisk",
+        "state": {
+          "on": "mdi:harddisk-remove"
+        }
+      }
+    },
+    "button": {
+      "capture_live_image": {
+        "default": "mdi:camera"
+      },
+      "refresh_image": {
+        "default": "mdi:image-refresh"
+      },
+      "refresh_device_list": {
+        "default": "mdi:cloud-sync"
+      },
+      "capture_preset": {
+        "default": "mdi:camera-marker"
+      },
+      "refresh_presets": {
+        "default": "mdi:refresh"
+      },
+      "pan_left": {
+        "default": "mdi:pan-left"
+      },
+      "pan_right": {
+        "default": "mdi:pan-right"
+      },
+      "tilt_up": {
+        "default": "mdi:pan-up"
+      },
+      "tilt_down": {
+        "default": "mdi:pan-down"
+      },
+      "save_view": {
+        "default": "mdi:content-save-outline"
+      }
+    },
+    "image": {
+      "preset_image": {
+        "default": "mdi:image-marker"
+      }
+    },
+    "select": {
+      "default_preset": {
+        "default": "mdi:home-map-marker"
+      },
+      "live_preset": {
+        "default": "mdi:cctv"
+      }
+    },
+    "number": {
+      "live_zoom": {
+        "default": "mdi:magnify-plus-outline"
+      }
+    },
+    "sensor": {
+      "solar_intensity": {
+        "default": "mdi:white-balance-sunny"
+      },
+      "working_days": {
+        "default": "mdi:calendar-clock"
+      },
+      "detected_events": {
+        "default": "mdi:motion-sensor"
+      },
+      "recorded_events": {
+        "default": "mdi:record-rec"
+      }
+    }
+  },
+  "services": {
+    "capture_preset": {
+      "service": "mdi:camera-marker"
+    },
+    "pan_tilt": {
+      "service": "mdi:pan"
+    },
+    "goto_preset": {
+      "service": "mdi:crosshairs-gps"
+    },
+    "zoom": {
+      "service": "mdi:magnify"
+    },
+    "save_preset": {
+      "service": "mdi:content-save"
+    },
+    "delete_preset": {
+      "service": "mdi:delete"
+    },
+    "record": {
+      "service": "mdi:record-rec"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+# Bumps the SHA-pinned actions. No uv entry: uv.lock installs the library from a sibling
+# checkout, which Dependabot's `uv lock` cannot resolve.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }

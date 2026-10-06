@@ -1,0 +1,51 @@
+name: Release
+
+# release-please keeps a release PR open on main; merging it bumps CHANGELOG.md and
+# manifest.json, tags vX.Y.Z and creates the GitHub release HACS offers. A tag pushed by
+# hand (the first release, v0.1.0) gets its GitHub release from CHANGELOG.md. A tag that
+# release-please creates does not start this workflow: GITHUB_TOKEN events trigger no runs.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    if: github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # release commit, tag and GitHub release
+      issues: write # release PR labels
+      pull-requests: write # the release PR
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+
+  github-release:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The tag names the manifest version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(jq -r .version custom_components/eufy_home_security/manifest.json)
+          test "v$version" = "$TAG" || { echo "tag $TAG != manifest.json version $version"; exit 1; }
+      - name: Release notes from CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          awk -v v="## ${TAG#v}" '$0 == v {on = 1; next} /^## / && on {exit} on' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "CHANGELOG.md has no '## ${TAG#v}' section"; exit 1; }
+          gh release create "$TAG" --verify-tag --title "$TAG" --notes-file notes.md

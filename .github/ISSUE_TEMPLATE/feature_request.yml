@@ -1,0 +1,25 @@
+name: Feature request
+description: A new entity, option, action or card control, or support for another device.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For another device model, follow "Reporting a new device" in
+        [Supported devices](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/devices.md#reporting-a-new-device)
+        and attach what it lists.
+  - type: textarea
+    id: want
+    attributes:
+      label: What you would like to do
+      description: The use case first, then the entity, option or control you have in mind.
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device model and firmware, if it is device-specific
+  - type: textarea
+    id: app
+    attributes:
+      label: How the eufy app does it, if it does

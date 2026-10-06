@@ -1,0 +1,79 @@
+[project]
+# Not "eufy-home-security": that normalises to the library's name, and uv then refuses
+# the editable library source ("conflicting URLs").
+name = "homeassistant-eufy_home_security"
+# The release version lives in custom_components/eufy_home_security/manifest.json.
+version = "0.0.0"
+description = "Anker eufy Home Security custom integration for Home Assistant"
+requires-python = ">=3.14.2"
+
+[tool.uv]
+# A Home Assistant custom integration, never built or installed: uv manages the dev venv only.
+package = false
+# Home Assistant 2026.9.2 pins protobuf==6.32.0 (package_constraints.txt); the library
+# asks only protobuf>=5. Raise in lockstep with the HA pin; tests/test_library_boundary.py
+# checks it, since a plain `uv lock` keeps a locked version after the constraint is gone.
+constraint-dependencies = ["protobuf==6.32.0"]
+
+[dependency-groups]
+# pytest-homeassistant-custom-component pins one Home Assistant release (0.13.365: HA
+# 2026.9.2); bump it with hacs.json's floor. pytest, pytest-asyncio and cryptography come
+# with it; a second floor here would fight its pins.
+dev = [
+    "pytest-homeassistant-custom-component==0.13.365",
+    # The test harness installs no component requirements: HA's camera component imports
+    # turbojpeg and `stream` imports PyAV. Same pins as HA 2026.9.2's manifests; test-only,
+    # Home Assistant brings both itself.
+    "PyTurboJPEG==1.8.3",
+    "av==17.0.1",
+    # The library, at the manifest's pin. Editable from the sibling checkout via
+    # [tool.uv.sources]; CI installs the PyPI release instead (.github/workflows/ci.yml).
+    "eufy-home-security==0.1.1",
+    "ruff",
+    "mypy",
+]
+
+[tool.uv.sources]
+# Relative path, editable: the venv imports the sibling checkout's src/.
+eufy-home-security = { path = "../python-eufy_home_security", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [".git", "dist", "build", ".venv"]
+asyncio_mode = "auto"
+# Puts the repo root on sys.path, so `custom_components.eufy_home_security` imports.
+pythonpath = ["."]
+addopts = "-m 'not live'"
+markers = [
+    "live: requires the physical HomeBase on the local L2 (deselected by default)",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+# No per-file ignores: a stale ignore silently applies to whatever lands at its path later.
+
+[tool.mypy]
+python_version = "3.14"
+ignore_missing_imports = true
+follow_imports = "silent"
+explicit_package_bases = true
+warn_unused_ignores = true
+warn_unreachable = true
+
+# Strict mode for the integration package. `strict` cannot be set per module, so its
+# flags are listed; tests/test_toolchain.py checks them.
+[[tool.mypy.overrides]]
+module = ["custom_components.eufy_home_security", "custom_components.eufy_home_security.*"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_any_generics = true
+check_untyped_defs = true
+warn_return_any = true
+strict_equality = true
+disallow_untyped_calls = true
+disallow_untyped_decorators = true
+disallow_subclassing_any = true
+no_implicit_reexport = true
+warn_unused_ignores = true

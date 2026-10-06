@@ -1,0 +1,740 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add a eufy account",
+        "description": "Sign in with the eufy account that can see your HomeBase. Home Assistant keeps the signed-in session in a private store, so a restart does not sign in again.",
+        "data": {
+          "email": "Email address",
+          "password": "Password"
+        },
+        "data_description": {
+          "email": "The email address of the eufy account that owns the HomeBase, or of an account the home is shared with.",
+          "password": "Used for this sign-in. eufy limits how often an account may sign in, so Home Assistant reuses the stored session afterwards instead of signing in again."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Enter the eufy password again",
+        "description": "eufy rejected the saved password for {account}. Enter the current password, and Home Assistant signs in to eufy once to check it.",
+        "data": {
+          "password": "Password"
+        },
+        "data_description": {
+          "password": "The current password of the eufy account. Repeated failed sign-ins lock the account for 24 hours, so check it before submitting."
+        }
+      },
+      "reauth_take_over": {
+        "title": "Sign the other client out of eufy?",
+        "description": "Another app, device or integration is signed in with {account}. Continuing signs Home Assistant in to eufy and signs that other client out. Local control of your HomeBase keeps working meanwhile, so you can close this and try again later instead."
+      },
+      "reconfigure": {
+        "title": "Sign in to eufy again",
+        "description": "Home Assistant signs in to eufy once for {account} and keeps the new session. Use this after another app or device signed in with the account, after changing its password, or when the connection to eufy looks stale. Leave the password empty to sign in with the saved one. eufy limits how often an account may sign in, and repeated failed sign-ins lock it for 24 hours, so submit deliberately.",
+        "data": {
+          "password": "Password"
+        },
+        "data_description": {
+          "password": "Optional. Leave empty to sign in with the saved password. Enter the account's current password to check it with eufy and save it in place of the old one."
+        }
+      }
+    },
+    "error": {
+      "invalid_email": "That is not an email address. Check it and try again; nothing was sent to eufy.",
+      "login_challenge": "eufy wants a verification for this sign-in. Sign in once in the eufy app on your phone, then try again here.",
+      "invalid_auth": "eufy rejected the email or password; check both. Repeated failed sign-ins lock the account for 24 hours.",
+      "login_limited": "eufy is temporarily refusing sign-ins for this account. Wait before trying again: each attempt restarts the wait, and repeated attempts can lock the account for 24 hours.",
+      "session_replaced": "Another app, device or integration signed in with this account and eufy ended the earlier session. Close that other client or wait, then try again.",
+      "cannot_connect": "Home Assistant could not reach eufy. Check the internet connection and try again."
+    },
+    "abort": {
+      "already_configured": "This eufy account is already set up in Home Assistant.",
+      "reauth_successful": "eufy accepted the password. Home Assistant saved it and reloaded the account.",
+      "reconfigure_successful": "eufy accepted the sign-in. Home Assistant kept the session and reloaded the account."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Detections, alarm, cameras and sessions",
+        "description": "The HomeBase announces a detection but never its end, and normally ends an alarm itself; the first two settings below cover both.",
+        "data": {
+          "detection_hold": "Detection hold (seconds)",
+          "alarm_timeout": "Alarm safety-net timeout (minutes)",
+          "camera_image": "Event image",
+          "live_snapshot": "Live snapshot for cameras without a detection image",
+          "session_probe": "Check the eufy session every 6 hours",
+          "cloud_push": "Cloud push for cameras without a HomeBase",
+          "event_history_days": "Event history (days)",
+          "event_videos": "Save event videos",
+          "record_length": "Recording length (seconds)",
+          "station_sessions": "Sessions per HomeBase"
+        },
+        "data_description": {
+          "detection_hold": "From 5 to 300 seconds, 10 by default. The HomeBase announces a detection but never its end, so a detection sensor turns itself off this long after the detection's own time. A detection that reaches Home Assistant after its hold has run out still fires its event but leaves the sensor off.",
+          "alarm_timeout": "From 1 to 60 minutes, 10 by default. A safety net only: the HomeBase normally ends an alarm itself and says so. If that never arrives, the alarm panel stops showing Triggered or Pending after this long, shows the guard mode the HomeBase last reported, and reads it again.",
+          "camera_image": "Chooses the image a camera shows for a detection. Thumbnail, then HD is the default: after a detection a camera first shows the event's 640×360 thumbnail, in about {thumbnail_seconds} s, then the first frame of the event's recording at the recording's resolution, in about {hd_seconds} s plus decoding. Thumbnail only shows just the thumbnail and never reads the recording. HD only shows just the recording's frame with nothing lower in between, so a detection without a stored recording shows no image. Each camera's Refresh event image button follows this choice for the newest recording: the thumbnail with Thumbnail only, otherwise the recording's frame. None of the three wakes a camera, and none changes Capture live image, which always wakes the camera for a live picture. Saving a change reloads the integration, and every camera then shows no image until its next detection or button press.",
+          "live_snapshot": "Off by default. A camera shows the still of its own latest detection. With this on, a camera that has no detection image yet shows one live picture instead, taken at most once every 5 minutes per camera. Taking it wakes a battery camera, which costs battery.",
+          "session_probe": "On by default. A minute after the integration starts, and then every 6 hours, Home Assistant asks eufy once for the account's device list with the saved session. This is not a sign-in. If another app or device has signed in with the account and ended Home Assistant's session, the \"eufy ended Home Assistant's session\" repair shows within that time instead of at the next command that needs eufy. With this off, a kick-out is noticed only when a command next needs eufy or at the next restart.",
+          "cloud_push": "Off by default. Needed for a camera without a HomeBase, such as the standalone battery camera T8170 (Battery SoloCam), to report its detections: such a camera sleeps between commands and sends them only through eufy's cloud. With this on, Home Assistant listens for eufy's push messages, like the eufy app on a phone does; the app keeps working. Detections from a HomeBase still arrive over your local network, and one detection that arrives both ways fires once. Push messages pass through eufy's and Google's servers, and arrive late or not at all while that connection is down. Saving a change reloads the integration.",
+          "event_history_days": "From 0 to 365 days, 7 by default. Every image a camera or preset shows, and every saved video, is also saved as a file under {history_path}, in a folder per camera, named with the date, time, camera name and what it shows (for example 2026-09-29_08-35-59_Front_door_person.jpg). Browse them under Media > My media. Days older than this are deleted; 0 saves nothing. In Home Assistant Container the media folder is only kept across container updates when a host directory is mounted at /media.",
+          "event_videos": "Off by default. Also copies each recording a HomeBase makes for one of its cameras from the moment this is switched on into the event history as an MP4, after the recording has finished, named like the event's image so the two sit side by side. Older recordings stay on the HomeBase; play or save one from the camera card's Station list. The HomeBase plays it off its own storage: no camera is woken. Needs Event history above 0 days; the videos are kept and deleted with the images, and take far more space than them. Not for a camera without a HomeBase, which keeps no recordings there.",
+          "record_length": "From 5 to 300 seconds, 30 by default. How long a clip of the Record action is when the action names no duration. Recording wakes a battery camera for that long. A change applies at once, without a reload.",
+          "station_sessions": "From {min_sessions} to {max_sessions}, {default_sessions} by default. How many connections Home Assistant holds to each HomeBase. One carries detections and the first live view, one fetches event images, and each live view beyond the first uses one extra session, so the default allows {default_live} cameras of one HomeBase to be watched at once. A HomeBase holds about {max_sessions} sessions in total across all apps and Home Assistant instances; past that it disconnects one of them, the eufy app included. Two Home Assistant instances on one HomeBase must share: give a test instance a small value, such as 2 (one live view at a time). A live view past the limit waits briefly for another live view of that HomeBase to close, and is refused with no picture if none does. A change applies at once, without a reload, and ends no running live view."
+        }
+      }
+    }
+  },
+  "selector": {
+    "camera_image": {
+      "options": {
+        "hd": "Thumbnail, then HD",
+        "thumbnail": "Thumbnail only",
+        "hd_only": "HD only"
+      }
+    },
+    "pan_tilt_direction": {
+      "options": {
+        "left": "Left",
+        "right": "Right",
+        "up": "Up",
+        "down": "Down"
+      }
+    },
+    "zoom_direction": {
+      "options": {
+        "in": "In",
+        "out": "Out"
+      }
+    }
+  },
+  "issues": {
+    "session_replaced": {
+      "title": "eufy ended Home Assistant's session for {account}",
+      "description": "Another app, device or integration signed in with the eufy account {account}, and eufy ended Home Assistant's session. Local control of your HomeBase keeps working from the cached account. Fixing this signs Home Assistant in to eufy again, which signs the other client out. To avoid this for good, give Home Assistant its own eufy account, shared from the owner's account with admin rights.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Sign Home Assistant in to eufy again",
+            "description": "Home Assistant will sign in to eufy once with the saved password for {account}. This signs out the other app, device or integration using the account. eufy limits how often an account may sign in, so do this only when the other client is no longer needed."
+          }
+        },
+        "abort": {
+          "login_failed": "Signing in to eufy failed, so nothing changed and this repair stays open. Wait a while before trying again: repeated failed sign-ins lock the account for 24 hours. You can also sign in again at any time with Reconfigure, on the account's menu under Settings > Devices & services.",
+          "entry_not_loaded": "The eufy account is not loaded in Home Assistant right now. Use Reconfigure on the account's menu under Settings > Devices & services, which signs in again whether or not the account is loaded, or wait until it has finished loading and open this repair again."
+        }
+      }
+    },
+    "login_limited": {
+      "title": "eufy is refusing sign-ins for {account}",
+      "description": "eufy is refusing sign-ins for the eufy account {account}. The next sign-in is allowed in about {minutes} minutes. Local control of your HomeBase keeps working from the cached account. Do not sign in sooner, in Home Assistant or elsewhere: each early attempt can restart the wait. This notice clears after the next successful sign-in."
+    },
+    "login_limited_no_wait": {
+      "title": "eufy is refusing sign-ins for {account}",
+      "description": "eufy is temporarily refusing sign-ins for the eufy account {account}. Local control of your HomeBase keeps working from the cached account. Wait before signing in again, in Home Assistant or elsewhere: each early attempt can restart the wait. This notice clears after the next successful sign-in."
+    },
+    "key_rejected": {
+      "title": "{station} rejects its key",
+      "description": "The HomeBase {station} rejects its key, even after Home Assistant fetched the key from eufy again once. Its entities are unavailable. Home Assistant does not fetch the key again by itself. Fixing this allows one more key fetch, for example after the HomeBase was reset or moved to another account.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Allow one more key fetch for {station}",
+            "description": "Home Assistant will reload the eufy account and may fetch the key for {station} from eufy once more. If the HomeBase still rejects it, this repair comes back."
+          }
+        },
+        "abort": {
+          "entry_not_loaded": "The eufy account or this HomeBase is not loaded in Home Assistant right now. Wait until it has finished loading, then open this repair again.",
+          "reset_failed": "Home Assistant could not allow another key fetch, so nothing changed and this repair stays open. Try again later."
+        }
+      }
+    },
+    "credentials_refreshed": {
+      "title": "Fetched the key for {station} again",
+      "description": "The HomeBase {station} rejected its old key, so Home Assistant fetched its key or owner id from eufy again. No sign-in was needed. You can dismiss this notice."
+    },
+    "credentials_refreshed_login": {
+      "title": "Fetched the key for {station} again, with a sign-in",
+      "description": "The HomeBase {station} rejected its old key, so Home Assistant fetched its key or owner id from eufy again. This cost one eufy sign-in, and eufy limits how often an account may sign in. You can dismiss this notice."
+    },
+    "account_id_mismatch": {
+      "title": "{station} stamps its events with another eufy account",
+      "description": "The HomeBase {station} stamps its records with an owner account other than the one Home Assistant sends with its commands, so it may silently ignore arming, disarming and setting changes. Home Assistant has not changed anything and never adopts another account on its own. Check that this eufy account owns the HomeBase or is a member it serves, then reload the integration; the check runs again after a reload."
+    },
+    "media_not_persistent": {
+      "title": "Camera event history is not kept across container updates",
+      "description": "Camera images are saved to {path}, but nothing is mounted there, so they are lost when the Home Assistant container is recreated or updated. Mount a directory of the host at /media, for example `- /srv/homeassistant/media:/media` under `volumes:` in docker-compose.yaml, and recreate the container. To stop saving images instead, set Event history to 0 in the integration's options."
+    },
+    "push_not_running": {
+      "title": "eufy cloud push is not running for {account}",
+      "description": "Cloud push is switched on for the eufy account {account}, but Home Assistant is not receiving eufy's push messages right now. Until it is, detections from cameras without a HomeBase, and changes made in the eufy app, arrive late or not at all. Local control and detections from a HomeBase keep working. Home Assistant keeps retrying by itself, and this notice clears when push runs again. If it stays, check that Home Assistant can reach the internet, and look at the log for the reason. To stop using cloud push, switch it off in the integration's options."
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "eufy rejected the saved password for this account, or none is saved. Re-enter it in the reauthentication dialog; Home Assistant will not try the old password again."
+    },
+    "guard_mode_not_applied": {
+      "message": "The HomeBase did not apply {target}. The panel shows the mode the HomeBase last reported. If this keeps happening, the eufy account may lack admin rights to this HomeBase."
+    },
+    "setting_not_applied": {
+      "message": "The HomeBase did not apply the change to {target}. The entity shows the value the HomeBase last reported; check that the device is online and try again."
+    },
+    "setting_device_unavailable": {
+      "message": "The device {target} belongs to cannot be addressed, so nothing was sent and the entity still shows the value the HomeBase last reported. eufy's device list does not pair it to this HomeBase, or names no slot for it. If the device was removed or re-paired, reload the integration; otherwise check that it is still paired in the eufy app."
+    },
+    "setting_mode_table_refused": {
+      "message": "The HomeBase's table for this guard mode cannot be written back unchanged, so nothing was sent and {target} still shows the value the HomeBase last reported. A paired device does not report its settings for the mode, a device is of a kind this integration cannot keep unchanged, or devices hold different delays for the mode. Check the mode's settings in the eufy app."
+    },
+    "setting_unconfirmed": {
+      "message": "The device did not confirm the change to {target} in time. It may still apply: the entity shows unknown until the next update shows the value in force."
+    },
+    "setting_value_invalid": {
+      "message": "{target} does not accept this value, so nothing was sent. Choose a value the setting allows: a number must sit on one of its steps from the minimum, as the slider offers."
+    },
+    "station_unreachable": {
+      "message": "The HomeBase did not answer, so {target} was not set. Home Assistant keeps reconnecting; check that the HomeBase is powered on and on this network."
+    },
+    "on_demand_unreachable": {
+      "message": "The camera did not answer, so {target} was not set. A battery camera sleeps between commands and takes about ten seconds to wake; check that it is charged and within Wi-Fi range, then try again."
+    },
+    "session_replaced_see_repairs": {
+      "message": "Another app or device signed in with the eufy account and ended Home Assistant's session, so {target} was not set. Waking a battery camera needs a key from eufy, which refuses the ended session. Open the account's repair under Settings > System > Repairs to sign in again, or use Reconfigure on the account entry; Home Assistant does not sign in again by itself."
+    },
+    "station_key_rejected": {
+      "message": "The HomeBase rejected its key, so {target} was not set. Open this HomeBase's repair under Settings > System > Repairs to let Home Assistant fetch its key once more."
+    },
+    "cloud_unavailable": {
+      "message": "Changing {target} needed the HomeBase's key fetched from eufy again, and eufy could not be reached or is temporarily refusing this account, so it was not set. Check Settings > System > Repairs for this account and try again later; Home Assistant does not sign in again by itself."
+    },
+    "cache_unavailable": {
+      "message": "The eufy account's cached device list is not available, and eufy cannot be reached right now. Home Assistant retries setting it up."
+    },
+    "device_list_refresh_failed": {
+      "message": "The device list could not be fetched from eufy, so nothing changed. Check Settings > System > Repairs for this account and try again later."
+    },
+    "capture_in_progress": {
+      "message": "The camera is busy taking another image, so nothing was sent. A capture takes about ten seconds; try again after it."
+    },
+    "preset_not_set": {
+      "message": "Preset {index} is not set on this camera, so nothing was sent. Set it in the eufy app, then press Refresh presets."
+    },
+    "presets_unsupported": {
+      "message": "This camera has no pan/tilt presets, so nothing was sent."
+    },
+    "default_preset_needs_confirmation": {
+      "message": "The camera asks to confirm before making this preset its default, so nothing was changed. Choose the default preset in the eufy app, then press Refresh presets."
+    },
+    "pan_tilt_not_applied": {
+      "message": "The camera did not take the pan/tilt step, so it did not move. It may still be turning from the last command; wait a few seconds and try again."
+    },
+    "pan_tilt_unsupported": {
+      "message": "This camera cannot pan, tilt or zoom, so nothing was sent."
+    },
+    "ptz_command_not_handled": {
+      "message": "The HomeBase refused this camera command as one it does not handle, so the camera did not change. Trying again will not help."
+    },
+    "zoom_needs_single_view": {
+      "message": "The camera zooms only in single view, so nothing was sent. Switch it to single view in the eufy app, then try again."
+    },
+    "presets_full": {
+      "message": "All {slots} preset slots are in use; delete a preset first. Nothing was saved."
+    },
+    "preset_not_saved": {
+      "message": "The camera did not save the view as a preset. It may still be turning from the last command; wait a few seconds and try again."
+    },
+    "preset_saved_not_default": {
+      "message": "The view was saved as a preset, but the camera did not make it its default. Choose it in Default preset to try again."
+    },
+    "preset_not_deleted": {
+      "message": "The camera still holds preset {index}, so it was not deleted. Wait a few seconds and try again."
+    },
+    "preset_slot_unknown": {
+      "message": "This camera has no preset slot {index}, so nothing was sent."
+    },
+    "recording_in_progress": {
+      "message": "This camera is already recording a clip, so no second one was started. Wait for the running clip to finish, then try again."
+    },
+    "recording_needs_history": {
+      "message": "Clips are saved in the event history, which is off. Set Event history to 1 day or more in the integration's options, then try again."
+    },
+    "recording_unsupported": {
+      "message": "This camera has no live stream in Home Assistant, so it cannot record a clip."
+    },
+    "live_stream_limit": {
+      "message": "The HomeBase has no session free for another live stream: the sessions per HomeBase option allows {limit} at once and none ended in time. Close another live view of this HomeBase, or raise the option, then try again."
+    },
+    "camera_unavailable": {
+      "message": "The camera sent no picture, so no clip was saved. A battery camera sleeps between uses and takes a few seconds to wake; check that it is charged and within Wi-Fi range, then try again."
+    },
+    "recording_failed": {
+      "message": "The camera sent the clip, but Home Assistant could not save it to the event history. Check that the media folder is writable and has free space, and that Home Assistant's ffmpeg works; the log has the details."
+    }
+  },
+  "entity": {
+    "number": {
+      "alarm_delay_home": {
+        "name": "Entry delay (Home)"
+      },
+      "alarm_delay_away": {
+        "name": "Entry delay (Away)"
+      },
+      "alarm_delay_custom_1": {
+        "name": "Entry delay (Custom 1)"
+      },
+      "alarm_delay_custom_2": {
+        "name": "Entry delay (Custom 2)"
+      },
+      "alarm_delay_custom_3": {
+        "name": "Entry delay (Custom 3)"
+      },
+      "leaving_delay_home": {
+        "name": "Leaving delay (Home)"
+      },
+      "leaving_delay_away": {
+        "name": "Leaving delay (Away)"
+      },
+      "leaving_delay_custom_1": {
+        "name": "Leaving delay (Custom 1)"
+      },
+      "leaving_delay_custom_2": {
+        "name": "Leaving delay (Custom 2)"
+      },
+      "leaving_delay_custom_3": {
+        "name": "Leaving delay (Custom 3)"
+      },
+      "live_zoom": {
+        "name": "Live view zoom"
+      }
+    },
+    "sensor": {
+      "firmware": {
+        "name": "Firmware"
+      },
+      "emmc_used": {
+        "name": "eMMC used"
+      },
+      "disk_used": {
+        "name": "Disk used"
+      },
+      "disk_free": {
+        "name": "Disk free"
+      },
+      "disk_size": {
+        "name": "Disk size"
+      },
+      "disk_used_percent": {
+        "name": "Disk used percentage"
+      },
+      "disk_temperature": {
+        "name": "Disk temperature"
+      },
+      "emmc_wear": {
+        "name": "eMMC wear"
+      },
+      "emmc_used_space": {
+        "name": "eMMC used space"
+      },
+      "emmc_free": {
+        "name": "eMMC free"
+      },
+      "emmc_size": {
+        "name": "eMMC size"
+      },
+      "model": {
+        "name": "Model"
+      },
+      "solar_intensity": {
+        "name": "Solar intensity"
+      },
+      "battery_temperature": {
+        "name": "Battery temperature"
+      },
+      "working_days": {
+        "name": "Working days"
+      },
+      "detected_events": {
+        "name": "Detected events"
+      },
+      "recorded_events": {
+        "name": "Recorded events"
+      }
+    },
+    "select": {
+      "default_preset": {
+        "name": "Default preset"
+      },
+      "live_preset": {
+        "name": "Live view preset",
+        "state": {
+          "camera_default": "Camera default"
+        }
+      }
+    },
+    "switch": {
+      "camera_action_away_record": {
+        "name": "Away: record"
+      },
+      "camera_action_away_camera_siren": {
+        "name": "Away: camera siren"
+      },
+      "camera_action_away_station_alarm": {
+        "name": "Away: HomeBase alarm"
+      },
+      "camera_action_away_notification": {
+        "name": "Away: notification"
+      },
+      "camera_action_away_report_monitor_center": {
+        "name": "Away: report to monitoring center"
+      },
+      "camera_action_away_light_alarm": {
+        "name": "Away: light alarm"
+      },
+      "camera_action_home_record": {
+        "name": "Home: record"
+      },
+      "camera_action_home_camera_siren": {
+        "name": "Home: camera siren"
+      },
+      "camera_action_home_station_alarm": {
+        "name": "Home: HomeBase alarm"
+      },
+      "camera_action_home_notification": {
+        "name": "Home: notification"
+      },
+      "camera_action_home_report_monitor_center": {
+        "name": "Home: report to monitoring center"
+      },
+      "camera_action_home_light_alarm": {
+        "name": "Home: light alarm"
+      },
+      "camera_action_custom_1_record": {
+        "name": "Custom 1: record"
+      },
+      "camera_action_custom_1_camera_siren": {
+        "name": "Custom 1: camera siren"
+      },
+      "camera_action_custom_1_station_alarm": {
+        "name": "Custom 1: HomeBase alarm"
+      },
+      "camera_action_custom_1_notification": {
+        "name": "Custom 1: notification"
+      },
+      "camera_action_custom_1_report_monitor_center": {
+        "name": "Custom 1: report to monitoring center"
+      },
+      "camera_action_custom_1_light_alarm": {
+        "name": "Custom 1: light alarm"
+      },
+      "camera_action_custom_2_record": {
+        "name": "Custom 2: record"
+      },
+      "camera_action_custom_2_camera_siren": {
+        "name": "Custom 2: camera siren"
+      },
+      "camera_action_custom_2_station_alarm": {
+        "name": "Custom 2: HomeBase alarm"
+      },
+      "camera_action_custom_2_notification": {
+        "name": "Custom 2: notification"
+      },
+      "camera_action_custom_2_report_monitor_center": {
+        "name": "Custom 2: report to monitoring center"
+      },
+      "camera_action_custom_2_light_alarm": {
+        "name": "Custom 2: light alarm"
+      },
+      "camera_action_custom_3_record": {
+        "name": "Custom 3: record"
+      },
+      "camera_action_custom_3_camera_siren": {
+        "name": "Custom 3: camera siren"
+      },
+      "camera_action_custom_3_station_alarm": {
+        "name": "Custom 3: HomeBase alarm"
+      },
+      "camera_action_custom_3_notification": {
+        "name": "Custom 3: notification"
+      },
+      "camera_action_custom_3_report_monitor_center": {
+        "name": "Custom 3: report to monitoring center"
+      },
+      "camera_action_custom_3_light_alarm": {
+        "name": "Custom 3: light alarm"
+      },
+      "sensor_action_away_station_alarm": {
+        "name": "Away: HomeBase alarm"
+      },
+      "sensor_action_away_notification": {
+        "name": "Away: notification"
+      },
+      "sensor_action_away_motion_sensor_respond": {
+        "name": "Away: sensor response"
+      },
+      "sensor_action_away_report_monitor_center": {
+        "name": "Away: report to monitoring center"
+      },
+      "sensor_action_home_station_alarm": {
+        "name": "Home: HomeBase alarm"
+      },
+      "sensor_action_home_notification": {
+        "name": "Home: notification"
+      },
+      "sensor_action_home_motion_sensor_respond": {
+        "name": "Home: sensor response"
+      },
+      "sensor_action_home_report_monitor_center": {
+        "name": "Home: report to monitoring center"
+      },
+      "sensor_action_custom_1_station_alarm": {
+        "name": "Custom 1: HomeBase alarm"
+      },
+      "sensor_action_custom_1_notification": {
+        "name": "Custom 1: notification"
+      },
+      "sensor_action_custom_1_motion_sensor_respond": {
+        "name": "Custom 1: sensor response"
+      },
+      "sensor_action_custom_1_report_monitor_center": {
+        "name": "Custom 1: report to monitoring center"
+      },
+      "sensor_action_custom_2_station_alarm": {
+        "name": "Custom 2: HomeBase alarm"
+      },
+      "sensor_action_custom_2_notification": {
+        "name": "Custom 2: notification"
+      },
+      "sensor_action_custom_2_motion_sensor_respond": {
+        "name": "Custom 2: sensor response"
+      },
+      "sensor_action_custom_2_report_monitor_center": {
+        "name": "Custom 2: report to monitoring center"
+      },
+      "sensor_action_custom_3_station_alarm": {
+        "name": "Custom 3: HomeBase alarm"
+      },
+      "sensor_action_custom_3_notification": {
+        "name": "Custom 3: notification"
+      },
+      "sensor_action_custom_3_motion_sensor_respond": {
+        "name": "Custom 3: sensor response"
+      },
+      "sensor_action_custom_3_report_monitor_center": {
+        "name": "Custom 3: report to monitoring center"
+      }
+    },
+    "binary_sensor": {
+      "motion_detected": {
+        "name": "Motion"
+      },
+      "person_detected": {
+        "name": "Person",
+        "state": {
+          "off": "Clear",
+          "on": "Detected"
+        }
+      },
+      "pet_detected": {
+        "name": "Pet",
+        "state": {
+          "off": "Clear",
+          "on": "Detected"
+        }
+      },
+      "vehicle_detected": {
+        "name": "Vehicle",
+        "state": {
+          "off": "Clear",
+          "on": "Detected"
+        }
+      },
+      "disk_problem": {
+        "name": "Disk problem"
+      },
+      "disk_formatting": {
+        "name": "Disk formatting"
+      },
+      "emmc_problem": {
+        "name": "eMMC problem"
+      },
+      "solar_charging": {
+        "name": "Solar charging"
+      },
+      "battery_low": {
+        "name": "Battery low"
+      },
+      "storage_problem": {
+        "name": "Storage problem"
+      }
+    },
+    "button": {
+      "capture_live_image": {
+        "name": "Capture live image"
+      },
+      "refresh_image": {
+        "name": "Refresh event image"
+      },
+      "refresh_device_list": {
+        "name": "Refresh device list"
+      },
+      "capture_preset": {
+        "name": "Capture preset {index}"
+      },
+      "refresh_presets": {
+        "name": "Refresh presets"
+      },
+      "pan_left": {
+        "name": "Pan left"
+      },
+      "pan_right": {
+        "name": "Pan right"
+      },
+      "tilt_up": {
+        "name": "Tilt up"
+      },
+      "tilt_down": {
+        "name": "Tilt down"
+      },
+      "save_view": {
+        "name": "Save current view"
+      }
+    },
+    "update": {
+      "firmware_update": {
+        "name": "Firmware update"
+      }
+    },
+    "event": {
+      "detection": {
+        "name": "Detection",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "motion": "Motion",
+              "person": "Person",
+              "identified_person": "Known person",
+              "stranger": "Stranger",
+              "pet": "Pet",
+              "vehicle": "Vehicle"
+            }
+          }
+        }
+      },
+      "alarm": {
+        "name": "Alarm",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "alarm_triggered": "Alarm triggered",
+              "alarm_stopped": "Alarm stopped",
+              "alarm_delay": "Alarm delay started"
+            }
+          }
+        }
+      },
+      "arming": {
+        "name": "Arming",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "armed_away": "Armed away",
+              "armed_home": "Armed home",
+              "disarmed": "Disarmed",
+              "armed_custom": "Armed custom mode"
+            }
+          }
+        }
+      },
+      "doorbell": {
+        "name": "Doorbell",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "ring": "Ring"
+            }
+          }
+        }
+      }
+    },
+    "image": {
+      "preset_image": {
+        "name": "Preset {index} image"
+      }
+    }
+  },
+  "services": {
+    "capture_preset": {
+      "name": "Capture preset image",
+      "description": "Turns a pan/tilt camera to one of its preset positions and takes a live image of that view, shown by that preset's image entity. Wakes a battery camera and leaves it at the preset.",
+      "fields": {
+        "preset": {
+          "name": "Preset",
+          "description": "The preset slot's index as the camera reports it; the first slot is 0."
+        }
+      }
+    },
+    "pan_tilt": {
+      "name": "Pan or tilt",
+      "description": "Moves a pan/tilt camera one fixed step, as its Pan and Tilt buttons do. Wakes a battery camera; it returns to its default preset once idle.",
+      "fields": {
+        "direction": {
+          "name": "Direction",
+          "description": "The way the picture moves."
+        }
+      }
+    },
+    "goto_preset": {
+      "name": "Go to preset",
+      "description": "Turns a pan/tilt camera to one of its preset positions once, without taking an image. Wakes a battery camera; it returns to its default preset once idle. The live view preset is not changed.",
+      "fields": {
+        "preset": {
+          "name": "Preset",
+          "description": "The preset slot's index as the camera reports it; the first slot is 0."
+        }
+      }
+    },
+    "zoom": {
+      "name": "Zoom",
+      "description": "Zooms the live view one step in or out, as the Live view zoom slider does. With a live view open the camera zooms at once; otherwise the next live view opens at that zoom.",
+      "fields": {
+        "direction": {
+          "name": "Direction",
+          "description": "In or out."
+        }
+      }
+    },
+    "save_preset": {
+      "name": "Save preset",
+      "description": "Stores what a pan/tilt camera shows now as a preset: in its lowest free slot, or over the given one. Use it while the live view runs, or within a few seconds of the last pan or tilt: the camera returns to its default view a few seconds after the last move. Returns the slot index when a response is asked for.",
+      "fields": {
+        "preset": {
+          "name": "Preset",
+          "description": "Overwrite this slot instead of taking the lowest free one; the first slot is 0."
+        },
+        "make_default": {
+          "name": "Make default",
+          "description": "Also make the saved preset the one the camera returns to when idle; the camera turns there."
+        }
+      }
+    },
+    "delete_preset": {
+      "name": "Delete preset",
+      "description": "Clears one preset slot of a pan/tilt camera. Its entities go unavailable; deleting the default preset leaves the camera without one until another is chosen.",
+      "fields": {
+        "preset": {
+          "name": "Preset",
+          "description": "The preset slot's index as the camera reports it; the first slot is 0."
+        }
+      }
+    },
+    "record": {
+      "name": "Record clip",
+      "description": "Records a clip of the camera's live stream and saves it as an MP4 in the event history, next to the camera's images. Wakes a battery camera for the clip's length. Shares a running live view instead of opening a second stream. Returns the saved file's media id, its length and whether it is complete when a response is asked for.",
+      "fields": {
+        "duration": {
+          "name": "Duration",
+          "description": "Seconds to record, from 5 to 300. Without it, the Recording length option is used."
+        }
+      }
+    }
+  }
+}

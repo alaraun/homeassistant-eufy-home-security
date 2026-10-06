@@ -1,0 +1,21 @@
+# private notes, planning and local tooling: not part of this repository
+/.work
+/.claude/
+/CLAUDE.md
+.planning/
+.gsd/
+_work/
+# Python tooling
+.venv
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+# credentials, session keys and captures
+*.credentials
+.eufy.credentials
+sesskey.bin
+cipher40*.json
+*.pcap
+*.pkl

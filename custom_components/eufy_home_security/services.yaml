@@ -1,0 +1,119 @@
+capture_preset:
+  target:
+    entity:
+      integration: eufy_home_security
+      domain: camera
+  fields:
+    preset:
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 0
+          max: 9
+          step: 1
+          mode: box
+
+pan_tilt:
+  target:
+    entity:
+      integration: eufy_home_security
+      domain: camera
+  fields:
+    direction:
+      required: true
+      example: left
+      selector:
+        select:
+          translation_key: pan_tilt_direction
+          options:
+            - left
+            - right
+            - up
+            - down
+
+goto_preset:
+  target:
+    entity:
+      integration: eufy_home_security
+      domain: camera
+  fields:
+    preset:
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 0
+          max: 9
+          step: 1
+          mode: box
+
+zoom:
+  target:
+    entity:
+      integration: eufy_home_security
+      domain: camera
+  fields:
+    direction:
+      required: true
+      example: in
+      selector:
+        select:
+          translation_key: zoom_direction
+          options:
+            - in
+            - out
+
+save_preset:
+  target:
+    entity:
+      integration: eufy_home_security
+      domain: camera
+  fields:
+    preset:
+      required: false
+      example: 3
+      selector:
+        number:
+          min: 0
+          max: 9
+          step: 1
+          mode: box
+    make_default:
+      required: false
+      default: false
+      selector:
+        boolean:
+
+delete_preset:
+  target:
+    entity:
+      integration: eufy_home_security
+      domain: camera
+  fields:
+    preset:
+      required: true
+      example: 3
+      selector:
+        number:
+          min: 0
+          max: 9
+          step: 1
+          mode: box
+
+record:
+  target:
+    entity:
+      integration: eufy_home_security
+      domain: camera
+  fields:
+    duration:
+      required: false
+      example: 30
+      selector:
+        number:
+          min: 5
+          max: 300
+          step: 1
+          unit_of_measurement: s
+          mode: box

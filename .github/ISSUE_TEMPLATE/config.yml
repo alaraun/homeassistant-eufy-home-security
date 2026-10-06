@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Library bug (eufy-home-security)
+    url: https://github.com/alaraun/python-eufy-home-security/issues
+    about: A protocol, device or cloud problem that also shows in the library's eufy-security command line.

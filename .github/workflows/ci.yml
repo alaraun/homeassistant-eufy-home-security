@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.14"
+          activate-environment: true
+      # uv.lock installs the library editable from a sibling checkout, which CI has not:
+      # every other package comes from the lock (hash-checked), the library from PyPI at
+      # the manifest's exact pin.
+      - name: Install the locked toolchain and the library from PyPI
+        id: install
+        run: |
+          uv export --frozen --all-groups --no-emit-package eufy-home-security -o "$RUNNER_TEMP/requirements.txt"
+          uv pip sync "$RUNNER_TEMP/requirements.txt"
+          uv pip install --no-deps "$(jq -r '.requirements[0]' custom_components/eufy_home_security/manifest.json)"
+          uv pip check
+      - name: ruff check
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: ruff check
+      - name: ruff format
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: ruff format --check
+      - name: mypy
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: mypy custom_components tests
+      - name: pytest
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pytest -q
