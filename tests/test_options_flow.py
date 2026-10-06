@@ -73,14 +73,6 @@ def _registered(hass: HomeAssistant, domain: str, serial: str, key: str) -> str 
     return er.async_get(hass).async_get_entity_id(domain, DOMAIN, entity_unique_id(serial, key))
 
 
-def _entity_ids(hass: HomeAssistant, entry: MockConfigEntry) -> set[str]:
-    """Every entity id this entry has in the registry, whether it has a state or not."""
-    return {
-        entity.entity_id
-        for entity in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
-    }
-
-
 async def test_the_options_form_offers_its_ten_options_with_their_defaults(
     hass: HomeAssistant,
     fake_station: FakeStation,

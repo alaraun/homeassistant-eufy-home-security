@@ -430,7 +430,7 @@ async def test_arming_wakes_the_camera_and_confirms(
 
 
 async def test_a_wake_that_fails_is_a_retryable_user_error(
-    hass: HomeAssistant, seed_warm_cache, built_clients, fake_station, fake_cloud
+    hass: HomeAssistant, seed_warm_cache, built_clients, fake_station, fake_cloud, short_handshake
 ):
     await set_up_warm(hass, seed_warm_cache)
     fake_station.answer_conn_init = False

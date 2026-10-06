@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shlex
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Final
 
 import pytest
@@ -30,6 +32,7 @@ from eufy_home_security import (
     StationClaims,
     entity_unique_id,
 )
+from eufy_home_security import station as station_module
 from eufy_home_security.devices import Scope, model_for_serial
 from eufy_home_security.devices.model_settings import mode_table_settings, settings_of
 from eufy_home_security.p2p import session as session_module
@@ -124,6 +127,36 @@ def _media_dir_per_test(hass: HomeAssistant, hass_tmp_config_dir: str) -> None:
 @pytest.fixture(autouse=True)
 def _custom_integrations(enable_custom_integrations: None) -> None:
     """Let Home Assistant load ``custom_components``."""
+
+
+# A worker imports Home Assistant and collects the suite before its first test (about
+# 3 s), so below this many tests one process finishes first; ten tests per worker above.
+_TESTS_PER_WORKER: Final = 10
+_MIN_DISTRIBUTED_TESTS: Final = 40
+_TEST_DEF = re.compile(r"^(?:async )?def test_", re.MULTILINE)
+
+
+def _estimated_tests(config: pytest.Config) -> int:
+    """Test functions the command line names, counted from source (parametrize ignored)."""
+    count = 0
+    for arg in config.args:
+        path, _, node = arg.partition("::")
+        target = Path(path)
+        if node:
+            count += 1
+        elif target.is_dir():
+            count += sum(len(_TEST_DEF.findall(f.read_text())) for f in target.rglob("test_*.py"))
+        elif target.is_file():
+            count += len(_TEST_DEF.findall(target.read_text()))
+    return count
+
+
+def pytest_xdist_auto_num_workers(config: pytest.Config) -> int:
+    """Workers for ``-n auto``: none for a few tests, else up to one per CPU."""
+    tests = _estimated_tests(config)
+    if tests < _MIN_DISTRIBUTED_TESTS:
+        return 0
+    return min(os.cpu_count() or 1, tests // _TESTS_PER_WORKER)
 
 
 # The station's guard-mode parameter in its dump. The fake's `guard_mode` field
@@ -304,6 +337,27 @@ def short_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(session_module, "DISCOVERY_ATTEMPTS", 1)
     monkeypatch.setattr(session_module, "DISCOVERY_TIMEOUT", 0.3)
+
+
+@pytest.fixture
+def short_handshake(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A half-second handshake, so a station that never answers CONN_INIT fails fast.
+
+    The library waits 6 s for a real station.
+    """
+    monkeypatch.setattr(session_module, "HANDSHAKE_TIMEOUT", 0.5)
+
+
+@pytest.fixture
+def short_media_idle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A stream with no frame for half a second ends; the library waits 3 s."""
+    monkeypatch.setattr(session_module, "MEDIA_IDLE_TIMEOUT", 0.5)
+
+
+@pytest.fixture
+def short_readback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Setting read-back retries 50 ms apart; the library waits 0.8 s between dumps."""
+    monkeypatch.setattr(station_module, "READBACK_DELAY", 0.05)
 
 
 def add_entry(

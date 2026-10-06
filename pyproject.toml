@@ -20,6 +20,7 @@ constraint-dependencies = ["protobuf==6.32.0"]
 # 2026.9.2); bump it with hacs.json's floor. pytest, pytest-asyncio and cryptography come
 # with it; a second floor here would fight its pins.
 dev = [
+    # Also brings pytest-xdist and pytest-timeout, which the pytest options below use.
     "pytest-homeassistant-custom-component==0.13.365",
     # The test harness installs no component requirements: HA's camera component imports
     # turbojpeg and `stream` imports PyAV. Same pins as HA 2026.9.2's manifests; test-only,
@@ -43,10 +44,11 @@ norecursedirs = [".git", "dist", "build", ".venv"]
 asyncio_mode = "auto"
 # Puts the repo root on sys.path, so `custom_components.eufy_home_security` imports.
 pythonpath = ["."]
-addopts = "-m 'not live'"
-markers = [
-    "live: requires the physical HomeBase on the local L2 (deselected by default)",
-]
+# Parallel by default: worksteal evens out the few tests that wait out a hardware
+# timeout. tests/conftest.py drops the workers for a run of a few tests. A test
+# running past `timeout` seconds fails instead of hanging the run.
+addopts = "-n auto --dist worksteal"
+timeout = 60
 
 [tool.ruff]
 target-version = "py314"

@@ -1,20 +1,12 @@
-"""Self-test that the pytest harness and the type checker are wired correctly.
-
-These tests prove the load-bearing toolchain properties every other test depends
-on: the `live` marker is registered (and deselected by default via `addopts`),
-async test bodies run without an explicit marker, and the integration package is
-type-checked strictly by configuration, not only by a command-line flag.
-"""
+"""Self-test that the integration package is type-checked strictly by configuration,
+not only by a command-line flag."""
 
 from __future__ import annotations
 
-import asyncio
 import copy
 import tomllib
 from pathlib import Path
 from typing import Any
-
-import pytest
 
 _PYPROJECT_PATH = Path(__file__).resolve().parent.parent / "pyproject.toml"
 
@@ -29,19 +21,6 @@ _STRICT_FLAGS = (
     "warn_return_any",
     "strict_equality",
 )
-
-
-def test_live_marker_is_registered(pytestconfig: pytest.Config) -> None:
-    markers = "\n".join(pytestconfig.getini("markers"))
-    assert "live" in markers
-
-
-async def test_asyncio_mode_is_auto() -> None:
-    # No explicit @pytest.mark.asyncio on this test. If asyncio_mode were not
-    # "auto", this coroutine would never be scheduled/awaited by pytest and
-    # the test would not execute its body at all.
-    await asyncio.sleep(0)
-    assert True
 
 
 def _strict_override_violations(pyproject: dict[str, Any]) -> list[str]:

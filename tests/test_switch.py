@@ -247,6 +247,7 @@ async def test_a_flags_member_write_without_a_reported_mask_sends_nothing(
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
+    short_readback: None,
 ) -> None:
     """No mask to start from: the library refuses, the error is translated, nothing is sent."""
     entry = await set_up_warm(hass, seed_warm_cache)
@@ -407,6 +408,7 @@ async def test_a_mode_action_switch_with_no_mask_reported_shows_unknown_and_send
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
+    short_readback: None,
 ) -> None:
     """With no mask reported the bits say nothing, and a write is refused unsent."""
     entry = await set_up_warm(hass, seed_warm_cache)
