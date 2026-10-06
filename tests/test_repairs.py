@@ -763,7 +763,8 @@ async def test_a_station_key_the_cloud_lacks_raises_one_issue_and_no_fetch_storm
     entry = add_entry(hass)
 
     assert not await setup_entry(hass, entry)
-    assert entry.state is ConfigEntryState.SETUP_RETRY  # first-ever, none came up
+    first_state = entry.state
+    assert first_state is ConfigEntryState.SETUP_RETRY  # first-ever, none came up
     (issue,) = _cipher_issues(hass, entry).values()
     assert not issue.is_fixable
     assert issue.severity is ir.IssueSeverity.ERROR
