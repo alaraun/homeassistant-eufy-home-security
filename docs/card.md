@@ -50,6 +50,8 @@ settings_groups:                 # optional: Settings tabs to show, in this orde
   so it costs battery. Stop holds until the next showing.
 - `layout: auto` switches to the compact layout (one column of settings rows) below 400 px card width.
 - `history_folder` is needed only when the camera was renamed after its files were saved.
+- Colours come from the HA theme, light or dark: tabs, switches, sliders and fields use HA's own control
+  colours. The controls drawn over the picture stay white on dark glass.
 - `<role>_entity` keys override an entity the card finds on the camera's device (`zoom_entity`,
   `battery_entity`, `panLeft_entity`, …).
 
@@ -83,6 +85,9 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   **Captures** (live captures, New still), **Presets** (only when there are any) and **Station** (the recordings
   on the HomeBase's own storage). Events, Captures and Presets have a Pictures / Videos filter; 10 items show
   first, `Show more` adds 10. A tile opens the picture or plays the video in the card's picture area.
+  - The calendar button beside the filter goes to a day (HA's date picker): only that day's files show, newest
+    first, on every sub-tab (Station lists that day's recordings from the HomeBase, up to 30 days back); ✕ or the
+    picker's Clear goes back to the newest.
   - Station rows have **Play** and **Save**: both copy the recording from the HomeBase into the history folder
     (5–10 s each, one at a time); Play then plays it. A standalone camera has no Station sub-tab.
   - Files come from the integration's history in HA's media folder (`Media › eufy_home_security › <camera name>`).
@@ -95,7 +100,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   - `settings_groups` lists the tab ids to show, in that order: `picture`, `detection`, `recording`, `power`,
     `ptz` (Pan & tilt), `other`, `more`. Without the key every group shows in the order above. A group not
     listed is hidden with its rows; an unknown id is ignored. A group a later card version adds stays hidden
-    while the key is set; remove the key, or press Reset in the editor, to get every group.
+    while the key is set; remove the key to get every group. In the editor the groups are chips: drag to
+    reorder, ✕ to hide, the picker below adds one back; removing every chip shows every group.
   - A setting that applies only in one option of another sits under it, captioned with that option (`Only in
     Custom`), greyed while that option is not chosen.
   - A setting the integration makes unavailable is greyed out; one the device never reports reads

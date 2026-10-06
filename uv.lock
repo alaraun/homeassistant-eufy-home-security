@@ -982,7 +982,7 @@ wheels = [
 
 [[package]]
 name = "eufy-home-security"
-version = "0.1.2"
+version = "0.2.0"
 source = { editable = "../python-eufy_home_security" }
 dependencies = [
     { name = "aiohttp" },
@@ -1009,6 +1009,7 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.2" },
     { name = "pytest-cov", specifier = ">=6" },
     { name = "pytest-timeout", specifier = ">=2.3" },
+    { name = "pytest-xdist", specifier = ">=3.8" },
     { name = "ruff", specifier = ">=0.13" },
 ]
 

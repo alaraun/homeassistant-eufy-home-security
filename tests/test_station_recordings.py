@@ -412,6 +412,64 @@ async def test_a_page_stays_inside_the_days_window(
     await _unload(hass, entry)
 
 
+async def test_a_day_pages_only_that_days_recordings(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """``day`` lists that day's recordings only, newest first, in pages: no query of a
+    later or an earlier day, the cursor stays in the day, the last page ends the list.
+    The window reaches back to the day whatever the entry's history days."""
+    today, day_before, two_back = _day_rows(0, 3), _day_rows(1, 12), _day_rows(2, 5)
+    fake_station.rows = [*today, *day_before, *two_back]
+    entry = await _set_up(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    entity_id = _camera(hass)
+    ids = [r["record_id"] for r in day_before]
+
+    first = await _list(client, entity_id, day=_day(1).isoformat(), limit=5)
+    second = await _list(client, entity_id, day=_day(1).isoformat(), limit=5, before=first["next"])
+    last = await _list(client, entity_id, day=_day(1).isoformat(), limit=5, before=second["next"])
+
+    listed = [r["record_id"] for p in (first, second, last) for r in p["recordings"]]
+    assert listed == ids
+    assert (first["more"], second["more"], last["more"], last["next"]) == (True, True, False, None)
+    assert set(_queried_days(fake_station)) == {_day(1)}
+
+    fake_station.history_queries.clear()
+    older = await _list(client, entity_id, day=_day(2).isoformat())
+    assert [r["record_id"] for r in older["recordings"]] == [r["record_id"] for r in two_back]
+    assert older["more"] is False
+    assert set(_queried_days(fake_station)) == {_day(2)}
+    await _unload(hass, entry)
+
+
+async def test_a_day_outside_the_listing_bounds(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A day older than ``MAX_LIST_DAYS`` lists nothing and asks nothing; a later day
+    than today lists today."""
+    fake_station.rows = [*_day_rows(0, 2), *_day_rows(1, 2)]
+    entry = await _set_up(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    entity_id = _camera(hass)
+
+    old = await _list(client, entity_id, day=_day(station_recordings.MAX_LIST_DAYS).isoformat())
+    assert (old["recordings"], old["more"]) == ([], False)
+    assert fake_station.history_queries == []
+
+    later = await _list(client, entity_id, day=_day(-3).isoformat())
+    assert len(later["recordings"]) == 2
+    assert set(_queried_days(fake_station)) == {_day(0)}
+    await _unload(hass, entry)
+
+
 async def test_a_page_request_out_of_bounds_is_refused(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
@@ -430,6 +488,7 @@ async def test_a_page_request_out_of_bounds_is_refused(
         {"before": "last-week"},
         {"before": "2000-01-02/12"},  # hygiene: ok
         {"before": "12345"},
+        {"day": "yesterday"},  # hygiene: ok
     ):
         reply = await _ws(client, station_recordings.WS_LIST, entity_id=entity_id, **fields)
         assert reply["error"]["code"] == "invalid_format", fields
