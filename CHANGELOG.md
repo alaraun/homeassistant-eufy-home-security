@@ -5,6 +5,18 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.2.0](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.0...v0.2.0) (2026-10-06)
+
+
+### Features
+
+* Anker eufy Home Security 0.1.0, a Home Assistant integration for eufy Security ([72ee5e2](https://github.com/alaraun/homeassistant-eufy-home-security/commit/72ee5e2c20943f621124ab61e3f1aabbe4e642eb))
+
+
+### Bug Fixes
+
+* **strings:** fixable repair issues carry their text in the fix flow ([#3](https://github.com/alaraun/homeassistant-eufy-home-security/issues/3)) ([28b0619](https://github.com/alaraun/homeassistant-eufy-home-security/commit/28b06190321a33aa4bf33a7c4e351110edb47cab))
+
 ## 0.1.0
 
 The first public release: a Home Assistant integration for eufy Security HomeBase systems
