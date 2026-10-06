@@ -85,8 +85,9 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   **Captures** (live captures, New still), **Presets** (only when there are any) and **Station** (the recordings
   on the HomeBase's own storage). Events, Captures and Presets have a Pictures / Videos filter; 10 items show
   first, `Show more` adds 10. A tile opens the picture or plays the video in the card's picture area.
-  - The calendar button beside the filter goes to a day (HA's date picker): that day and older show, newest
-    first; ✕ or the picker's Clear goes back to the newest. Station has no day picker yet.
+  - The calendar button beside the filter goes to a day (HA's date picker): only that day's files show, newest
+    first, on every sub-tab (Station lists that day's recordings from the HomeBase, up to 30 days back); ✕ or the
+    picker's Clear goes back to the newest.
   - Station rows have **Play** and **Save**: both copy the recording from the HomeBase into the history folder
     (5–10 s each, one at a time); Play then plays it. A standalone camera has no Station sub-tab.
   - Files come from the integration's history in HA's media folder (`Media › eufy_home_security › <camera name>`).

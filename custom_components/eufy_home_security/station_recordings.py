@@ -2,7 +2,7 @@
 
 Two websocket commands and one view, registered once per Home Assistant instance:
 
-- ``eufy_home_security/recordings`` ``{entity_id, days?, limit?, before?}`` lists the
+- ``eufy_home_security/recordings`` ``{entity_id, days?, limit?, before?, day?}`` lists the
   camera's recordings on the station's disk, newest first: start, end, length, size,
   whether it has settled, the kind of its detection's still when known, the media id
   of its MP4 once stored, and a signed URL of its thumbnail. ``days`` is the window
@@ -11,8 +11,10 @@ Two websocket commands and one view, registered once per Home Assistant instance
   ``limit`` rows (default 10) older than the cursor ``before``, the library asking the
   days from today (or the cursor's day) backwards only until the page is full. A full
   page says ``more`` (the next one may be empty) and ``next``, an opaque text cursor
-  for it; a short page ends the window. Without either, the whole window in one
-  answer (``more`` False). A listing or page is reused for ``LIST_CACHE_SECONDS`` per
+  for it; a short page ends the window. ``day`` (``YYYY-MM-DD``) pages only that day's
+  recordings: the window reaches back to it (up to ``MAX_LIST_DAYS``; an older day lists
+  nothing). Without ``limit``, ``before`` or ``day``, the whole window in one answer
+  (``more`` False). A listing or page is reused for ``LIST_CACHE_SECONDS`` per
   camera and arguments, and identical queries in flight share one. A standalone
   camera keeps no recordings on a station: ``supported`` False, nothing is queried.
 - ``eufy_home_security/recordings/fetch`` ``{entity_id, record_id}`` stores one
@@ -39,7 +41,8 @@ import logging
 import time
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
-from datetime import timedelta
+from datetime import date, datetime, timedelta
+from datetime import time as dt_time
 from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
@@ -129,8 +132,8 @@ def _cursor(value: Any) -> int:
     return int(text)
 
 
-# A listing's arguments: camera serial, days, limit, before (both None: the whole window).
-type _ListKey = tuple[str, int, int | None, int | None]
+# A listing's arguments: camera serial, days, limit, before, day (all None: the whole window).
+type _ListKey = tuple[str, int, int | None, int | None, date | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,18 +200,25 @@ class StationRecordings:
 
     async def async_list(self, camera: _Camera, days: int) -> list[HistoryRecord]:
         """The camera's recordings over ``days``, newest first."""
-        return await self._async_listing((camera.device_sn, days, None, None), camera)
+        return await self._async_listing((camera.device_sn, days, None, None, None), camera)
 
     async def async_page(
-        self, camera: _Camera, *, days: int, limit: int, before: int | None
+        self,
+        camera: _Camera,
+        *,
+        days: int,
+        limit: int,
+        before: int | None,
+        day: date | None = None,
     ) -> Page:
         """Up to ``limit`` of the camera's recordings older than record ``before``.
 
-        One ``Station.async_list_recordings`` call within the window of ``days``. A
-        full page may hold more after it (the library cannot tell before asking); a
+        One ``Station.async_list_recordings`` call within the window of ``days``; with
+        ``day`` only that day's recordings (the host's local day, as the station keeps).
+        A full page may hold more after it (the library cannot tell before asking); a
         short one ends the window.
         """
-        rows = await self._async_listing((camera.device_sn, days, limit, before), camera)
+        rows = await self._async_listing((camera.device_sn, days, limit, before, day), camera)
         if len(rows) < limit:
             return Page(rows, False, None)
         return Page(rows, True, rows[-1].record_id)
@@ -228,7 +238,9 @@ class StationRecordings:
         return await join(task, RecordingError(ERR_UNAVAILABLE, "The listing was stopped"))
 
     async def _async_query(self, key: _ListKey, camera: _Camera) -> list[HistoryRecord]:
-        _sn, days, limit, before = key
+        _sn, days, limit, before, day = key
+        # One day: the walk starts at it and stops before the day before it
+        since = None if day is None else datetime.combine(day, dt_time.min).astimezone()
         station = camera.station
         if not station.connected:
             raise RecordingError(ERR_UNAVAILABLE, "The HomeBase is not connected")
@@ -236,7 +248,7 @@ class StationRecordings:
         try:
             async with asyncio.timeout(LIST_TIMEOUT_SECONDS):
                 rows = await station.async_list_recordings(
-                    camera.device_sn, days=days, limit=limit, before=before
+                    camera.device_sn, days=days, limit=limit, before=before, until=day, since=since
                 )
         except ValueError as err:
             # Raised before anything is sent: a cursor that names no recording's day.
@@ -440,6 +452,12 @@ def _camera(hass: HomeAssistant, entity_id: str) -> _Camera:
     raise RecordingError(ERR_NOT_FOUND, "Not a camera of this integration")
 
 
+def _days_to(day: date) -> int:
+    """The window from today back to ``day``, within the listing bounds."""
+    back = (datetime.now().astimezone().date() - day).days + 1
+    return min(max(back, MIN_LIST_DAYS), MAX_LIST_DAYS)
+
+
 def _default_days(entry: EufyConfigEntry) -> int:
     value = entry.options.get(CONF_EVENT_HISTORY_DAYS, DEFAULT_EVENT_HISTORY_DAYS)
     days = value if isinstance(value, int) and not isinstance(value, bool) else 1
@@ -457,6 +475,7 @@ def _default_days(entry: EufyConfigEntry) -> int:
             vol.Coerce(int), vol.Range(min=MIN_PAGE_LIMIT, max=MAX_PAGE_LIMIT)
         ),
         vol.Optional("before"): vol.Any(None, _cursor),
+        vol.Optional("day"): cv.date,
     }
 )
 @websocket_api.async_response
@@ -471,9 +490,17 @@ async def _ws_list(
             connection.send_result(msg["id"], {"supported": False, "recordings": []})
             return
         days = msg.get("days") or _default_days(camera.entry)
-        if "limit" in msg or "before" in msg:
+        if (day := msg.get("day")) is not None:
+            # A later day than today is today (the window and the day filter both count from it)
+            day = min(day, datetime.now().astimezone().date())
+            days = _days_to(day)
+        if "limit" in msg or "before" in msg or day is not None:
             page = await camera.recordings.async_page(
-                camera, days=days, limit=msg.get("limit", PAGE_LIMIT), before=msg.get("before")
+                camera,
+                days=days,
+                limit=msg.get("limit", PAGE_LIMIT),
+                before=msg.get("before"),
+                day=day,
             )
         else:
             page = Page(await camera.recordings.async_list(camera, days), False, None)

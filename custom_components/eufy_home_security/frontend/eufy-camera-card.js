@@ -4,7 +4,7 @@
 // `entity` is required; the settings rows are built from whatever settings the device has: the common ones
 // grouped, a setting that applies only in one state of another nested under it, the rest under More settings.
 
-const CARD_VERSION = '2026.10.06-3';
+const CARD_VERSION = '2026.10.07-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -71,6 +71,8 @@ const HIST_TABS = [
 // station into the history folder ({media_content_id, url}; the url plays at once)
 const STATION_WS = 'eufy_home_security/recordings';
 const STATION_FETCH_WS = 'eufy_home_security/recordings/fetch';
+// The days back from today the integration lists station recordings for (its MAX_LIST_DAYS)
+const STATION_DAYS = 30;
 // camera entity -> false once the integration answered that the camera has no station recordings (a standalone
 // camera); shared by the cards on the page, so the sub-tab stays hidden there
 const STATION_SUPPORT = new Map();
@@ -228,7 +230,7 @@ class EufyCameraCard extends HTMLElement {
     this._htab = 'events';  // open History sub-tab
     this._hn = HISTORY_PAGE; // tiles shown in the open sub-tab (Show more adds HISTORY_PAGE)
     this._hfilt = {};       // sub-tab -> { pic, vid }: which media it shows (both by default)
-    this._hday = null;      // History day (YYYY-MM-DD): files of that day and older; null = the newest
+    this._hday = null;      // History day (YYYY-MM-DD): only that day's files and recordings; null = the newest
     this._rec = null;       // { at } while this card's record action runs
     this._srec = null;      // station recordings: { items, supported, loading, err }
     this._sfetch = new Map(); // record id -> 'play' | 'save' while its fetch runs
@@ -556,10 +558,11 @@ class EufyCameraCard extends HTMLElement {
     return { when: `${day}${clockTime(this._hass, new Date(2000, 0, 1, hh, mm))}`, kind: k[0], icon: k[1] };
   }
 
-  // History day: files of that day and older show, newest first; null goes back to the newest
+  // History day: only that day's files and station recordings show, newest first; null goes back to the newest
   _setDay(day) {
     this._hday = day || null;
     this._hn = HISTORY_PAGE;
+    if (this._htab === 'station') this._loadStation();
     this.render();
   }
 
@@ -567,7 +570,11 @@ class EufyCameraCard extends HTMLElement {
   _pickDay(btn) {
     const items = (this._hist && this._hist.items) || [];
     const max = this._today();
-    const min = items.length ? items[items.length - 1].date : max;
+    // Station: the integration's listing window; the local sub-tabs: the oldest saved file's day
+    const back = new Date(`${max}T12:00:00`);
+    back.setDate(back.getDate() - (STATION_DAYS - 1));
+    const sMin = `${back.getFullYear()}-${String(back.getMonth() + 1).padStart(2, '0')}-${String(back.getDate()).padStart(2, '0')}`;
+    const min = this._htab === 'station' ? sMin : (items.length ? items[items.length - 1].date : max);
     dateInputReady().then((ok) => {
       if (ok) {
         if (!this._di) {
@@ -613,12 +620,15 @@ class EufyCameraCard extends HTMLElement {
     if (more && (!prev || !prev.items || !prev.next || prev.loading || prev.moreLoading)) return;
     const id = this._config.entity, seq = (this._sseq || 0) + 1;
     this._sseq = seq;
+    const day = this._hday;
+    const same = prev && prev.items && prev.day === day;
     this._srec = more ? { ...prev, moreLoading: true }
-      : { items: prev && prev.items ? prev.items.slice(0, HISTORY_PAGE) : null, supported: prev ? prev.supported : true, loading: true,
-        err: null, more: false, next: null };
+      : { items: same ? prev.items.slice(0, HISTORY_PAGE) : null, supported: prev ? prev.supported : true, loading: true,
+        err: null, more: false, next: null, day };
     this.render();
     const req = { type: STATION_WS, entity_id: id, limit: HISTORY_PAGE };
     if (more) req.before = prev.next;
+    if (day) req.day = day;
     h.callWS(req).then((r) => {
       if (this._sseq !== seq) return;
       const supported = !!(r && r.supported);
@@ -632,7 +642,7 @@ class EufyCameraCard extends HTMLElement {
       // Show more kept focus: it moves to the first added row (Show more itself goes when the list is complete)
       const a = this.shadowRoot.activeElement;
       const fromMore = more && a && a.dataset && a.dataset.focus === 'smore';
-      this._srec = { items, supported, loading: false, err: null, more: !!next, next };
+      this._srec = { items, supported, loading: false, err: null, more: !!next, next, day };
       this.render();
       if (fromMore) {
         // The first enabled button of the first added row, else Show more
@@ -644,8 +654,8 @@ class EufyCameraCard extends HTMLElement {
       if (this._sseq !== seq) return;
       const msg = (e && e.message) || 'The station did not answer';
       if (more) { this._srec = { ...prev, moreLoading: false }; this._toast(msg); this.render(); return; }
-      this._srec = { items: prev ? prev.items : null, supported: true, loading: false, err: msg, more: false, next: null };
-      if (prev && prev.items) this._toast(msg);
+      this._srec = { items: same ? prev.items : null, supported: true, loading: false, err: msg, more: false, next: null, day };
+      if (same) this._toast(msg);
       this.render();
     });
   }
@@ -1931,7 +1941,7 @@ class EufyCameraCard extends HTMLElement {
     if (!hTabs.some(t => t[0] === this._htab)) this._htab = 'events';
     const hf = { pic: true, vid: true, ...(this._hfilt[this._htab] || {}) };
     const hDay = this._hday;
-    const inTab = hItems.filter(x => histTab(x.kind) === this._htab && (!hDay || x.date <= hDay));
+    const inTab = hItems.filter(x => histTab(x.kind) === this._htab && (!hDay || x.date === hDay));
     const nVid = inTab.filter(x => x.video).length, nPic = inTab.length - nVid;
     // The first _hn of the filtered list; Show more at the strip's end adds the next HISTORY_PAGE (only shown tiles
     // resolve their files)
@@ -1951,21 +1961,20 @@ class EufyCameraCard extends HTMLElement {
       return `<button class="hf${hf[k] ? ' on' : ''}" type="button" data-hf="${k}" data-focus="hf-${k}" aria-pressed="${hf[k]}"${last ? ' aria-disabled="true"' : ''}
         aria-label="${escapeHtml(`${label}, ${n} in ${hTab[1]}${last ? ', only kind shown' : ''}`)}"><ha-icon icon="${icon}"></ha-icon><span>${n}</span></button>`;
     };
-    // Go to a day: the calendar alone at rest; the chosen day (its text hidden on narrow cards, the tiles carry
-    // dates) and a button back to the newest once set
+    // Go to a day: the calendar alone at rest; the chosen day (its text hidden on narrow cards) and a button back to
+    // the newest once set
     const dayText = (d) => { const [y, mo, dd] = d.split('-'); return `${dd}.${mo}${y === this._today().slice(0, 4) ? '' : `.${y}`}`; };
     const dayBtns = hDay
-      ? `<button class="hf hday on" type="button" data-hday data-focus="hday" aria-label="${escapeHtml(`Showing ${dayText(hDay)} and older, choose another day`)}"><ha-icon icon="mdi:calendar"></ha-icon><span>${dayText(hDay)}</span></button><button class="hf hdx" type="button" data-hdayclear data-focus="hdayclear" aria-label="Back to the newest"><ha-icon icon="mdi:close"></ha-icon></button>`
+      ? `<button class="hf hday on" type="button" data-hday data-focus="hday" aria-label="${escapeHtml(`Showing ${dayText(hDay)}, choose another day`)}"><ha-icon icon="mdi:calendar"></ha-icon><span>${dayText(hDay)}</span></button><button class="hf hdx" type="button" data-hdayclear data-focus="hdayclear" aria-label="Back to the newest"><ha-icon icon="mdi:close"></ha-icon></button>`
       : '<button class="hf hday" type="button" data-hday data-focus="hday" aria-label="Go to a day"><ha-icon icon="mdi:calendar"></ha-icon></button>';
     const S = this._srec;
     const sOpen = this._htab === 'station';
     const sCount = S && S.items ? String(S.items.length) : '–';
-    // Station: the recordings' count and a refresh button where the media filter sits on the other sub-tabs, and the
-    // day button disabled (the station's list has no day to start at yet), so the sub-tab bar keeps its width
+    // Station: the recordings' count and a refresh button where the media filter sits on the other sub-tabs, then the
+    // day button
     const sTools = `<div class="hfilt" role="group" aria-label="Station recordings">
             <span class="hf stc" role="status" aria-label="${escapeHtml(`${S && S.items ? S.items.length : 'No'} recordings listed${S && S.more ? ', more on the station' : ''}`)}"><ha-icon icon="mdi:filmstrip"></ha-icon><span>${sCount}</span></span>
-            <button class="hf srf${S && S.loading ? ' ld' : ''}" type="button" data-srefresh data-focus="srefresh" aria-label="Refresh the station list${S && S.loading ? ', loading' : ''}"><ha-icon icon="mdi:refresh"></ha-icon></button>
-            <button class="hf hday" type="button" disabled aria-label="Go to a day, not for the station's recordings yet"><ha-icon icon="mdi:calendar"></ha-icon></button></div>`;
+            <button class="hf srf${S && S.loading ? ' ld' : ''}" type="button" data-srefresh data-focus="srefresh" aria-label="Refresh the station list${S && S.loading ? ', loading' : ''}"><ha-icon icon="mdi:refresh"></ha-icon></button>${dayBtns}</div>`;
     const hBar = `<div class="hbar"><div class="stabs htabs" role="tablist" aria-label="History">${hTabs.map(htabHtml).join('')}</div>
           ${sOpen ? sTools : `<div class="hfilt" role="group" aria-label="Show in ${escapeHtml(hTab[1])}">${hfBtn('pic', 'mdi:image-outline', 'Pictures', nPic)}${hfBtn('vid', 'mdi:filmstrip', 'Videos', nVid)}${dayBtns}</div>`}</div>`;
     // A station recording: thumbnail, start, length, kind and whether it is saved or still being written. Play and
@@ -1995,9 +2004,9 @@ class EufyCameraCard extends HTMLElement {
     const stationBody = !S || (!S.items && S.loading) ? sMsg('<i class="spin sm" aria-hidden="true"></i><span>Loading from the station…</span>')
       : (!S.items ? sMsg(`<ha-icon icon="mdi:alert-circle-outline"></ha-icon><span>${escapeHtml(S.err || 'Not loaded')}</span>`)
         : (!S.supported ? sMsg('<span>This camera keeps no recordings on a station</span>')
-          : (!S.items.length ? sMsg(`<span>${HIST_TABS[3][3]}</span>`)
+          : (!S.items.length ? sMsg(`<span>${hDay ? `No recordings on ${dayText(hDay)}` : HIST_TABS[3][3]}</span>`)
             : `<div class="slist" role="list" aria-label="Station recordings"${S.loading ? ' aria-busy="true"' : ''}>${S.items.map(recRow).join('')}${sMore}</div>`)));
-    const hEmpty = !inTab.length ? (hDay ? `Nothing on ${dayText(hDay)} or before` : hTab[3]) : (hf.pic ? 'No pictures here' : 'No videos here');
+    const hEmpty = !inTab.length ? (hDay ? `Nothing on ${dayText(hDay)}` : hTab[3]) : (hf.pic ? 'No pictures here' : 'No videos here');
     const histBody = sOpen ? `${hBar}${stationBody}` : !this._hist || !this._hist.items
       ? `${hBar}<div class="hmsg">Loading…</div>`
       : `${hBar}${hShown.length ? `<div class="hstrip${/[^\d\s.:]/.test(clockTime(this._hass, new Date(2000, 0, 1, 22, 5))) ? ' wide' : ''}" data-tab="${this._htab}-${hf.pic ? 'p' : ''}${hf.vid ? 'v' : ''}">${hShown.map(histTile).join('')}${hMore}</div>` : `<div class="hmsg">${escapeHtml(hEmpty)}</div>`}`;
@@ -2551,17 +2560,20 @@ const CSS_TEXT = `
   .hf[aria-disabled="true"] { cursor: default; }
   .hf:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -1px; }
   .hf:hover:not(.on) { color: var(--cc-text); }
+  /* Count buttons and Station's count and refresh share one width (counts up to 3 digits), so the sub-tab bar keeps
+     its boxes when Station opens */
+  .hf[data-hf], .hf.stc, .hf.srf { min-width: 54px; box-sizing: border-box; justify-content: center; }
   .hf.hday { min-width: 32px; justify-content: center; padding: 0 7px; }
   .hf.hdx { width: 26px; justify-content: center; padding: 0; }
-  .hf.hday:disabled { cursor: default; opacity: 0.45; }
-  /* Narrow: a set day only fills the calendar (the tiles carry dates; the picker's Clear goes back), so the bar keeps
-     its width */
-  @container hist (max-width: 379px) { .hf.hday span, .hf.hdx { display: none; } }
+  /* A set day fills the calendar; its date shows from 460 px (the tiles and rows carry dates). Under 380 px no ✕
+     either (the picker's Clear goes back), so the bar keeps its width */
+  @container hist (max-width: 459px) { .hf.hday span { display: none; } }
+  @container hist (max-width: 379px) { .hf.hdx { display: none; } }
   /* The browser's date picker where HA's is not loaded: opened over the day button, never shown itself */
   .hdn { position: fixed; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; pointer-events: none; }
   @container htabs (max-width: 359px) { .htabs .stab:not(.on) span { display: none; } .htabs .stab:not(.on) { flex: 0 0 38px; padding: 0; } }
   /* Narrow: tighter filter buttons and sub-tab icons, so the day button fits beside them */
-  @container hist (max-width: 359px) { .hf { padding: 0 5px 0 4px; } .hf.hday { min-width: 28px; padding: 0 4px; } .htabs .stab:not(.on) { flex-basis: 34px; } }
+  @container hist (max-width: 359px) { .hf { padding: 0 5px 0 4px; } .hf.hday { min-width: 28px; padding: 0 4px; } .htabs .stab:not(.on) { flex-basis: 32px; } }
   @container hist (max-width: 299px) { .hbar { flex-wrap: wrap; } .hfilt { margin-left: auto; } .htabs { flex-basis: 100%; } }
   .ht.vid .hph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--cc-sub); --mdc-icon-size: 28px; }
   .ht .hvb { position: absolute; right: 4px; top: 4px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
@@ -2594,10 +2606,11 @@ const CSS_TEXT = `
   .hmore:hover { background: color-mix(in srgb, var(--cc-text) 12%, var(--cc-bg)); }
   .hmore:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
   /* Station: a list of fixed height (loading, error, empty and rows alike), rows scroll inside it */
-  .hf.stc { cursor: default; min-width: 40px; padding: 0 4px; box-sizing: border-box; justify-content: center; }
+  .hf.stc { cursor: default; padding: 0 4px; }
   /* As wide as a filter button, so the sub-tab bar keeps its width when Station opens */
-  .hf.srf { width: 40px; justify-content: center; padding: 0; }
-  @container hist (max-width: 359px) { .hf.stc { min-width: 35px; } .hf.srf { width: 35px; } }
+  .hf.srf { padding: 0; }
+  /* Narrow: counts up to 2 digits keep the width */
+  @container hist (max-width: 359px) { .hf[data-hf], .hf.stc, .hf.srf { min-width: 42px; } }
   .hf.ld ha-icon { animation: spin 1s linear infinite; }
   .slist { height: 176px; overflow-y: auto; overscroll-behavior: contain; display: grid; align-content: start; gap: 2px; scrollbar-width: thin; }
   .slist.msg { align-content: stretch; }
