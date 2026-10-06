@@ -4,7 +4,7 @@
 // `entity` is required; the settings rows are built from whatever settings the device has: the common ones
 // grouped, a setting that applies only in one state of another nested under it, the rest under More settings.
 
-const CARD_VERSION = '2026.10.06-2';
+const CARD_VERSION = '2026.10.06-3';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -38,6 +38,22 @@ const STILL_WIDTHS = [640, 960, 1280, 1920];
 const HISTORY_ROOT = 'media-source://media_source/local/eufy_home_security';
 // Tiles or station rows a History sub-tab shows first, and how many each Show more adds
 const HISTORY_PAGE = 10;
+// HA's date picker (ha-date-input) is lazy-loaded by HA: a card-helpers input_datetime row imports it. Loaded once per
+// page; until it is defined (or after DATE_INPUT_MS without it) the browser's own date picker stands in.
+const DATE_INPUT_MS = 4000;
+let DATE_INPUT = null;
+const dateInputReady = () => {
+  if (!DATE_INPUT) {
+    DATE_INPUT = (async () => {
+      if (customElements.get('ha-date-input')) return true;
+      try {
+        if (window.loadCardHelpers) (await window.loadCardHelpers()).createRowElement({ entity: 'input_datetime.eufy_camera_card' });
+      } catch (e) { /* the native picker stands in */ }
+      return Promise.race([customElements.whenDefined('ha-date-input').then(() => true), new Promise(r => setTimeout(() => r(false), DATE_INPUT_MS))]);
+    })().then((ok) => { if (!ok) DATE_INPUT = null; return ok; });
+  }
+  return DATE_INPUT;
+};
 // Resolved media URLs carry a signature HA accepts for a limited time: resolve again after this
 const RESOLVE_MS = 30 * 60 * 1000;
 // <date>_<time>_<camera>_<kind>.<ext>, date and time in HA's time zone; pictures and videos
@@ -212,6 +228,7 @@ class EufyCameraCard extends HTMLElement {
     this._htab = 'events';  // open History sub-tab
     this._hn = HISTORY_PAGE; // tiles shown in the open sub-tab (Show more adds HISTORY_PAGE)
     this._hfilt = {};       // sub-tab -> { pic, vid }: which media it shows (both by default)
+    this._hday = null;      // History day (YYYY-MM-DD): files of that day and older; null = the newest
     this._rec = null;       // { at } while this card's record action runs
     this._srec = null;      // station recordings: { items, supported, loading, err }
     this._sfetch = new Map(); // record id -> 'play' | 'save' while its fetch runs
@@ -241,6 +258,7 @@ class EufyCameraCard extends HTMLElement {
     this._srec = null;
     this._stationTab = undefined;
     this._hn = HISTORY_PAGE;
+    this._hday = null;
     this.render();
   }
 
@@ -536,6 +554,53 @@ class EufyCameraCard extends HTMLElement {
     // it.time is HH:MM in HA's time zone: format those digits, not an instant, so the browser's zone cannot shift it
     const [hh, mm] = it.time.split(':').map(Number);
     return { when: `${day}${clockTime(this._hass, new Date(2000, 0, 1, hh, mm))}`, kind: k[0], icon: k[1] };
+  }
+
+  // History day: files of that day and older show, newest first; null goes back to the newest
+  _setDay(day) {
+    this._hday = day || null;
+    this._hn = HISTORY_PAGE;
+    this.render();
+  }
+
+  // Opens HA's date dialog (ha-date-input), else the browser's date picker over the day button
+  _pickDay(btn) {
+    const items = (this._hist && this._hist.items) || [];
+    const max = this._today();
+    const min = items.length ? items[items.length - 1].date : max;
+    dateInputReady().then((ok) => {
+      if (ok) {
+        if (!this._di) {
+          const di = document.createElement('ha-date-input');
+          di.hidden = true;
+          di.canClear = true;
+          di.addEventListener('value-changed', (ev) => { ev.stopPropagation(); this._setDay(ev.detail && ev.detail.value); this._focus('hday'); });
+          di.addEventListener('change', ev => ev.stopPropagation());
+          this.shadowRoot.append(di);
+          this._di = di;
+        }
+        const di = this._di;
+        Object.assign(di, { locale: this._hass.locale, min, max, value: this._hday || undefined });
+        if (typeof di._openDialog === 'function') { di._openDialog(); return; }
+        const inp = di.shadowRoot && di.shadowRoot.querySelector('ha-input');
+        if (inp) { inp.click(); return; }
+      }
+      let n = this._dn;
+      if (!n) {
+        n = document.createElement('input');
+        n.type = 'date';
+        n.className = 'hdn';
+        n.tabIndex = -1;
+        n.setAttribute('aria-hidden', 'true');
+        n.addEventListener('change', () => { this._setDay(n.value); this._focus('hday'); });
+        this.shadowRoot.append(n);
+        this._dn = n;
+      }
+      const r = btn.getBoundingClientRect();
+      Object.assign(n.style, { left: `${r.left}px`, top: `${r.bottom}px` });
+      Object.assign(n, { min, max, value: this._hday || '' });
+      try { n.showPicker(); } catch (e) { n.focus(); }
+    });
   }
 
   // ---- the station's own recordings (sub-tab Station) ----
@@ -1059,6 +1124,8 @@ class EufyCameraCard extends HTMLElement {
       this._focus(`htab-${this._htab}`);
       return;
     }
+    if (has('hday')) { this._pickDay(has('hday')); return; }
+    if (has('hdayclear')) { this._setDay(null); this._focus('hday'); return; }
     const hf = has('hf');
     if (hf) {
       const t = this._htab, k = hf.dataset.hf;
@@ -1083,6 +1150,8 @@ class EufyCameraCard extends HTMLElement {
       this._open = this._open === id ? null : id;
       if (this._open === 'history') {
         this._hn = HISTORY_PAGE;
+        this._hday = null;
+        dateInputReady();
         // Station shows unless the integration said the camera has no station recordings
         this._stationTab = STATION_SUPPORT.get(this._config.entity) !== false;
         this._loadHistory();
@@ -1861,7 +1930,8 @@ class EufyCameraCard extends HTMLElement {
     const hTabs = HIST_TABS.filter(t => (t[0] !== 'presets' || hItems.some(x => histTab(x.kind) === 'presets')) && (t[0] !== 'station' || this._stationTab));
     if (!hTabs.some(t => t[0] === this._htab)) this._htab = 'events';
     const hf = { pic: true, vid: true, ...(this._hfilt[this._htab] || {}) };
-    const inTab = hItems.filter(x => histTab(x.kind) === this._htab);
+    const hDay = this._hday;
+    const inTab = hItems.filter(x => histTab(x.kind) === this._htab && (!hDay || x.date <= hDay));
     const nVid = inTab.filter(x => x.video).length, nPic = inTab.length - nVid;
     // The first _hn of the filtered list; Show more at the strip's end adds the next HISTORY_PAGE (only shown tiles
     // resolve their files)
@@ -1881,15 +1951,23 @@ class EufyCameraCard extends HTMLElement {
       return `<button class="hf${hf[k] ? ' on' : ''}" type="button" data-hf="${k}" data-focus="hf-${k}" aria-pressed="${hf[k]}"${last ? ' aria-disabled="true"' : ''}
         aria-label="${escapeHtml(`${label}, ${n} in ${hTab[1]}${last ? ', only kind shown' : ''}`)}"><ha-icon icon="${icon}"></ha-icon><span>${n}</span></button>`;
     };
+    // Go to a day: the calendar alone at rest; the chosen day (its text hidden on narrow cards, the tiles carry
+    // dates) and a button back to the newest once set
+    const dayText = (d) => { const [y, mo, dd] = d.split('-'); return `${dd}.${mo}${y === this._today().slice(0, 4) ? '' : `.${y}`}`; };
+    const dayBtns = hDay
+      ? `<button class="hf hday on" type="button" data-hday data-focus="hday" aria-label="${escapeHtml(`Showing ${dayText(hDay)} and older, choose another day`)}"><ha-icon icon="mdi:calendar"></ha-icon><span>${dayText(hDay)}</span></button><button class="hf hdx" type="button" data-hdayclear data-focus="hdayclear" aria-label="Back to the newest"><ha-icon icon="mdi:close"></ha-icon></button>`
+      : '<button class="hf hday" type="button" data-hday data-focus="hday" aria-label="Go to a day"><ha-icon icon="mdi:calendar"></ha-icon></button>';
     const S = this._srec;
     const sOpen = this._htab === 'station';
     const sCount = S && S.items ? String(S.items.length) : '–';
-    // Station: the recordings' count and a refresh button where the media filter sits on the other sub-tabs
+    // Station: the recordings' count and a refresh button where the media filter sits on the other sub-tabs, and the
+    // day button disabled (the station's list has no day to start at yet), so the sub-tab bar keeps its width
     const sTools = `<div class="hfilt" role="group" aria-label="Station recordings">
             <span class="hf stc" role="status" aria-label="${escapeHtml(`${S && S.items ? S.items.length : 'No'} recordings listed${S && S.more ? ', more on the station' : ''}`)}"><ha-icon icon="mdi:filmstrip"></ha-icon><span>${sCount}</span></span>
-            <button class="hf srf${S && S.loading ? ' ld' : ''}" type="button" data-srefresh data-focus="srefresh" aria-label="Refresh the station list${S && S.loading ? ', loading' : ''}"><ha-icon icon="mdi:refresh"></ha-icon></button></div>`;
+            <button class="hf srf${S && S.loading ? ' ld' : ''}" type="button" data-srefresh data-focus="srefresh" aria-label="Refresh the station list${S && S.loading ? ', loading' : ''}"><ha-icon icon="mdi:refresh"></ha-icon></button>
+            <button class="hf hday" type="button" disabled aria-label="Go to a day, not for the station's recordings yet"><ha-icon icon="mdi:calendar"></ha-icon></button></div>`;
     const hBar = `<div class="hbar"><div class="stabs htabs" role="tablist" aria-label="History">${hTabs.map(htabHtml).join('')}</div>
-          ${sOpen ? sTools : `<div class="hfilt" role="group" aria-label="Show in ${escapeHtml(hTab[1])}">${hfBtn('pic', 'mdi:image-outline', 'Pictures', nPic)}${hfBtn('vid', 'mdi:filmstrip', 'Videos', nVid)}</div>`}</div>`;
+          ${sOpen ? sTools : `<div class="hfilt" role="group" aria-label="Show in ${escapeHtml(hTab[1])}">${hfBtn('pic', 'mdi:image-outline', 'Pictures', nPic)}${hfBtn('vid', 'mdi:filmstrip', 'Videos', nVid)}${dayBtns}</div>`}</div>`;
     // A station recording: thumbnail, start, length, kind and whether it is saved or still being written. Play and
     // Save both fetch it from the station into the history folder (5-10 s); Play then opens it in the picture area.
     const recRow = (it) => {
@@ -1919,7 +1997,7 @@ class EufyCameraCard extends HTMLElement {
         : (!S.supported ? sMsg('<span>This camera keeps no recordings on a station</span>')
           : (!S.items.length ? sMsg(`<span>${HIST_TABS[3][3]}</span>`)
             : `<div class="slist" role="list" aria-label="Station recordings"${S.loading ? ' aria-busy="true"' : ''}>${S.items.map(recRow).join('')}${sMore}</div>`)));
-    const hEmpty = !inTab.length ? hTab[3] : (hf.pic ? 'No pictures here' : 'No videos here');
+    const hEmpty = !inTab.length ? (hDay ? `Nothing on ${dayText(hDay)} or before` : hTab[3]) : (hf.pic ? 'No pictures here' : 'No videos here');
     const histBody = sOpen ? `${hBar}${stationBody}` : !this._hist || !this._hist.items
       ? `${hBar}<div class="hmsg">Loading…</div>`
       : `${hBar}${hShown.length ? `<div class="hstrip${/[^\d\s.:]/.test(clockTime(this._hass, new Date(2000, 0, 1, 22, 5))) ? ' wide' : ''}" data-tab="${this._htab}-${hf.pic ? 'p' : ''}${hf.vid ? 'v' : ''}">${hShown.map(histTile).join('')}${hMore}</div>` : `<div class="hmsg">${escapeHtml(hEmpty)}</div>`}`;
@@ -1929,7 +2007,7 @@ class EufyCameraCard extends HTMLElement {
           ${secBtn(SECTIONS[0], histOpen, '')}
           ${rows.length ? secBtn(SECTIONS[1], setOpen, setMark) : ''}
         </div>
-        ${histOpen ? `<div class="hist">${histBody}</div>` : ''}
+        ${histOpen ? `<div class="hist${/[^\d\s.:]/.test(clockTime(this._hass, new Date(2000, 0, 1, 22, 5))) ? ' wide' : ''}">${histBody}</div>` : ''}
         ${setOpen ? `<div class="ctl-rows">${rowsHtml()}</div>` : ''}`;
 
     const compact = this._config.layout === 'compact' || (this._config.layout !== 'regular' && this._width !== undefined && this._width < COMPACT_W);
@@ -2025,8 +2103,10 @@ class EufyCameraCard extends HTMLElement {
 }
 
 const CSS_TEXT = `
+  /* Colours from the HA theme (light and dark); the semantic --ha-color-* tokens fall back to mixes of the base ones
+     on older frontends. The controls over the picture stay white on dark glass, legible on any image. */
   :host {
-    --cc-bg: var(--card-background-color, #fff);
+    --cc-bg: var(--ha-card-background, var(--card-background-color, #fff));
     --cc-text: var(--primary-text-color, #212121);
     --cc-dim: var(--secondary-text-color, #727272);
     /* secondary text on tinted surfaces: HA's secondary colour alone misses 4.5:1 there in the light theme */
@@ -2037,7 +2117,28 @@ const CSS_TEXT = `
     --cc-error-text: color-mix(in srgb, var(--cc-error) 70%, var(--cc-text));
     --cc-idle: var(--state-inactive-color, #8a8a8a);
     --cc-warn: var(--warning-color, #ffa600);
-    --cc-live: #e53935;
+    --cc-live: var(--red-color, #f44336);
+    /* text and icons on an accent or red fill */
+    --cc-on-accent: var(--text-primary-color, #fff);
+    --cc-sun: var(--amber-color, #ffc107);
+    --cc-bat-hi: var(--state-sensor-battery-high-color, var(--success-color, #43a047));
+    --cc-bat-mid: var(--state-sensor-battery-medium-color, var(--warning-color, #ffa600));
+    --cc-bat-lo: var(--state-sensor-battery-low-color, var(--error-color, #db4437));
+    /* control surfaces as HA's own: tracks, selected segments, form fields, switches, dividers, shadows */
+    --cc-track: var(--ha-color-fill-neutral-quiet-resting, color-mix(in srgb, var(--cc-text) 6%, transparent));
+    --cc-sel: var(--ha-color-fill-primary-normal-resting, color-mix(in srgb, var(--cc-accent) 20%, var(--cc-bg)));
+    --cc-sel-quiet: var(--ha-color-fill-primary-quiet-resting, color-mix(in srgb, var(--cc-accent) 12%, transparent));
+    --cc-field: var(--ha-color-form-background, color-mix(in srgb, var(--cc-text) 5%, transparent));
+    --cc-field-line: var(--ha-color-border-neutral-quiet, color-mix(in srgb, var(--cc-text) 16%, transparent));
+    --cc-sw-off: var(--ha-color-fill-disabled-quiet-resting, color-mix(in srgb, var(--cc-text) 12%, transparent));
+    --cc-sw-off-line: var(--ha-color-border-neutral-normal, color-mix(in srgb, var(--cc-text) 40%, transparent));
+    --cc-sw-off-thumb: var(--ha-color-on-neutral-normal, var(--cc-dim));
+    --cc-sw-on: var(--ha-color-fill-primary-normal-resting, color-mix(in srgb, var(--cc-accent) 25%, var(--cc-bg)));
+    --cc-sw-on-line: var(--ha-color-border-primary-loud, var(--cc-accent));
+    --cc-sw-on-thumb: var(--ha-color-on-primary-normal, var(--cc-accent));
+    --cc-range: var(--disabled-color, color-mix(in srgb, var(--cc-text) 15%, transparent));
+    --cc-line: var(--divider-color, color-mix(in srgb, var(--cc-text) 12%, transparent));
+    --cc-shadow: var(--shadow-color, rgba(0, 0, 0, 0.16));
     --cc-det: var(--state-binary_sensor-motion-on-color, var(--amber-color, #ffc107));
     /* glass over the picture: legible on day and IR night images alike */
     --cc-glass: rgba(18, 18, 18, 0.55);
@@ -2080,7 +2181,7 @@ const CSS_TEXT = `
     background: transparent; color: var(--cc-text); font-size: var(--fs-sm); font-weight: 500; }
   .btn:hover { background: color-mix(in srgb, var(--cc-text) 8%, transparent); }
   .btn:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
-  .btn.primary { border-color: transparent; background: color-mix(in srgb, var(--cc-accent) 22%, var(--cc-bg)); color: var(--cc-accent-text); }
+  .btn.primary { border-color: transparent; background: var(--cc-sel); color: var(--cc-accent-text); }
   .btn.primary:hover { background: color-mix(in srgb, var(--cc-accent) 32%, var(--cc-bg)); }
   .btn.primary.warn { box-shadow: inset 0 0 0 1.5px var(--cc-warn); }
   .btn.icon { width: 32px; padding: 0; display: grid; place-items: center; --mdc-icon-size: 18px; }
@@ -2095,7 +2196,7 @@ const CSS_TEXT = `
   .mbtn > ha-icon { color: inherit; }
   .mbtn:hover { background: color-mix(in srgb, var(--mc) 30%, transparent); }
   .mbtn:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
-  .mbtn.st-live { --mc: var(--cc-live); background: color-mix(in srgb, var(--mc) 38%, transparent); color: color-mix(in srgb, var(--mc) 80%, #fff);
+  .mbtn.st-live { --mc: var(--cc-live); background: color-mix(in srgb, var(--mc) 38%, transparent); color: color-mix(in srgb, var(--mc) 80%, var(--cc-on-accent));
     box-shadow: 0 0 10px color-mix(in srgb, var(--mc) 45%, transparent); }
   .mbtn.st-det { --mc: var(--cc-det); }
   .mbtn.st-off { --mc: var(--cc-idle); opacity: 0.7; }
@@ -2103,13 +2204,13 @@ const CSS_TEXT = `
   .mbtn.failed { box-shadow: 0 0 0 2px var(--cc-error); }
   .badge { position: absolute; top: -3px; right: -3px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
     --mdc-icon-size: 12px; background: var(--cc-idle); box-shadow: 0 0 0 1.5px var(--cc-bg); }
-  .badge ha-icon { display: flex; width: 12px; height: 12px; line-height: 0; color: #fff; }
+  .badge ha-icon { display: flex; width: 12px; height: 12px; line-height: 0; color: var(--cc-on-accent); }
   .badge.live { background: var(--cc-live); }
   .badge.det { background: var(--cc-det); }
-  .badge.det ha-icon { color: #000; }
+  .badge.det ha-icon { color: var(--black-color, #000); }
   /* Opens down over the picture, so it stays inside the card (ha-card clips its content) */
   .menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 6; min-width: 210px; padding: 4px; border-radius: 12px;
-    background: var(--cc-bg); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28); border: 1px solid color-mix(in srgb, var(--cc-text) 12%, transparent);
+    background: var(--cc-bg); box-shadow: 0 4px 16px var(--cc-shadow); border: 1px solid var(--cc-line);
     display: grid; gap: 2px; }
   .mi { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 10px; border: 0; border-radius: 8px; cursor: pointer;
     background: transparent; color: var(--cc-text); font-size: var(--fs-sm); text-align: left; --mdc-icon-size: 18px; white-space: nowrap; }
@@ -2117,7 +2218,7 @@ const CSS_TEXT = `
   .mi ha-icon { color: var(--cc-sub); }
   .mi .chk { margin-left: auto; color: var(--cc-accent-text); }
   .mi:hover, .mi:focus-visible { background: color-mix(in srgb, var(--cc-text) 8%, transparent); outline: none; }
-  .mi.sel { font-weight: 600; background: color-mix(in srgb, var(--cc-accent) 12%, transparent); }
+  .mi.sel { font-weight: 600; background: var(--cc-sel-quiet); }
 
   /* Picture: a fixed 16:9 frame, so cards side by side line up whatever each camera can do */
   /* The picture is its own size container: in full screen the overlay sizes follow the screen, not the card */
@@ -2152,7 +2253,7 @@ const CSS_TEXT = `
   .crow { position: absolute; left: 10px; top: 10px; right: 10px; display: flex; gap: 6px; min-width: 0; pointer-events: none; }
   .crow > .chip { position: static; flex: none; max-width: 100%; pointer-events: auto; }
   .crow > .chip.tl { flex: 0 1 auto; min-width: 0; }
-  .chip.hi ha-icon { color: #66bb6a; } .chip.mid ha-icon { color: #ffb300; } .chip.lo ha-icon { color: #ef5350; }
+  .chip.hi ha-icon { color: var(--cc-bat-hi); } .chip.mid ha-icon { color: var(--cc-bat-mid); } .chip.lo ha-icon { color: var(--cc-bat-lo); }
   .chip.rec { gap: 6px; padding: 0 10px 0 9px; font-weight: 600; letter-spacing: 0.02em; }
   .chip.rec .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cc-live); box-shadow: 0 0 6px var(--cc-live); animation: pulse 2s ease-in-out infinite; }
   .chip.rec .tv { font-weight: 500; opacity: 0.9; }
@@ -2181,7 +2282,7 @@ const CSS_TEXT = `
     background: transparent; color: #fff; --mdc-icon-size: 20px; }
   .lb:hover { background: rgba(255, 255, 255, 0.16); }
   .lb.on { background: color-mix(in srgb, var(--cc-accent) 70%, transparent); }
-  .lb.rec ha-icon { color: #ff8a80; }
+  .lb.rec ha-icon { color: color-mix(in srgb, var(--cc-live) 50%, #fff); }
   .lb.rec.on { background: color-mix(in srgb, var(--cc-live) 60%, transparent); cursor: default; }
   .lb.rec.on ha-icon { color: #fff; }
   .chip.recc { gap: 5px; }
@@ -2205,7 +2306,7 @@ const CSS_TEXT = `
   .busy { animation: busy 0.9s ease-in-out infinite; }
   /* Presses waiting behind the running move */
   .qn { position: absolute; right: -2px; top: -2px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px;
-    background: var(--cc-accent); color: #fff; font: 600 10px/14px sans-serif; font-style: normal; text-align: center; pointer-events: none; }
+    background: var(--cc-accent); color: var(--cc-on-accent); font: 600 10px/14px sans-serif; font-style: normal; text-align: center; pointer-events: none; }
   @keyframes busy { 50% { background: rgba(255, 255, 255, 0.3); } }
   .zp { display: flex; flex-direction: column; align-items: center; width: 34px; padding: 1px 0; border-radius: 17px;
     background: var(--cc-glass); backdrop-filter: blur(6px); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14); }
@@ -2274,7 +2375,7 @@ const CSS_TEXT = `
   /* Section tabs, the first level: a segmented control with equal widths and fixed labels, so a tab stays under
      the pointer */
   .secs { display: flex; gap: 2px; margin: 8px 10px; padding: 2px; border-radius: 10px;
-    background: color-mix(in srgb, var(--cc-text) 6%, transparent); container: secs / inline-size; }
+    background: var(--cc-track); container: secs / inline-size; }
   .sec { position: relative; flex: 1 1 0; display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; height: 30px;
     padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--cc-sub); font-size: var(--fs-sm); font-weight: 500;
     cursor: pointer; --mdc-icon-size: 18px; }
@@ -2282,14 +2383,14 @@ const CSS_TEXT = `
   .sec span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sec:hover { color: var(--cc-text); background: color-mix(in srgb, var(--cc-text) 6%, transparent); }
   .sec:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -1px; }
-  .sec.on { background: var(--cc-bg); color: var(--cc-text); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2); }
+  .sec.on { background: var(--cc-sel); color: var(--cc-text); font-weight: 600; }
   .sec.err { color: var(--cc-error-text); }
   @container secs (max-width: 219px) { .sec ha-icon { display: none; } }
 
   /* Settings rows: icon, name, status word and value; the control full width under it */
   .ctl-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); align-items: start; gap: 4px 16px; padding: 0 10px 10px; }
   .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name val" "ctl ctl";
-    align-items: center; column-gap: 8px; padding: 2px 6px 4px; border-radius: 10px; border: 1px solid transparent; --ctl-accent: var(--cc-sub); }
+    align-items: center; column-gap: 8px; padding: 2px 6px 4px; border-radius: 10px; border: 1px solid transparent; --ctl-accent: var(--cc-accent); }
   .row.staged { background: color-mix(in srgb, var(--cc-accent) 6%, transparent); --ctl-accent: var(--cc-accent); }
   .row.failed { border-color: var(--cc-error); }
   .rname { grid-area: name; display: flex; align-items: center; gap: 7px; min-width: 0; min-height: 26px; --mdc-icon-size: 18px; }
@@ -2304,25 +2405,25 @@ const CSS_TEXT = `
   .row.failed .rval { color: var(--cc-error-text); }
   .rctl { grid-area: ctl; position: relative; display: flex; align-items: center; height: 32px; min-width: 0; }
   .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; width: 100%; height: 30px; padding: 2px;
-    box-sizing: border-box; border-radius: 9px; background: color-mix(in srgb, var(--cc-text) 8%, transparent); }
+    box-sizing: border-box; border-radius: 9px; background: var(--cc-track); }
   .opt { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; padding: 0 6px; border: 1px solid transparent;
     border-radius: 7px; background: transparent; color: var(--cc-sub); font-size: var(--fs-xs); cursor: pointer; --mdc-icon-size: 16px; }
   .opt.txt { padding: 0 2px; }
   .opt span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .opt:hover { color: var(--cc-text); background: color-mix(in srgb, var(--cc-text) 7%, transparent); }
   .opt:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -1px; }
-  .opt[aria-pressed="true"] { background: var(--cc-bg); color: var(--cc-text); font-weight: 500; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22); }
+  .opt[aria-pressed="true"] { background: var(--cc-sel); color: var(--cc-text); font-weight: 500; }
   .row.staged .opt[aria-pressed="true"] { border-color: var(--cc-accent); color: var(--cc-accent-text); }
   /* Icon options show only their icon on narrow rows (the label stays in aria-label) */
   @container (max-width: 359px) { .seg .opt ha-icon:has(+ span) { display: none; } }
   .ctl-range { -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 32px; margin: 0; background: transparent; cursor: pointer; --pos: 50%; }
   .ctl-range:focus { outline: none; }
   .ctl-range::-webkit-slider-runnable-track { height: 4px; border-radius: 2px;
-    background: linear-gradient(to right, var(--ctl-accent) var(--pos), color-mix(in srgb, var(--cc-text) 15%, transparent) var(--pos)); }
-  .ctl-range::-moz-range-track { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--cc-text) 15%, transparent); }
+    background: linear-gradient(to right, var(--ctl-accent) var(--pos), var(--cc-range) var(--pos)); }
+  .ctl-range::-moz-range-track { height: 4px; border-radius: 2px; background: var(--cc-range); }
   .ctl-range::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--ctl-accent); }
   .ctl-range::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; margin-top: -7px;
-    border: 2px solid var(--cc-bg); border-radius: 50%; background: var(--ctl-accent); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); }
+    border: 2px solid var(--cc-bg); border-radius: 50%; background: var(--ctl-accent); box-shadow: 0 1px 3px var(--cc-shadow); }
   .ctl-range::-moz-range-thumb { width: 14px; height: 14px; border: 2px solid var(--cc-bg); border-radius: 50%; background: var(--ctl-accent); }
   .ctl-range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--cc-accent) 45%, transparent); }
   .ghost { position: absolute; top: 50%; left: calc(9px + (100% - 18px) * var(--at)); width: 22px; height: 22px; margin: -11px 0 0 -11px;
@@ -2344,22 +2445,22 @@ const CSS_TEXT = `
   /* Dropdown: the value on a button, the list over the rows below (or above) */
   .row.ddopen { position: relative; z-index: 2; }
   .dd { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; height: 30px; padding: 0 4px 0 10px;
-    box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--cc-text) 16%, transparent); border-radius: 9px; cursor: pointer;
-    background: color-mix(in srgb, var(--cc-text) 5%, transparent); color: var(--cc-text); font-size: var(--fs-xs); font-weight: 500; --mdc-icon-size: 20px; }
+    box-sizing: border-box; border: 1px solid var(--cc-field-line); border-radius: 9px; cursor: pointer;
+    background: var(--cc-field); color: var(--cc-text); font-size: var(--fs-xs); font-weight: 500; --mdc-icon-size: 20px; }
   .dd span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dd ha-icon { display: flex; flex: none; width: 20px; height: 20px; line-height: 0; color: var(--cc-sub); }
   .dd:hover:not(:disabled) { background: color-mix(in srgb, var(--cc-text) 9%, transparent); }
   .dd:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -1px; }
   .row.staged .dd { border-color: var(--cc-accent); color: var(--cc-accent-text); font-weight: 600; }
   .ddl { position: absolute; left: 0; right: 0; top: calc(100% + 2px); z-index: 7; display: grid; gap: 1px; padding: 4px; overflow-y: auto;
-    border-radius: 10px; background: var(--cc-bg); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28); border: 1px solid color-mix(in srgb, var(--cc-text) 12%, transparent);
+    border-radius: 10px; background: var(--cc-bg); box-shadow: 0 4px 16px var(--cc-shadow); border: 1px solid var(--cc-line);
     overscroll-behavior: contain; }
   .ddl.up { top: auto; bottom: calc(100% + 2px); }
   .ddo { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 8px; border: 0; border-radius: 7px; cursor: pointer;
     background: transparent; color: var(--cc-text); font-size: var(--fs-sm); text-align: left; --mdc-icon-size: 16px; }
   .ddo span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ddo:hover, .ddo:focus-visible { background: color-mix(in srgb, var(--cc-text) 8%, transparent); outline: none; }
-  .ddo[aria-selected="true"] { font-weight: 600; background: color-mix(in srgb, var(--cc-accent) 12%, transparent); }
+  .ddo[aria-selected="true"] { font-weight: 600; background: var(--cc-sel-quiet); }
   .ddo .chk { display: flex; width: 16px; height: 16px; line-height: 0; margin-left: auto; color: var(--cc-accent-text); }
   .row.ddrow .rval { display: none; }
   /* Switch rows: name and toggle on one line */
@@ -2370,15 +2471,14 @@ const CSS_TEXT = `
   .row { container: srow / inline-size; }
   @container srow (max-width: 319px) { .seg.long .opt ha-icon:has(+ span) { display: none; } }
   @container srow (max-width: 239px) { .seg.long .opt ha-icon:has(+ span) { display: flex; } .seg.long .opt ha-icon + span { display: none; } }
-  .tg { grid-area: val; position: relative; width: 36px; height: 20px; padding: 0; border: 0; border-radius: 10px; cursor: pointer;
-    background: color-mix(in srgb, var(--cc-text) 22%, transparent); transition: background 0.15s; }
-  .tg i { position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--cc-bg);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); transition: left 0.15s; }
-  .tg.on { background: var(--cc-sub); }
-  .tg.on i { left: 18px; }
+  .tg { grid-area: val; position: relative; width: 36px; height: 20px; padding: 0; box-sizing: border-box; border: 1px solid var(--cc-sw-off-line);
+    border-radius: 10px; cursor: pointer; background: var(--cc-sw-off); transition: background 0.15s; }
+  .tg i { position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--cc-sw-off-thumb);
+    box-shadow: 0 1px 2px var(--cc-shadow); transition: left 0.15s; }
+  .tg.on { background: var(--cc-sw-on); border-color: var(--cc-sw-on-line); }
+  .tg.on i { left: 18px; background: var(--cc-sw-on-thumb); }
   .tg.unk i { left: 10px; opacity: 0.6; }
   .row.staged .tg { box-shadow: 0 0 0 2px var(--cc-accent); }
-  .row.staged .tg.on { background: var(--cc-accent); }
   .row.pending .tg { opacity: 0.6; }
   .row.failed .tg { box-shadow: 0 0 0 2px var(--cc-error); }
   .tg:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
@@ -2409,7 +2509,7 @@ const CSS_TEXT = `
   .stabs { grid-column: 1 / -1; display: flex; gap: 2px 0; margin: 0 0 6px; padding: 2px 0 0; container: stabs / inline-size; }
   .stab { position: relative; flex: 1 1 auto; display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 0; height: 32px;
     padding: 0 8px; border: 0; border-radius: 6px 6px 0 0; background: transparent; color: var(--cc-sub); font-size: var(--fs-xs); font-weight: 400;
-    cursor: pointer; box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--cc-text) 16%, transparent); --mdc-icon-size: 16px; }
+    cursor: pointer; box-shadow: inset 0 -1px 0 var(--cc-line); --mdc-icon-size: 16px; }
   .stab ha-icon { display: flex; flex: none; width: 16px; height: 16px; line-height: 0; }
   .stab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .stab:hover { color: var(--cc-text); background: color-mix(in srgb, var(--cc-text) 5%, transparent); }
@@ -2431,22 +2531,37 @@ const CSS_TEXT = `
   .pst ha-icon { display: flex; width: 15px; height: 15px; line-height: 0; color: var(--cc-sub); }
   .pst:hover { background: color-mix(in srgb, var(--cc-text) 10%, transparent); }
   .pst:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -1px; }
-  .chip .sun { color: color-mix(in srgb, #f9a825 70%, var(--cc-text)); }
+  .chip .sun { color: var(--cc-sun); }
   /* History: one scrolling row of saved stills, newest first; images load as they scroll into view */
-  .hist { padding: 0 10px 12px; container: hist / inline-size; }
+  .hist { padding: 0 10px 12px; container: hist / inline-size; --ht-w: 120px; }
+  .compact .hist { --ht-w: 104px; }
+  /* A clock with an AM/PM marker needs wider tiles for "28.09 10:05 PM" */
+  .hist.wide, .compact .hist.wide { --ht-w: 148px; }
+  /* Loading and empty take the tile row's height */
+  .hist > .hmsg { min-height: calc(var(--ht-w) * 9 / 16 + 4px); }
   /* History sub-tabs (the settings tabs' second-level look) and the Pictures / Videos filter on one line */
   .hbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .htabs { flex: 1 1 auto; min-width: 0; margin: 0; container: htabs / inline-size; }
-  .hfilt { flex: none; display: flex; gap: 2px; padding: 2px; border-radius: 10px; background: color-mix(in srgb, var(--cc-text) 6%, transparent); }
+  .hfilt { flex: none; display: flex; gap: 2px; padding: 2px; border-radius: 10px; background: var(--cc-track); }
   .hf { display: flex; align-items: center; gap: 3px; height: 30px; padding: 0 8px 0 6px; border: 0; border-radius: 8px; cursor: pointer;
     background: transparent; color: var(--cc-sub); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; --mdc-icon-size: 16px; }
   .hf ha-icon { display: flex; width: 16px; height: 16px; line-height: 0; }
-  .hf.on { background: var(--cc-bg); color: var(--cc-text); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2); }
+  .hf.on { background: var(--cc-sel); color: var(--cc-text); font-weight: 600; }
   .hf:not(.on) ha-icon { opacity: 0.6; }
   .hf[aria-disabled="true"] { cursor: default; }
   .hf:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -1px; }
   .hf:hover:not(.on) { color: var(--cc-text); }
+  .hf.hday { min-width: 32px; justify-content: center; padding: 0 7px; }
+  .hf.hdx { width: 26px; justify-content: center; padding: 0; }
+  .hf.hday:disabled { cursor: default; opacity: 0.45; }
+  /* Narrow: a set day only fills the calendar (the tiles carry dates; the picker's Clear goes back), so the bar keeps
+     its width */
+  @container hist (max-width: 379px) { .hf.hday span, .hf.hdx { display: none; } }
+  /* The browser's date picker where HA's is not loaded: opened over the day button, never shown itself */
+  .hdn { position: fixed; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; pointer-events: none; }
   @container htabs (max-width: 359px) { .htabs .stab:not(.on) span { display: none; } .htabs .stab:not(.on) { flex: 0 0 38px; padding: 0; } }
+  /* Narrow: tighter filter buttons and sub-tab icons, so the day button fits beside them */
+  @container hist (max-width: 359px) { .hf { padding: 0 5px 0 4px; } .hf.hday { min-width: 28px; padding: 0 4px; } .htabs .stab:not(.on) { flex-basis: 34px; } }
   @container hist (max-width: 299px) { .hbar { flex-wrap: wrap; } .hfilt { margin-left: auto; } .htabs { flex-basis: 100%; } }
   .ht.vid .hph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--cc-sub); --mdc-icon-size: 28px; }
   .ht .hvb { position: absolute; right: 4px; top: 4px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
@@ -2457,7 +2572,7 @@ const CSS_TEXT = `
   .ovl.hvo { pointer-events: none; }
   .ovl.hvo::before { display: none; }
   .ovl.hvo > * { pointer-events: auto; }
-  .hstrip { display: grid; grid-auto-flow: column; grid-auto-columns: 120px; gap: 8px; overflow-x: auto; overscroll-behavior-x: contain;
+  .hstrip { display: grid; grid-auto-flow: column; grid-auto-columns: var(--ht-w); gap: 8px; overflow-x: auto; overscroll-behavior-x: contain;
     scroll-snap-type: x proximity; padding-bottom: 4px; scrollbar-width: thin; }
   .ht { position: relative; aspect-ratio: 16 / 9; border: 0; padding: 0; border-radius: 8px; overflow: hidden; cursor: pointer; scroll-snap-align: start;
     background: color-mix(in srgb, var(--cc-text) 10%, var(--cc-bg)); }
@@ -2482,13 +2597,14 @@ const CSS_TEXT = `
   .hf.stc { cursor: default; min-width: 40px; padding: 0 4px; box-sizing: border-box; justify-content: center; }
   /* As wide as a filter button, so the sub-tab bar keeps its width when Station opens */
   .hf.srf { width: 40px; justify-content: center; padding: 0; }
+  @container hist (max-width: 359px) { .hf.stc { min-width: 35px; } .hf.srf { width: 35px; } }
   .hf.ld ha-icon { animation: spin 1s linear infinite; }
   .slist { height: 176px; overflow-y: auto; overscroll-behavior: contain; display: grid; align-content: start; gap: 2px; scrollbar-width: thin; }
   .slist.msg { align-content: stretch; }
   .slist .hmsg { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 0 12px; text-align: center; --mdc-icon-size: 18px; }
   .srow { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto auto; align-items: center; gap: 4px 8px; min-height: 44px; padding: 3px 4px;
     border-radius: 8px; }
-  .srow.on { background: color-mix(in srgb, var(--cc-accent) 12%, transparent); }
+  .srow.on { background: var(--cc-sel-quiet); }
   .sth { position: relative; width: 64px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; display: grid; place-items: center;
     background: color-mix(in srgb, var(--cc-text) 10%, var(--cc-bg)); color: var(--cc-sub); --mdc-icon-size: 18px; }
   .sth img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; user-select: none; }
@@ -2534,9 +2650,6 @@ const CSS_TEXT = `
     display: grid; place-items: center; background: var(--cc-glass); backdrop-filter: blur(6px); color: #fff; --mdc-icon-size: 16px; }
   .hx:hover { background: var(--cc-glass-hi); }
   .hx:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-  .compact .hstrip { grid-auto-columns: 104px; }
-  /* A clock with an AM/PM marker needs wider tiles for "28.09 10:05 PM" */
-  .hstrip.wide, .compact .hstrip.wide { grid-auto-columns: 148px; }
   .compact .mi { min-height: 32px; }
   @media (prefers-reduced-motion: reduce) { .still, .tg, .tg i, .lbar, .ptzw, .lpre { transition: none; } .chip.rec .dot, .busy, .spin, .hf.ld ha-icon { animation: none; } }
 `;
@@ -2554,30 +2667,17 @@ const EDITOR_SCHEMA = [
 ];
 const EDITOR_LABELS = { entity: 'Camera', name: 'Name', history_folder: 'History folder', auto_live: 'Start live view when the dashboard opens', live_seconds: 'Live view length', layout: 'Layout',
   settings_include: 'Settings to add', settings_exclude: 'Hidden settings', settings_groups: 'Settings groups' };
-// Group names in the editor list (the tab names, More and Other said in full)
+// Group names in the editor (the tab names, More and Other said in full)
 const GROUP_EDITOR_NAMES = { more: 'More settings', other: 'Other (settings to add)' };
-// mdi:chevron-up / mdi:chevron-down (MDI 7.4.47) for ha-icon-button, which takes an SVG path
-const PATH_UP = 'M7.41,15.41L12,10.83L16.59,15.41L18,14L12,8L6,14L7.41,15.41Z';
-const PATH_DOWN = 'M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z';
-const EDITOR_CSS = `
-  .groups { margin-top: 24px; }
-  .gh { font-size: var(--ha-font-size-m, 14px); font-weight: 500; color: var(--primary-text-color); }
-  .ghelp { margin: 4px 0 8px; font-size: var(--ha-font-size-s, 12px); line-height: 1.35; color: var(--secondary-text-color); }
-  .glist { display: grid; gap: 2px; }
-  .grow { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 4px 0 12px; border-radius: 8px;
-    background: color-mix(in srgb, var(--primary-text-color) 4%, transparent); }
-  .grow ha-icon { flex: none; color: var(--secondary-text-color); --mdc-icon-size: 20px; }
-  .grow .gn { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--primary-text-color); }
-  .grow.off .gn { color: var(--secondary-text-color); }
-  .grow ha-icon-button { flex: none; --mdc-icon-button-size: 40px; color: var(--secondary-text-color); }
-  .gfoot { display: flex; justify-content: flex-end; margin-top: 4px; }
-`;
+// Settings tabs as HA's reorderable multi-select: a chip per shown group (drag to reorder, ✕ to hide), the rest to add
+const GROUPS_FIELD = { name: 'settings_groups', selector: { select: { multiple: true, reorder: true,
+  options: GROUP_IDS.map(id => ({ value: id, label: GROUP_EDITOR_NAMES[id] || groupInfo(id)[1] })) } } };
 const EDITOR_HELPERS = {
   history_folder: 'The camera\'s folder under Media › eufy_home_security; only when the camera was renamed after its stills were saved',
   auto_live: 'Wakes the camera on every opening: costs battery',
   settings_include: 'Settings lists the common controls first and the rest under More settings; entities named here join the list (guard-mode actions, entry and leaving delays)',
   settings_exclude: 'Controls of the camera to leave out of Settings',
-  settings_groups: 'Tabs in Settings, in this order. A group turned off is hidden with its settings. While this list is changed, a group a later card version adds starts off here; Reset shows every group in the card\'s order',
+  settings_groups: 'Tabs in Settings, in this order: drag to reorder, remove a group to hide it with its settings. While this list differs from the default, a group a later card version adds stays hidden; removing every group shows them all again',
   live_seconds: `A started live view ends after this (default ${LIVE_S} s); the ∞ button keeps it running until stopped`,
 };
 
@@ -2587,95 +2687,24 @@ const editorSchema = (hass, entity) => {
   const me = reg[entity];
   const ids = me && me.device_id ? Object.values(reg).filter(e => e.device_id === me.device_id && ROW_DOMAINS.includes(e.entity_id.split('.')[0]))
     .map(e => e.entity_id).sort() : [];
-  if (!ids.length) return { key: '', schema: EDITOR_SCHEMA };
+  if (!ids.length) return { key: '', schema: [...EDITOR_SCHEMA, GROUPS_FIELD] };
   const pick = name => ({ name, selector: { entity: { multiple: true, include_entities: ids } } });
-  return { key: ids.join(','), schema: [...EDITOR_SCHEMA, pick('settings_include'), pick('settings_exclude')] };
+  return { key: ids.join(','), schema: [...EDITOR_SCHEMA, pick('settings_include'), pick('settings_exclude'), GROUPS_FIELD] };
 };
 
 class EufyCameraCardEditor extends HTMLElement {
-  setConfig(config) { this._config = { ...config }; if (this._form) { this._schema(); this._form.data = this._data(); this._renderGroups(); } }
-  // Every group in the list's order: the list as last drawn while it still matches the config (a group turned off
-  // keeps its row), else the shown ones in their configured order and the hidden ones after them in the card's
-  _groupOrder() {
-    const shown = shownGroups(this._config);
-    const prev = this._order || [];
-    const same = prev.length === GROUP_IDS.length && GROUP_IDS.every(id => prev.includes(id))
-      && prev.filter(id => shown.includes(id)).join() === shown.join();
-    const order = same ? prev : [...shown, ...GROUP_IDS.filter(id => !shown.includes(id))];
-    return { order, shown: new Set(shown) };
-  }
-  // Writes the shown groups in the list's order; the card's own order with every group shown drops the key
-  _emitGroups(order, shown, focus) {
-    this._order = order;
-    const list = order.filter(id => shown.has(id));
-    const next = { ...this._config };
-    if (list.length === GROUP_IDS.length && list.every((id, i) => id === GROUP_IDS[i])) delete next.settings_groups;
-    else next.settings_groups = list;
-    this._config = next;
-    this._renderGroups(focus);
-    this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: next }, bubbles: true, composed: true }));
-  }
-  _renderGroups(focus) {
-    // HA sets hass before the first setConfig
-    if (!this._groups || !this._config) return;
-    const { order, shown } = this._groupOrder();
-    this._groups.querySelector('.greset').disabled = this._config.settings_groups === undefined;
-    // Drawn again only on a change: HA sets hass on every state change, and a redraw would drop the focus
-    const key = `${order.join()}|${[...shown].join()}`;
-    if (!focus && key === this._groupsKey) return;
-    this._groupsKey = key;
-    this._order = order;
-    const list = this._groups.querySelector('.glist');
-    list.innerHTML = '';
-    order.forEach((id, i) => {
-      const g = groupInfo(id), name = GROUP_EDITOR_NAMES[id] || g[1], on = shown.has(id);
-      const row = document.createElement('div');
-      row.className = `grow${on ? '' : ' off'}`;
-      row.setAttribute('role', 'listitem');
-      row.dataset.group = id;
-      row.innerHTML = `<ha-icon icon="${g[2]}"></ha-icon><span class="gn">${escapeHtml(name)}</span>`;
-      const move = (dir, path, label) => {
-        const b = document.createElement('ha-icon-button');
-        b.path = path;
-        b.label = `${label} ${name}`;
-        b.dataset.move = dir;
-        const j = i + (dir === 'up' ? -1 : 1);
-        b.disabled = j < 0 || j >= order.length;
-        b.addEventListener('click', () => {
-          if (b.disabled) return;
-          const o = order.slice();
-          [o[i], o[j]] = [o[j], o[i]];
-          this._emitGroups(o, shown, [id, dir]);
-        });
-        return b;
-      };
-      row.append(move('up', PATH_UP, 'Move up'), move('down', PATH_DOWN, 'Move down'));
-      const sw = document.createElement('ha-switch');
-      sw.checked = on;
-      sw.setAttribute('aria-label', `Show ${name}`);
-      sw.dataset.toggle = id;
-      sw.addEventListener('change', () => {
-        const s2 = new Set(shown);
-        if (sw.checked) s2.add(id); else s2.delete(id);
-        this._emitGroups(order, s2, [id, 'toggle']);
-      });
-      row.append(sw);
-      list.append(row);
-    });
-    // Focus back on the pressed control after the list is drawn again; a move that reached an end goes to its other arrow
-    if (focus) {
-      const row = list.querySelector(`[data-group="${focus[0]}"]`);
-      let el = row && row.querySelector(focus[1] === 'toggle' ? '[data-toggle]' : `[data-move="${focus[1]}"]`);
-      if (el && el.disabled) el = row.querySelector(`[data-move="${focus[1] === 'up' ? 'down' : 'up'}"]`);
-      if (el) el.focus();
-    }
-  }
+  setConfig(config) { this._config = { ...config }; if (this._form) { this._schema(); this._form.data = this._data(); } }
   _schema() {
     const s = editorSchema(this._hass, this._config && this._config.entity);
     if (s.key !== this._schemaKey || !this._form.schema) { this._schemaKey = s.key; this._form.schema = s.schema; }
   }
-  // auto_live: true is the YAML short form of 'timed'
-  _data() { const d = { ...(this._config || {}) }; if (d.auto_live === true) d.auto_live = 'timed'; return d; }
+  // auto_live: true is the YAML short form of 'timed'; no settings_groups shows every group in the card's order
+  _data() {
+    const d = { ...(this._config || {}) };
+    if (d.auto_live === true) d.auto_live = 'timed';
+    d.settings_groups = shownGroups(this._config);
+    return d;
+  }
   set hass(hass) {
     this._hass = hass;
     if (!this._form) {
@@ -2687,34 +2716,25 @@ class EufyCameraCardEditor extends HTMLElement {
         ev.stopPropagation();
         const next = { ...this._config };
         Object.entries(ev.detail.value || {}).forEach(([k, v]) => {
-          if (k === 'type' || k === 'settings_groups') return;
+          if (k === 'type') return;
+          // Untouched, the key stays as written (a YAML [] too); the card's order with every group, or no group
+          // left, drops it (every group shows)
+          if (k === 'settings_groups') {
+            const list = [...new Set([].concat(v || []).map(String))].filter(id => GROUP_IDS.includes(id));
+            if (list.join() === shownGroups(this._config).join()) return;
+            if (!list.length || list.join() === GROUP_IDS.join()) delete next[k]; else next[k] = list;
+            return;
+          }
           if (v === '' || v === undefined || v === null || (Array.isArray(v) && !v.length) || (k === 'layout' && v === 'auto') || (k === 'auto_live' && v === 'off') || (k === 'live_seconds' && v === LIVE_S)) delete next[k]; else next[k] = v;
         });
         this._config = next;
         this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: next }, bubbles: true, composed: true }));
       });
       root.appendChild(this._form);
-      const st = document.createElement('style');
-      st.textContent = EDITOR_CSS;
-      this._groups = document.createElement('div');
-      this._groups.className = 'groups';
-      this._groups.innerHTML = `<div class="gh" id="gh">${EDITOR_LABELS.settings_groups}</div><div class="ghelp">${escapeHtml(EDITOR_HELPERS.settings_groups)}</div>
-        <div class="glist" role="list" aria-labelledby="gh"></div><div class="gfoot"><ha-button class="greset">Reset</ha-button></div>`;
-      this._groups.querySelector('.greset').addEventListener('click', (ev) => {
-        if (ev.currentTarget.disabled) return;
-        this._order = null;
-        const next = { ...this._config };
-        delete next.settings_groups;
-        this._config = next;
-        this._renderGroups();
-        this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: next }, bubbles: true, composed: true }));
-      });
-      root.append(st, this._groups);
     }
     this._form.hass = hass;
     this._schema();
     this._form.data = this._data();
-    this._renderGroups();
   }
 }
 
