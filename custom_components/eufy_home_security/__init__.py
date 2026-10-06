@@ -81,7 +81,7 @@ PLATFORMS: list[Platform] = [
 def _log_station_not_up(serial: str, error: BaseException) -> None:
     """One WARNING for a station that did not come up, by redacted serial only."""
     _LOGGER.warning(
-        "HomeBase %s did not come up (%s); its entities stay unavailable while the "
+        "Station %s did not come up (%s); its entities stay unavailable while the "
         "eufy library keeps reconnecting to it",
         redact_serial(serial),
         type(error).__name__,
@@ -156,9 +156,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     The password is ``None``: the library logs in with the one the config flow's
     login cached, and a warm cache performs no cloud round trip at all.
     """
-    # Each attempt re-evaluates the stations' stamps: an attempt that raised a
-    # mismatch issue and then failed was never unloaded.
-    errors.delete_account_mismatch_issues(hass, entry)
+    # Each attempt re-evaluates the stations' stamps and keys: an attempt that raised
+    # a mismatch or cipher issue and then failed was never unloaded.
+    errors.delete_reload_scoped_issues(hass, entry)
     # A card file changed by an update takes effect on this entry's (re)load.
     await card.async_sync_card_resource(hass)
     eufy = runtime.build_client(
@@ -503,9 +503,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
 async def async_unload_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool:
     """Unload the platforms; the on-unload close shuts the account's client.
 
-    A successful unload deletes the entry's account-id-mismatch issues, so a reload
-    re-evaluates each station's stamps. A reconnect never clears them: the
-    library reports a mismatch at most once per connection.
+    A successful unload deletes the entry's account-id-mismatch and cipher-unavailable
+    issues, so a reload re-evaluates each station's stamps and asks for its key again.
+    A reconnect never clears a mismatch issue: the library reports a mismatch at
+    most once per connection.
     """
     # First, before the entities stop listening: from here on events go to the
     # fallback bus event.
@@ -513,7 +514,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> boo
     router.async_stop_consuming()
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        errors.delete_account_mismatch_issues(hass, entry)
+        errors.delete_reload_scoped_issues(hass, entry)
     else:
         # The entry stays loaded with its entities listening: without this every
         # later push would go to the fallback bus event until a restart.
@@ -566,12 +567,12 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry[Any]) -> No
     (and ``openudid``) through ``async_forget_account``, which never contacts the
     cloud. The store itself is never deleted (library guide, "Keep it").
 
-    Any account-id-mismatch issue goes too: an entry whose setup failed was never
-    unloaded, so nothing else deletes it. The entry's cached stills are deleted, and
-    with the last entry the dashboard card's resource. The record of the recordings
-    copied into the history goes too; the files stay.
+    Any account-id-mismatch or cipher-unavailable issue goes too: an entry whose
+    setup failed was never unloaded, so nothing else deletes it. The entry's cached
+    stills are deleted, and with the last entry the dashboard card's resource. The
+    record of the recordings copied into the history goes too; the files stay.
     """
-    errors.delete_account_mismatch_issues(hass, entry)
+    errors.delete_reload_scoped_issues(hass, entry)
     await still_cache.async_remove_entry_cache(hass, entry.entry_id)
     await recordings.async_remove_store(hass, entry.entry_id)
     if not any(

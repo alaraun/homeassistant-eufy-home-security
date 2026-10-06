@@ -68,8 +68,8 @@ location /api/hls/ {
 
 ## eufy account
 
-- The account must see the HomeBase: the owner's, or an **admin** share. A guest
-  share cannot arm or change settings.
+- The account must see the HomeBase: the owner's, or one the owner shared it with
+  in the eufy app.
 - A sign-in from another client ends the earlier session of the same account. Give
   Home Assistant its own account, shared from the owner's app; share devices added
   later again.

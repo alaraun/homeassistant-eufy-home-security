@@ -42,9 +42,9 @@ Assistant installs automatically. Library bugs that show without Home Assistant 
 - Live view reads each camera from Home Assistant's own port on `127.0.0.1`: TLS on
   that port works, an `http: server_host` bound only to a LAN address does not
   ([stream access](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/network.md#stream-access)).
-- A eufy account that sees the HomeBase, as owner or **admin** share. Use a separate
-  account for Home Assistant: a sign-in elsewhere with the same account ends Home
-  Assistant's session.
+- A eufy account that sees the HomeBase: the owner's, or one it is shared with. Use a
+  separate account for Home Assistant: a sign-in elsewhere with the same account ends
+  Home Assistant's session.
 
 ## Installation
 

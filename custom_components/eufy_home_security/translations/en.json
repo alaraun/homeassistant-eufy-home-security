@@ -114,7 +114,7 @@
         "step": {
           "confirm": {
             "title": "Sign Home Assistant in to eufy again",
-            "description": "Another app, device or integration signed in with the eufy account {account}, and eufy ended Home Assistant's session; local control of your HomeBase keeps working from the cached account. Home Assistant will sign in to eufy once with the saved password, which signs the other client out. eufy limits how often an account may sign in, so do this only when the other client is no longer needed. To avoid this for good, give Home Assistant its own eufy account, shared from the owner's account with admin rights."
+            "description": "Another app, device or integration signed in with the eufy account {account}, and eufy ended Home Assistant's session; local control of your HomeBase keeps working from the cached account. Home Assistant will sign in to eufy once with the saved password, which signs the other client out. eufy limits how often an account may sign in, so do this only when the other client is no longer needed. To avoid this for good, give Home Assistant its own eufy account, shared from the owner's account."
           }
         },
         "abort": {
@@ -165,6 +165,10 @@
     "push_not_running": {
       "title": "eufy cloud push is not running for {account}",
       "description": "Cloud push is switched on for the eufy account {account}, but Home Assistant is not receiving eufy's push messages right now. Until it is, detections from cameras without a HomeBase, and changes made in the eufy app, arrive late or not at all. Local control and detections from a HomeBase keep working. Home Assistant keeps retrying by itself, and this notice clears when push runs again. If it stays, check that Home Assistant can reach the internet, and look at the log for the reason. To stop using cloud push, switch it off in the integration's options."
+    },
+    "cipher_unavailable": {
+      "title": "eufy has no key for {station}",
+      "description": "{station} uses key number {cipher} for its local connection, but eufy holds no such key for the station's owner, so Home Assistant cannot connect to it and its entities are unavailable. Signing in again does not help. In the eufy app, on the account that set the station up, check that the station is still there and shared with the account Home Assistant uses; share it again if needed. Then reload the integration: Home Assistant asks eufy again on every reload, and on its own at most once an hour."
     }
   },
   "exceptions": {
@@ -172,7 +176,7 @@
       "message": "eufy rejected the saved password for this account, or none is saved. Re-enter it in the reauthentication dialog; Home Assistant will not try the old password again."
     },
     "guard_mode_not_applied": {
-      "message": "The HomeBase did not apply {target}. The panel shows the mode the HomeBase last reported. If this keeps happening, the eufy account may lack admin rights to this HomeBase."
+      "message": "The HomeBase did not apply {target}. The panel shows the mode the HomeBase last reported. If this keeps happening, check in the eufy app that the HomeBase is shared with this eufy account."
     },
     "setting_not_applied": {
       "message": "The HomeBase did not apply the change to {target}. The entity shows the value the HomeBase last reported; check that the device is online and try again."

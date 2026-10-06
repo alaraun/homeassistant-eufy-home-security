@@ -38,6 +38,7 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 from eufy_home_security import (
     AuthenticationError,
     CameraWakeError,
+    CipherUnavailableError,
     CloudError,
     CloudProblem,
     CloudStatus,
@@ -98,6 +99,7 @@ from .const import (
     EXC_STATION_UNREACHABLE,
     EXC_ZOOM_NEEDS_SINGLE_VIEW,
     ISSUE_ACCOUNT_ID_MISMATCH,
+    ISSUE_CIPHER_UNAVAILABLE,
     ISSUE_CREDENTIALS_REFRESHED,
     ISSUE_CREDENTIALS_REFRESHED_LOGIN,
     ISSUE_KEY_REJECTED,
@@ -551,6 +553,8 @@ def route_cloud_problem(
 ) -> None:
     """A background cloud failure, routed to reauth or a repair issue.
 
+    - ``CipherUnavailableError`` with a station: that station's cipher-unavailable
+      issue (:func:`raise_cipher_unavailable_issue`).
     - ``AuthenticationError``: the reauth flow, through
       ``async_start_reauth_if_available`` (the path setup's ``ConfigEntryAuthFailed``
       takes too), which starts at most one flow per entry and nothing for a config
@@ -561,9 +565,13 @@ def route_cloud_problem(
     - Any other ``CloudError``: logged at DEBUG by type only. The station's own
       ``ConnectionChanged`` already drives its availability.
 
-    Nothing here logs in or calls the cloud. The library emits each error type once
-    until a cloud call succeeds, so a problem cannot flood the registry.
+    All but the first go through :func:`route_cloud_error`. Nothing here logs in or
+    calls the cloud. The library emits each error type once until a cloud call
+    succeeds, so a problem cannot flood the registry.
     """
+    if isinstance(problem.error, CipherUnavailableError) and problem.station_sn:
+        raise_cipher_unavailable_issue(hass, entry, problem.station_sn, problem.error.cipher_id)
+        return
     route_cloud_error(hass, entry, problem.error)
 
 
@@ -821,14 +829,67 @@ def raise_key_rejected_issues(
 
 
 def clear_station_issues(hass: HomeAssistant, entry: ConfigEntry[Any], serial: str) -> None:
-    """The station is connected: its key is accepted, so its key-rejected issue goes.
+    """The station is connected: its key is accepted, so its key issues go.
 
-    The credentials-refreshed notice stays: it is emitted about a second
-    before the reconnect it enables, so clearing it here would delete it unseen.
+    Both the key-rejected and the cipher-unavailable issue are deleted. The
+    credentials-refreshed notice stays: it is emitted about a second before the
+    reconnect it enables, so clearing it here would delete it unseen.
     """
     device = _station_device(hass, entry, serial)
     if device is not None:
         ir.async_delete_issue(hass, DOMAIN, key_rejected_issue_id(entry.entry_id, device.id))
+        ir.async_delete_issue(hass, DOMAIN, cipher_unavailable_issue_id(entry.entry_id, device.id))
+
+
+def cipher_unavailable_issue_id(entry_id: str, device_id: str) -> str:
+    """A station's cipher-unavailable issue, by its device-registry id."""
+    return f"{ISSUE_CIPHER_UNAVAILABLE}_{entry_id}_{device_id}"
+
+
+def raise_cipher_unavailable_issue(
+    hass: HomeAssistant, entry: ConfigEntry[Any], serial: str, cipher_id: int
+) -> None:
+    """One issue for a station whose key the eufy cloud does not hold under its owner.
+
+    ``CipherUnavailableError``: the cloud answered with no key for the cipher the
+    station named. Retrying does not change that answer, and the library asks again
+    at most once an hour per client, so no fix flow is offered: the share or the
+    station's binding needs the owner. Not fixable and not persistent; the id is per
+    device, so a repeat changes nothing. Cleared when the station connects, and with
+    the entry's unload, since a reload asks the cloud once more.
+    """
+    device = _station_device(hass, entry, serial)
+    if device is None:
+        _LOGGER.debug(
+            "Station %s has no registered device; no cipher-unavailable issue",
+            redact_serial(serial),
+        )
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        cipher_unavailable_issue_id(entry.entry_id, device.id),
+        is_fixable=False,
+        is_persistent=False,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key=ISSUE_CIPHER_UNAVAILABLE,
+        translation_placeholders={"station": station_label(device), "cipher": str(cipher_id)},
+    )
+
+
+def raise_cipher_unavailable_issue_from(
+    hass: HomeAssistant, entry: ConfigEntry[Any], station: Station
+) -> None:
+    """The cipher-unavailable issue for ``station`` when its last error is one.
+
+    For ``ConnectionChanged(CREDENTIALS_UNAVAILABLE)``, which the library emits for
+    every station on each failed attempt (setup's first start included) and which
+    carries no error. ``CloudProblem`` carries the error once per error type per
+    client, so a second station failing the same way is found only here.
+    """
+    err = station.last_error
+    if isinstance(err, CipherUnavailableError):
+        raise_cipher_unavailable_issue(hass, entry, station.serial, err.cipher_id)
 
 
 def raise_credentials_refreshed_notice(
@@ -897,20 +958,24 @@ def raise_account_mismatch_issue(hass: HomeAssistant, entry: ConfigEntry[Any], s
     )
 
 
-def delete_account_mismatch_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:
-    """Delete the entry's account-id-mismatch issues.
+def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:
+    """Delete the entry's account-id-mismatch and cipher-unavailable issues.
 
     Unload, the start of every setup attempt and entry removal call it, so an issue
     raised by an attempt that then failed (and so was never unloaded) does not
-    outlive it. Found by the entry's issue id prefix in the issue registry rather
+    outlive it. Found by the entry's issue id prefixes in the issue registry rather
     than through the device registry, whose rows can already be gone at removal. A
-    later setup then decides afresh from the stations' own stamps. Logs nothing.
+    later setup then decides afresh from the stations' own stamps and keys. Logs
+    nothing.
     """
-    prefix = account_id_mismatch_issue_id(entry.entry_id, "")
+    prefixes = (
+        account_id_mismatch_issue_id(entry.entry_id, ""),
+        cipher_unavailable_issue_id(entry.entry_id, ""),
+    )
     stale = [
         issue_id
         for domain, issue_id in ir.async_get(hass).issues
-        if domain == DOMAIN and issue_id.startswith(prefix)
+        if domain == DOMAIN and issue_id.startswith(prefixes)
     ]
     for issue_id in stale:
         ir.async_delete_issue(hass, DOMAIN, issue_id)

@@ -31,6 +31,7 @@ from conftest import (
 )
 from eufy_home_security import (
     AuthenticationError,
+    CipherUnavailableError,
     CloudProblem,
     CommunicationError,
     ConnectionChanged,
@@ -61,7 +62,12 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.eufy_home_security import detections, errors, runtime
-from custom_components.eufy_home_security.const import DETECTION_EVENT_KEY, DOMAIN
+from custom_components.eufy_home_security.const import (
+    DETECTION_EVENT_KEY,
+    DOMAIN,
+    POLL_INTERVAL_SECONDS,
+    STORAGE_POLL_INTERVAL_SECONDS,
+)
 
 _CIPHER_CALL = f"cipher:{redact_serial(SYNTHETIC.station_sn)}"
 _NOTICE_KEYS = ("credentials_refreshed", "credentials_refreshed_login")
@@ -726,3 +732,134 @@ async def test_a_fix_whose_login_fails_leaves_the_latch_set_so_the_next_setup_ne
     assert _session_replaced_issue(hass, entry) is not None
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+@pytest.fixture
+def missing_cipher(fake_cloud: FakeCloud) -> None:
+    """Make the cloud, and so the warm cache seeded after this, hold no station key.
+
+    Every ``get_ciphers`` then gets the cloud's empty answer, as for an owner that
+    holds no key for the cipher the station names.
+    """
+    fake_cloud.cipher_keys.clear()
+
+
+def _cipher_issues(hass: HomeAssistant, entry: MockConfigEntry) -> dict[str, ir.IssueEntry]:
+    prefix = f"cipher_unavailable_{entry.entry_id}_"
+    return {i: issue for i, issue in _domain_issues(hass).items() if i.startswith(prefix)}
+
+
+async def test_a_station_key_the_cloud_lacks_raises_one_issue_and_no_fetch_storm(
+    hass: HomeAssistant,
+    caplog: pytest.LogCaptureFixture,
+    fake_cloud: FakeCloud,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    missing_cipher: None,
+) -> None:
+    """One non-fixable issue naming the station and cipher; polls ask the cloud nothing more."""
+    seed_warm_cache()
+    entry = add_entry(hass)
+
+    assert not await setup_entry(hass, entry)
+    assert entry.state is ConfigEntryState.SETUP_RETRY  # first-ever, none came up
+    (issue,) = _cipher_issues(hass, entry).values()
+    assert not issue.is_fixable
+    assert issue.severity is ir.IssueSeverity.ERROR
+    assert issue.translation_key == "cipher_unavailable"
+    placeholders = issue.translation_placeholders or {}
+    assert placeholders["cipher"] == str(fake_station.cipher_id)
+    assert placeholders["station"]
+    assert fake_cloud.calls.count(_CIPHER_CALL) == 1
+    assert f"Station {redact_serial(SYNTHETIC.station_sn)} did not come up" in caplog.text
+
+    # The retry builds a new client, which asks once more, then holds off.
+    await _run_scheduled_retry(hass, entry)
+    assert entry.state is ConfigEntryState.LOADED
+    assert state_of(hass, panel_entity_id(hass)) == STATE_UNAVAILABLE
+    asked = fake_cloud.calls.count(_CIPHER_CALL)
+    anchor = dt_util.utcnow()
+    for poll in (1, 2):
+        await advance_to_poll(hass, poll * (POLL_INTERVAL_SECONDS + 1), anchor=anchor)
+    await advance_to_poll(hass, STORAGE_POLL_INTERVAL_SECONDS + 1, anchor=anchor)
+    assert fake_cloud.calls.count(_CIPHER_CALL) == asked
+    assert len(_cipher_issues(hass, entry)) == 1
+    assert "login" not in fake_cloud.calls
+
+    await _unload(hass, entry)
+    assert _cipher_issues(hass, entry) == {}
+
+
+async def test_a_cipher_cloud_problem_raises_the_issue_and_a_reconnect_clears_it(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The background CloudProblem route raises it; ConnectionChanged(True) withdraws it."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    router = entry.runtime_data.router
+    error = CipherUnavailableError(
+        "no key", cipher_id=98, owner_source="member.admin_user_id", retry_after=3600.0
+    )
+
+    router.handle(CloudProblem(error=error, station_sn=SYNTHETIC.station_sn))
+    router.handle(CloudProblem(error=error, station_sn=SYNTHETIC.station_sn))
+    (issue,) = _cipher_issues(hass, entry).values()
+    assert (issue.translation_placeholders or {})["cipher"] == "98"
+    secrets = (SYNTHETIC.station_sn, SYNTHETIC.account_id, SYNTHETIC.email)
+    for text in (*_cipher_issues(hass, entry), str(issue.translation_placeholders)):
+        assert not any(secret in text for secret in secrets)
+
+    router.handle(ConnectionChanged(station_sn=SYNTHETIC.station_sn, connected=True))
+    assert _cipher_issues(hass, entry) == {}
+    assert cloud_calls(fake_cloud) == []
+
+    await _unload(hass, entry)
+
+
+async def test_a_session_lost_for_an_unavailable_cipher_raises_the_issue(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """ConnectionChanged(CREDENTIALS_UNAVAILABLE) carries no error; the station's own names it."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    station = entry.runtime_data.eufy.stations[SYNTHETIC.station_sn]
+    error = CipherUnavailableError(
+        "no key", cipher_id=155, owner_source="member.admin_user_id", retry_after=3600.0
+    )
+    monkeypatch.setattr(type(station), "last_error", property(lambda _self: error))
+
+    entry.runtime_data.router.handle(
+        ConnectionChanged(
+            station_sn=SYNTHETIC.station_sn,
+            connected=False,
+            cause=DisconnectCause.CREDENTIALS_UNAVAILABLE,
+        )
+    )
+    (issue,) = _cipher_issues(hass, entry).values()
+    assert (issue.translation_placeholders or {})["cipher"] == "155"
+
+    monkeypatch.undo()
+    await _unload(hass, entry)
+
+
+async def test_a_cipher_issue_left_by_a_failed_setup_is_deleted_by_the_next_setup(
+    hass: HomeAssistant,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The library asks again after a reload, so a stale issue does not outlive the attempt."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    errors.raise_cipher_unavailable_issue(hass, entry, SYNTHETIC.station_sn, 40)
+    assert len(_cipher_issues(hass, entry)) == 1
+
+    assert await setup_entry(hass, entry)
+    assert _cipher_issues(hass, entry) == {}
+
+    await _unload(hass, entry)
