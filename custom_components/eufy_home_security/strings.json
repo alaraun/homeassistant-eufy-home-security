@@ -110,12 +110,11 @@
   "issues": {
     "session_replaced": {
       "title": "eufy ended Home Assistant's session for {account}",
-      "description": "Another app, device or integration signed in with the eufy account {account}, and eufy ended Home Assistant's session. Local control of your HomeBase keeps working from the cached account. Fixing this signs Home Assistant in to eufy again, which signs the other client out. To avoid this for good, give Home Assistant its own eufy account, shared from the owner's account with admin rights.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Sign Home Assistant in to eufy again",
-            "description": "Home Assistant will sign in to eufy once with the saved password for {account}. This signs out the other app, device or integration using the account. eufy limits how often an account may sign in, so do this only when the other client is no longer needed."
+            "description": "Another app, device or integration signed in with the eufy account {account}, and eufy ended Home Assistant's session; local control of your HomeBase keeps working from the cached account. Home Assistant will sign in to eufy once with the saved password, which signs the other client out. eufy limits how often an account may sign in, so do this only when the other client is no longer needed. To avoid this for good, give Home Assistant its own eufy account, shared from the owner's account with admin rights."
           }
         },
         "abort": {
@@ -134,12 +133,11 @@
     },
     "key_rejected": {
       "title": "{station} rejects its key",
-      "description": "The HomeBase {station} rejects its key, even after Home Assistant fetched the key from eufy again once. Its entities are unavailable. Home Assistant does not fetch the key again by itself. Fixing this allows one more key fetch, for example after the HomeBase was reset or moved to another account.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Allow one more key fetch for {station}",
-            "description": "Home Assistant will reload the eufy account and may fetch the key for {station} from eufy once more. If the HomeBase still rejects it, this repair comes back."
+            "description": "The HomeBase {station} rejects its key, even after Home Assistant fetched the key from eufy again once, so its entities are unavailable; Home Assistant does not fetch the key again by itself. Confirm to reload the eufy account and allow one more key fetch, for example after the HomeBase was reset or moved to another account. If the HomeBase still rejects it, this repair comes back."
           }
         },
         "abort": {
