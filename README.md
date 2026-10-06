@@ -5,9 +5,11 @@
 # Anker eufy Home Security for Home Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories)
-[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2026.9%2B-41BDF5.svg)](https://www.home-assistant.io/)
+[![Home Assistant](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Falaraun%2Fhomeassistant-eufy-home-security%2Fmain%2Fhacs.json&query=%24.homeassistant&label=Home%20Assistant&suffix=%2B&color=41BDF5&cacheSeconds=3600)](https://www.home-assistant.io/)
 [![Release](https://img.shields.io/github/v/release/alaraun/homeassistant-eufy-home-security)](https://github.com/alaraun/homeassistant-eufy-home-security/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/LICENSE)
+[![CI](https://github.com/alaraun/homeassistant-eufy-home-security/actions/workflows/ci.yml/badge.svg)](https://github.com/alaraun/homeassistant-eufy-home-security/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/alaraun/homeassistant-eufy-home-security)](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/LICENSE)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/alaraun)
 
 Local control of eufy Security HomeBase systems and standalone eufy battery cameras:
 alarm panel, detections, camera stills, live video, pan/tilt presets and device
