@@ -27,8 +27,11 @@ shows or what the user must be told:
   that connects on demand (a battery camera without a HomeBase) holds no session
   between commands, so its connection events never touch availability: that follows
   the cached state and ``SubDeviceState.online``. A session lost to a rejected key
-  raises the station's key-rejected issue, and a restored one clears it.
-- ``CloudProblem`` goes to reauth or the account's repair issue.
+  raises the station's key-rejected issue, and a restored one clears it. One lost
+  for a key the cloud does not hold (``CREDENTIALS_UNAVAILABLE``) raises the
+  station's cipher-unavailable issue, which a restored session clears too.
+- ``CloudProblem`` goes to reauth or the account's repair issue; a
+  ``CipherUnavailableError`` to the station's cipher-unavailable issue.
 - ``CredentialsRefreshed`` leaves a persistent notice, which a reconnect does not
   clear.
 - ``AccountMismatch`` raises the station's account-id-mismatch issue. A reconnect
@@ -526,6 +529,13 @@ class EventRouter:
         elif isinstance(event.error, KeyRejectedError):
             errors.raise_key_rejected_issue(self._hass, self._entry, event.station_sn)
         coordinator = self._coordinators.get(event.station_sn)
+        if (
+            not event.connected
+            and event.cause is DisconnectCause.CREDENTIALS_UNAVAILABLE
+            and coordinator is not None
+        ):
+            # The event carries no error; the station's last error names the cipher.
+            errors.raise_cipher_unavailable_issue_from(self._hass, self._entry, coordinator.station)
         if coordinator is None or not self._following_availability:
             # Still inside setup: its start result and first refresh decide.
             return

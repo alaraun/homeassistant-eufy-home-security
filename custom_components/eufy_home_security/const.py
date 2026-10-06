@@ -290,6 +290,8 @@ ISSUE_CREDENTIALS_REFRESHED_LOGIN: Final = "credentials_refreshed_login"
 ISSUE_ACCOUNT_ID_MISMATCH: Final = "account_id_mismatch"
 # Cloud push is switched on but not listening; the library keeps retrying.
 ISSUE_PUSH_NOT_RUNNING: Final = "push_not_running"
+# The cloud holds no key for the cipher a station named, under the station's owner.
+ISSUE_CIPHER_UNAVAILABLE: Final = "cipher_unavailable"
 
 # Camera snapshots. The camera entity's unique-id key; it has no name of its
 # own, the camera is its device.
