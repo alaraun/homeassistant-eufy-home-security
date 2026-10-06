@@ -1262,6 +1262,7 @@ async def test_a_stream_that_ends_by_itself_is_a_clean_end_not_an_error(
     seed_warm_cache: Callable[..., None],
     hass_client_no_auth: ClientSessionGenerator,
     caplog: pytest.LogCaptureFixture,
+    short_media_idle: None,
 ) -> None:
     """A stream that simply stops is never a 500, never an error, never reopened."""
     fake_station.live_ends_unpinged_after = 0.05
