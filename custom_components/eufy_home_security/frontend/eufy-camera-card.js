@@ -4,7 +4,7 @@
 // `entity` is required; the settings rows are built from whatever settings the device has: the common ones
 // grouped, a setting that applies only in one state of another nested under it, the rest under More settings.
 
-const CARD_VERSION = '2026.10.07-1';
+const CARD_VERSION = '2026.10.07-2';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -781,6 +781,9 @@ class EufyCameraCard extends HTMLElement {
     await Promise.race([customElements.whenDefined('ha-camera-stream'), new Promise((_, rej) => setTimeout(() => rej(new Error('ha-camera-stream')), 10000))]);
   }
 
+  // Whether the camera offers a live stream (CameraEntityFeature.STREAM): only then live view and record
+  _canLive(st) { return !!st && ((st.attributes.supported_features || 0) & 2) === 2; }
+
   // `auto_live`: true | 'timed' (a timed view) or 'continuous', started when the card is shown
   _autoMode() {
     const a = this._config && this._config.auto_live;
@@ -794,14 +797,14 @@ class EufyCameraCard extends HTMLElement {
     if (!mode || this._autoDone || this._live || !this.isConnected || this.preview || !this._hass || !this.content) return;
     if (document.visibilityState !== 'visible') return;
     const st = this._st(this._config.entity);
-    if (!st || st.state === 'unavailable') return;
+    if (!st || st.state === 'unavailable' || !this._canLive(st)) return;
     this._autoDone = true;
     this._start(mode === 'continuous');
   }
 
   _start(continuous) {
     const h = this._hass, st = this._st(this._config.entity);
-    if (!h || !st || st.state === 'unavailable') return;
+    if (!h || !st || st.state === 'unavailable' || !this._canLive(st)) return;
     if (this._live) { this._live.continuous = continuous; this._live.until = continuous ? null : Date.now() + this._liveSeconds() * 1000; this.render(); return; }
     this._view = null;
     this._live = { continuous, until: continuous ? null : Date.now() + this._liveSeconds() * 1000, started: Date.now(), video: false, muted: true };
@@ -1530,6 +1533,7 @@ class EufyCameraCard extends HTMLElement {
     const stg = this._stg;
     const ctx = { ranges: {}, rows: {}, order: [] };
     const avail = !!st && st.state !== 'unavailable';
+    const canLive = this._canLive(st);
     if (!avail && this._live) { this._stop('Camera unavailable'); return; }
     const L = this._live;
     const recording = avail && this._recording();
@@ -1690,12 +1694,12 @@ class EufyCameraCard extends HTMLElement {
       : (actSt.status === 'failed' ? 'Not applied' : word));
     const wordCls = stg.act ? ' staged' : (actSt.status === 'pending' ? ' pending' : (actSt.status === 'failed' ? ' err' : wcls));
     const badge = L || recording ? ['live', 'mdi:record'] : (active ? ['det', active[2]] : null);
-    const liveMenu = !avail ? [] : (L
+    const liveMenu = !avail || !canLive ? [] : (L
       ? [['live', 'pin', L.continuous ? `Stop after ${mmss(this._liveSeconds())}` : 'Keep live (continuous)', L.continuous ? 'mdi:timer-outline' : 'mdi:all-inclusive'],
         ['live', 'full', 'Full screen', 'mdi:fullscreen'], ['live', 'stop', 'Stop live view', 'mdi:stop']]
       : [['live', 'timed', `Live view · ${mmss(this._liveSeconds())}`, 'mdi:play'], ['live', 'continuous', 'Live view · continuous', 'mdi:all-inclusive']]);
     // Record a clip (live or idle: the action opens the stream itself); disabled while one is recorded
-    if (avail) liveMenu.push(['live', 'rec', recording ? 'Recording a clip' : 'Record a clip', 'mdi:record-rec', recording]);
+    if (avail && canLive) liveMenu.push(['live', 'rec', recording ? 'Recording a clip' : 'Record a clip', 'mdi:record-rec', recording]);
     const actMenu = ['capture', 'refresh'].filter(a => E[a] && avail).map(a => ['action', a, ACTIONS[a].label, ACTIONS[a].icon]);
     const items = [...liveMenu, ...actMenu];
     const menu = this._menuOpen ? `
@@ -1763,7 +1767,8 @@ class EufyCameraCard extends HTMLElement {
     const recChip = recording && !vItem ? chip('', 'rec recc', `<i class="dot"></i><span class="rw">REC</span><span class="tv" data-rect>${this._recSeconds()} s</span>`, 'Recording a clip') : '';
     const centre = vItem ? (vPic && vPic.src ? '' : '<div class="ctr wake" role="status"><i class="spin"></i></div>') : !avail
       ? '<div class="ctr off"><ha-icon icon="mdi:cctv-off"></ha-icon><span>Unavailable</span></div>'
-      : (!L ? `<div class="ctr">
+      : (!L && !canLive ? '<div class="ctr off"><ha-icon icon="mdi:video-off-outline"></ha-icon><span>No live view for this model</span></div>'
+        : !L ? `<div class="ctr">
             <button type="button" class="play" data-live="timed" data-focus="play" aria-label="Start live view for ${mmss(this._liveSeconds())}"><ha-icon icon="mdi:play"></ha-icon></button>
             <button type="button" class="pin0" data-live="continuous" data-focus="pin0" aria-label="Start live view, continuous"><ha-icon icon="mdi:all-inclusive"></ha-icon></button>
             <span class="plbl" aria-hidden="true">Live · ${mmss(this._liveSeconds())}</span>

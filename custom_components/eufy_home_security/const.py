@@ -239,7 +239,7 @@ EXC_DEVICE_LIST_REFRESH_FAILED: Final = "device_list_refresh_failed"
 EXC_CAPTURE_IN_PROGRESS: Final = "capture_in_progress"
 # A preset capture for a slot the last read showed unset; nothing was sent.
 EXC_PRESET_NOT_SET: Final = "preset_not_set"
-# The capture_preset action on a camera whose model has no pan/tilt presets.
+# A preset action on a camera whose model has no pan/tilt presets.
 EXC_PRESETS_UNSUPPORTED: Final = "presets_unsupported"
 # A default-preset write the camera refused with -502, its "set anyway?" question.
 # Never answered with confirm on the user's behalf.
@@ -247,6 +247,8 @@ EXC_DEFAULT_PRESET_NEEDS_CONFIRMATION: Final = "default_preset_needs_confirmatio
 # A pan/tilt step the camera refused: it was still moving after the library's retries.
 EXC_PAN_TILT_NOT_APPLIED: Final = "pan_tilt_not_applied"
 EXC_PAN_TILT_UNSUPPORTED: Final = "pan_tilt_unsupported"
+# The zoom action on a pan/tilt camera whose model has no zoom.
+EXC_ZOOM_UNSUPPORTED: Final = "zoom_unsupported"
 EXC_ZOOM_NEEDS_SINGLE_VIEW: Final = "zoom_needs_single_view"
 # A camera command the station refused with receipt -108: it does not handle it.
 EXC_PTZ_COMMAND_NOT_HANDLED: Final = "ptz_command_not_handled"

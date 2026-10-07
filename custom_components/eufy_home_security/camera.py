@@ -286,10 +286,10 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
     async def async_goto_preset(self, preset: int) -> None:
         """The ``goto_preset`` action: turn to slot ``preset`` once, at the receipt.
 
-        A slot the last read showed unset raises ``preset_not_set`` before sending.
+        A model without presets raises ``presets_unsupported`` and a slot the last read
+        showed unset ``preset_not_set``, both before sending.
         """
-        if not detections.has_pan_tilt_control(self._serial):
-            raise errors.pan_tilt_unsupported()
+        self._require_presets()
         station = self.coordinator.station
         if station.presets(self._serial) is not None and preset not in presets.enabled_indexes(
             station, self._serial
@@ -304,7 +304,7 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
 
         Without ``preset`` the lowest free slot; with it, that slot is overwritten.
         """
-        self._require_preset_edits()
+        self._require_presets()
         index = await ptz.async_save_preset(
             self.coordinator,
             self._serial,
@@ -320,7 +320,7 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
 
         A slot the last read showed unset raises ``preset_not_set`` before sending.
         """
-        self._require_preset_edits()
+        self._require_presets()
         station = self.coordinator.station
         if station.presets(self._serial) is not None and preset not in presets.enabled_indexes(
             station, self._serial
@@ -330,8 +330,8 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
             self.coordinator, self._serial, self._presets, preset, SERVICE_DELETE_PRESET
         )
 
-    def _require_preset_edits(self) -> None:
-        """Refuse a preset edit on a model without pan/tilt control or presets."""
+    def _require_presets(self) -> None:
+        """Refuse a preset action on a model without pan/tilt control or presets."""
         if not detections.has_pan_tilt_control(self._serial):
             raise errors.pan_tilt_unsupported()
         if not detections.has_preset_entities(self._serial):
@@ -340,13 +340,14 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
     async def async_zoom(self, direction: str) -> None:
         """The ``zoom`` action: the live-view zoom one step in or out, within 1x-12x."""
         streams = runtime.streaming(self.coordinator.config_entry)
+        if not detections.has_pan_tilt_control(self._serial):
+            raise errors.pan_tilt_unsupported()
         if (
-            not detections.has_pan_tilt_control(self._serial)
-            or not detections.has_zoom(self._serial)
+            not detections.has_zoom(self._serial)
             or streams is None
             or not streams.has_camera(self._serial)
         ):
-            raise errors.pan_tilt_unsupported()
+            raise errors.zoom_unsupported()
         step = ZOOM_ACTION_STEP if direction == ZOOM_IN else -ZOOM_ACTION_STEP
         zoom = min(MAX_ZOOM, max(MIN_ZOOM, streams.live_zoom(self._serial) + step))
         await ptz.async_set_live_zoom(self.coordinator, self._serial, zoom, SERVICE_ZOOM)

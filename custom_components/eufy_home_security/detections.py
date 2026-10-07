@@ -244,9 +244,9 @@ def zoom_signal(entry_id: str, device_sn: str) -> SignalType[()]:
 def has_live_stream(serial: str) -> bool:
     """Whether the camera ``serial`` gets a live video stream.
 
-    The same test the library's own live open applies: the model's profile supports
-    ``Capability.LIVE_STREAM`` other than ``UNKNOWN``, so the integration offers
-    exactly what the library accepts. Never a serial prefix.
+    The model's profile supports ``Capability.LIVE_STREAM`` other than ``UNKNOWN``
+    (verified or declared). The library's live open does not check it, so this is
+    the only gate. Never a serial prefix.
     """
     profile = profile_for_serial(serial)
     return profile is not None and profile.support(Capability.LIVE_STREAM) is not Support.UNKNOWN
