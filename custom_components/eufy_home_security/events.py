@@ -27,8 +27,9 @@ shows or what the user must be told:
   that connects on demand (a battery camera without a HomeBase) holds no session
   between commands, so its connection events never touch availability: that follows
   the cached state and ``SubDeviceState.online``. A session lost to a rejected key
-  raises the station's key-rejected issue, and a restored one clears it. One lost
-  for a key the cloud does not hold (``CREDENTIALS_UNAVAILABLE``) raises the
+  raises the station's key-rejected issue, one lost to a key eufy serves unusable
+  (``CipherUnusableError``) its key-unusable issue, and a restored one clears both.
+  One lost for a key the cloud does not hold (``CREDENTIALS_UNAVAILABLE``) raises the
   station's cipher-unavailable issue, which a restored session clears too.
 - ``CloudProblem`` goes to reauth or the account's repair issue; a
   ``CipherUnavailableError`` to the station's cipher-unavailable issue.
@@ -92,6 +93,7 @@ from homeassistant.helpers.event import async_call_later
 from eufy_home_security import (
     AccountMismatch,
     AlarmChanged,
+    CipherUnusableError,
     CloudProblem,
     ConnectionChanged,
     CredentialsRefreshed,
@@ -528,6 +530,8 @@ class EventRouter:
             errors.clear_station_issues(self._hass, self._entry, event.station_sn)
         elif isinstance(event.error, KeyRejectedError):
             errors.raise_key_rejected_issue(self._hass, self._entry, event.station_sn)
+        elif isinstance(event.error, CipherUnusableError):
+            errors.raise_key_unusable_issue(self._hass, self._entry, event.station_sn)
         coordinator = self._coordinators.get(event.station_sn)
         if (
             not event.connected

@@ -235,6 +235,8 @@ EXC_ON_DEMAND_UNREACHABLE: Final = "on_demand_unreachable"
 EXC_SESSION_REPLACED_SEE_REPAIRS: Final = "session_replaced_see_repairs"
 # An arm or disarm refused because the station rejects even its re-fetched key.
 EXC_STATION_KEY_REJECTED: Final = "station_key_rejected"
+# An arm or disarm refused because eufy serves the station a key that cannot be used.
+EXC_STATION_KEY_UNUSABLE: Final = "station_key_unusable"
 # An arm or disarm that needed eufy's cloud, which refused or was down.
 EXC_CLOUD_UNAVAILABLE: Final = "cloud_unavailable"
 # No cached device list and no cloud to fetch one from: setup retries.
@@ -305,6 +307,9 @@ ISSUE_ACCOUNT_ID_MISMATCH: Final = "account_id_mismatch"
 ISSUE_PUSH_NOT_RUNNING: Final = "push_not_running"
 # The cloud holds no key for the cipher a station named, under the station's owner.
 ISSUE_CIPHER_UNAVAILABLE: Final = "cipher_unavailable"
+# eufy serves a station a key that does not parse (the legacy RSA handshake); no
+# re-fetch helps, so the issue is not fixable.
+ISSUE_KEY_UNUSABLE: Final = "key_unusable"
 # The account lists no devices in any eufy cloud region, and none is asked again.
 ISSUE_NO_DEVICES: Final = "no_devices"
 
