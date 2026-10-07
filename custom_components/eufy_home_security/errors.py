@@ -53,6 +53,7 @@ from eufy_home_security import (
     RateLimitedError,
     RefreshCooldownError,
     RegionStatus,
+    SessionRejectedError,
     SessionReplacedError,
     Station,
     redact,
@@ -65,6 +66,7 @@ from .const import (
     ERROR_INVALID_AUTH,
     ERROR_LOGIN_CHALLENGE,
     ERROR_LOGIN_LIMITED,
+    ERROR_SESSION_REJECTED,
     ERROR_SESSION_REPLACED,
     EXC_AUTH_FAILED,
     EXC_CACHE_UNAVAILABLE,
@@ -379,13 +381,16 @@ def flow_error_key(err: EufySecurityError) -> str:
     """The config-flow form error for a library error met while signing in.
 
     Checked most specific first, because the classes nest:
-    ``LoginChallengeError`` is an ``AuthenticationError`` but the password was
-    right, and ``LoginLimitedError`` and ``RefreshCooldownError`` are both
-    ``RateLimitedError``. Everything else, transport and station errors included,
-    means eufy could not be reached or could not finish.
+    ``LoginChallengeError`` and ``SessionRejectedError`` are ``AuthenticationError``
+    but the password was right, and ``LoginLimitedError`` and ``RefreshCooldownError``
+    are both ``RateLimitedError``. Everything else, transport and station errors
+    included, means eufy could not be reached or could not finish. A two-step code
+    challenge gets its own step in the flow, not this key.
     """
     if isinstance(err, LoginChallengeError):
         return ERROR_LOGIN_CHALLENGE
+    if isinstance(err, SessionRejectedError):
+        return ERROR_SESSION_REJECTED
     if isinstance(err, AuthenticationError):
         return ERROR_INVALID_AUTH
     if isinstance(err, RateLimitedError):
