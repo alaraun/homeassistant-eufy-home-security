@@ -15,7 +15,7 @@
       },
       "reauth_confirm": {
         "title": "Enter the eufy password again",
-        "description": "eufy rejected the saved password for {account}. Enter the current password, and Home Assistant signs in to eufy once to check it.",
+        "description": "eufy no longer accepts the saved sign-in for {account}: the password was rejected, none is saved, or eufy asks for a two-step verification code. Enter the current password, and Home Assistant signs in to eufy once to check it.",
         "data": {
           "password": "Password"
         },
@@ -36,14 +36,26 @@
         "data_description": {
           "password": "Optional. Leave empty to sign in with the saved password. Enter the account's current password to check it with eufy and save it in place of the old one."
         }
+      },
+      "verify_code": {
+        "title": "Enter the eufy verification code",
+        "description": "This eufy account uses two-step verification: eufy accepted the password and asks for the code it sends by e-mail. Enter the code to finish the sign-in. If no e-mail arrives, close this dialog and try again later; each attempt is a sign-in.",
+        "data": {
+          "verify_code": "Verification code"
+        },
+        "data_description": {
+          "verify_code": "The code from eufy's e-mail. Use the newest one if several arrived."
+        }
       }
     },
     "error": {
       "invalid_email": "That is not an email address. Check it and try again; nothing was sent to eufy.",
-      "login_challenge": "eufy wants a verification for this sign-in. Sign in once in the eufy app on your phone, then try again here.",
+      "login_challenge": "eufy wants a captcha for this sign-in. Sign in once in the eufy app on your phone, then try again here.",
+      "invalid_verify_code": "eufy did not accept the code. Enter the newest code from eufy's e-mail; a new one may be on its way.",
       "invalid_auth": "eufy rejected the email or password; check both. Repeated failed sign-ins lock the account for 24 hours.",
       "login_limited": "eufy is temporarily refusing sign-ins for this account. Wait before trying again: each attempt restarts the wait, and repeated attempts can lock the account for 24 hours.",
       "session_replaced": "Another app, device or integration signed in with this account and eufy ended the earlier session. Close that other client or wait, then try again.",
+      "session_rejected": "eufy accepted the sign-in but then refused the session. Wait a few minutes, then try again.",
       "cannot_connect": "Home Assistant could not reach eufy. Check the internet connection and try again."
     },
     "abort": {

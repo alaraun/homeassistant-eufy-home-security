@@ -76,6 +76,10 @@ location /api/hls/ {
 - eufy allows only a few sign-ins per account per day and locks the account for
   24 hours after repeated failures. Home Assistant signs in only at setup and on
   **Reconfigure**.
+- An account with two-step verification asks for a code at each new sign-in. eufy
+  sends it by e-mail, and the setup, re-authentication and **Reconfigure** dialogs ask
+  for it after the password. The session is saved; a restart signs in again only
+  after eufy ended it.
 
 ## eufy regions
 

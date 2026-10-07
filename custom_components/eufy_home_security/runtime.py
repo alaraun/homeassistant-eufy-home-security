@@ -7,7 +7,8 @@ caller that imported the function by name would bypass the replacement and build
 a real client. The config flow's second entry point here is
 :func:`async_login_with_saved_password`, the one forced login the flow performs:
 a helper that takes the client belongs in this module, because
-no other module may name the client type; so does :func:`async_run_push`, the
+no other module may name the client type; so does :class:`PendingVerification`, the
+client a sign-in waiting for a two-step code keeps open; and :func:`async_run_push`, the
 cloud push start that setup runs in the background. The integration never writes the
 library's cache.
 """
@@ -195,6 +196,46 @@ async def async_login_with_saved_password(eufy: EufySecurity, *, take_over: bool
         return False
     await eufy.async_login(force=True)
     return True
+
+
+@dataclass
+class PendingVerification:
+    """A sign-in waiting for the user's two-step verification code.
+
+    Holds the client that met the challenge, open between the flow's steps: the library
+    sends the answer to the region whose login asked, and only that instance knows it.
+    ``reauthenticate_with`` is a typed password the flow is checking (answered through
+    ``async_reauthenticate``); None answers through ``async_login`` with the password
+    the client already holds (the typed one of a new account, else the saved one).
+    ``take_over`` is the flow's take-over choice for this sign-in.
+    """
+
+    eufy: EufySecurity
+    login_id: str
+    code_requested: bool
+    reauthenticate_with: str | None
+    take_over: bool
+
+    async def async_answer(self, verify_code: str) -> None:
+        """One sign-in carrying ``verify_code``; the library's error is raised as it is.
+
+        A wrong or expired code raises ``LoginChallengeError`` again.
+        """
+        if self.reauthenticate_with is not None:
+            await self.eufy.async_reauthenticate(
+                self.reauthenticate_with,
+                verify_code=verify_code,
+                login_id=self.login_id,
+                take_over=self.take_over,
+            )
+        else:
+            await self.eufy.async_login(
+                verify_code=verify_code, login_id=self.login_id, force=self.take_over
+            )
+
+    async def async_close(self) -> None:
+        """Close the held client, which saves the account store."""
+        await self.eufy.async_close()
 
 
 async def async_run_push(eufy: EufySecurity) -> None:

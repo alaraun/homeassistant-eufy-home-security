@@ -9,6 +9,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.config_entries import (
     SOURCE_RECONFIGURE,
+    SOURCE_USER,
     ConfigEntry,
     ConfigEntryState,
     ConfigFlow,
@@ -37,6 +38,7 @@ from eufy_home_security import (
     STATION_SESSION_LIMIT,
     EufySecurityError,
     ImageSource,
+    LoginChallengeError,
     SessionReplacedError,
     async_forget_account,
 )
@@ -54,6 +56,7 @@ from .const import (
     CONF_SCAN_REGIONS,
     CONF_SESSION_PROBE,
     CONF_STATION_SESSIONS,
+    CONF_VERIFY_CODE,
     DEFAULT_ALARM_TIMEOUT_MINUTES,
     DEFAULT_CAMERA_IMAGE,
     DEFAULT_DETECTION_HOLD_SECONDS,
@@ -62,6 +65,7 @@ from .const import (
     DOMAIN,
     ERROR_CANNOT_CONNECT,
     ERROR_INVALID_EMAIL,
+    ERROR_INVALID_VERIFY_CODE,
     ERROR_SESSION_REPLACED,
     MAX_ALARM_TIMEOUT_MINUTES,
     MAX_DETECTION_HOLD_SECONDS,
@@ -75,6 +79,7 @@ from .const import (
     STEP_REAUTH_TAKE_OVER,
     STEP_RECONFIGURE,
     STEP_USER,
+    STEP_VERIFY_CODE,
     CameraImageMode,
 )
 
@@ -104,6 +109,10 @@ RECONFIGURE_SCHEMA = vol.Schema(
             TextSelectorConfig(type=TextSelectorType.PASSWORD)
         ),
     }
+)
+
+VERIFY_CODE_SCHEMA = vol.Schema(
+    {vol.Required(CONF_VERIFY_CODE): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT))}
 )
 
 # The entry's options, in this order: how long a detection sensor stays on after the
@@ -196,6 +205,11 @@ def _camera_image_placeholders() -> dict[str, str]:
     }
 
 
+def _asks_for_code(err: LoginChallengeError) -> bool:
+    """Whether the challenge is eufy's two-step verification code (the flow's own step)."""
+    return err.kind == "verify_code"
+
+
 def _session_placeholders() -> dict[str, str]:
     """The sessions per HomeBase description's numbers, from the library's budget constants."""
     return {
@@ -232,6 +246,10 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
         self._take_over_pending = False
         # Whether this flow unloaded the entry, so a failed attempt reloads it.
         self._unloaded_entry = False
+        # A sign-in waiting for the two-step code, its client held open, and the
+        # e-mail of the account being added (the user step only).
+        self._pending: runtime.PendingVerification | None = None
+        self._new_account: str | None = None
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Log in once and cache the session, then create the entry.
@@ -244,10 +262,11 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
         Every refusal that can be decided locally comes before the sign-in, because
         each sign-in spends from eufy's small login budget: an empty e-mail, an
         account already set up, and an address the library refuses (``ValueError``)
-        build nothing or send nothing. A library error from the sign-in becomes a
-        form error through ``errors.flow_error_key``; any other exception is a bug
-        and propagates. The re-shown form suggests the e-mail as typed, never the
-        password.
+        build nothing or send nothing. A two-step verification challenge keeps the
+        client open and moves to the code step. Any other library error from the
+        sign-in becomes a form error through ``errors.flow_error_key``; any other
+        exception is a bug and propagates. The re-shown form suggests the e-mail as
+        typed, never the password.
         """
         form_errors: dict[str, str] = {}
         schema = CREDENTIALS_SCHEMA
@@ -265,13 +284,30 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
                 except ValueError:
                     form_errors[CONF_EMAIL] = ERROR_INVALID_EMAIL
                 else:
+                    challenge: LoginChallengeError | None = None
                     try:
                         await eufy.async_login()
                         await eufy.async_discover()
+                    except LoginChallengeError as err:
+                        if _asks_for_code(err):
+                            challenge = err
+                        else:
+                            form_errors["base"] = errors.flow_error_key(err)
                     except EufySecurityError as err:
                         form_errors["base"] = errors.flow_error_key(err)
                     finally:
-                        await eufy.async_close()
+                        if challenge is None:
+                            await eufy.async_close()
+                    if challenge is not None:
+                        self._new_account = email
+                        self._pending = runtime.PendingVerification(
+                            eufy,
+                            login_id=challenge.login_id,
+                            code_requested=challenge.code_requested,
+                            reauthenticate_with=None,
+                            take_over=False,
+                        )
+                        return self._verify_code_form({})
                     if not form_errors:
                         return self.async_create_entry(title=email, data={CONF_EMAIL: email})
                     # No entry holds this account, so nothing else would ever forget
@@ -304,7 +340,9 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
         """One real login on the account store, with ``password`` or, for None, the saved one.
 
         Returns None on success, ``STEP_REAUTH_TAKE_OVER`` when another client holds
-        the session and ``take_over`` is False, or a form error key.
+        the session and ``take_over`` is False, ``STEP_VERIFY_CODE`` when eufy asks for
+        the two-step code (the client stays open in ``self._pending`` and the entry
+        stays unloaded), or a form error key.
 
         Under ``entry.setup_lock`` (which waits out a setup in progress) the entry is
         unloaded first, so two clients never write the same store; an entry that does
@@ -324,18 +362,32 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
                 # Never two live instances on one store, and no sign-in spent beside one.
                 return ERROR_CANNOT_CONNECT
             eufy = runtime.build_client(self.hass, entry.data[CONF_EMAIL], password, claims=None)
+            held = False
             try:
                 if password is None:
                     if not await runtime.async_login_with_saved_password(eufy, take_over=take_over):
                         return STEP_REAUTH_TAKE_OVER
                 else:
                     await eufy.async_reauthenticate(password, take_over=take_over)
+            except LoginChallengeError as err:
+                if not _asks_for_code(err):
+                    return errors.flow_error_key(err)
+                held = True
+                self._pending = runtime.PendingVerification(
+                    eufy,
+                    login_id=err.login_id,
+                    code_requested=err.code_requested,
+                    reauthenticate_with=password,
+                    take_over=take_over,
+                )
+                return STEP_VERIFY_CODE
             except SessionReplacedError:
                 return ERROR_SESSION_REPLACED if take_over else STEP_REAUTH_TAKE_OVER
             except EufySecurityError as err:
                 return errors.flow_error_key(err)
             finally:
-                await eufy.async_close()
+                if not held:
+                    await eufy.async_close()
         return None
 
     async def _async_submit(
@@ -360,6 +412,8 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
         if outcome is None:
             self._unloaded_entry = False
             return self.async_update_reload_and_abort(entry)
+        if outcome == STEP_VERIFY_CODE:
+            return self._verify_code_form({})
         if outcome == STEP_REAUTH_TAKE_OVER:
             self._held_password = password
             self._take_over_pending = True
@@ -501,6 +555,160 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
             "saved" if password is None else "typed",
         )
         return await self._async_submit(entry, password, take_over=True)
+
+    async def async_step_verify_code(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask for eufy's two-step verification code, then sign in once with it.
+
+        Shared by the user, reauth and reconfigure steps: each moves here when eufy
+        answers a correct password with a code challenge, keeping the client that met it
+        open (the answer must reach the region that asked). A wrong or expired code
+        re-shows this form; any other failure closes the client and returns to the
+        source's own form with the error. Reached without a pending sign-in, it goes
+        back to the source's first step.
+        """
+        pending = self._pending
+        if pending is None:
+            return await self._async_source_start()
+        if user_input is None:
+            return self._verify_code_form({})
+        code = str(user_input.get(CONF_VERIFY_CODE, "")).strip()
+        if not code:
+            return self._verify_code_form({CONF_VERIFY_CODE: ERROR_INVALID_VERIFY_CODE})
+        if self.source == SOURCE_USER:
+            return await self._async_answer_new_account(pending, code)
+        return await self._async_answer_entry(pending, code)
+
+    async def _async_answer_new_account(
+        self, pending: runtime.PendingVerification, code: str
+    ) -> ConfigFlowResult:
+        """Answer the user step's challenge; on success list the devices and add the entry."""
+        email = self._new_account or ""
+        try:
+            await pending.async_answer(code)
+            await pending.eufy.async_discover()
+        except LoginChallengeError as err:
+            if _asks_for_code(err):
+                return self._code_refused(pending, err)
+            error = errors.flow_error_key(err)
+        except EufySecurityError as err:
+            error = errors.flow_error_key(err)
+        else:
+            await self._async_release_pending()
+            return self.async_create_entry(title=email, data={CONF_EMAIL: email})
+        await self._async_release_pending()
+        # As in the user step: no entry holds this account, so forget what was cached.
+        await async_forget_account(
+            runtime.cache_store(self.hass, email), keep_install_identity=True
+        )
+        return self.async_show_form(
+            step_id=STEP_USER,
+            data_schema=self.add_suggested_values_to_schema(
+                CREDENTIALS_SCHEMA, {CONF_EMAIL: email}
+            ),
+            errors={"base": error},
+        )
+
+    async def _async_answer_entry(
+        self, pending: runtime.PendingVerification, code: str
+    ) -> ConfigFlowResult:
+        """Answer a reauth or reconfigure challenge; success reloads the entry and aborts.
+
+        Under ``entry.setup_lock``, and only while the entry is still unloaded, so the
+        held client never runs beside the entry's own.
+        """
+        entry = self._flow_entry()
+        outcome: str | None
+        async with entry.setup_lock:
+            if entry.state is not ConfigEntryState.NOT_LOADED:
+                outcome = ERROR_CANNOT_CONNECT
+            else:
+                try:
+                    await pending.async_answer(code)
+                    outcome = None
+                except LoginChallengeError as err:
+                    if _asks_for_code(err):
+                        return self._code_refused(pending, err)
+                    outcome = errors.flow_error_key(err)
+                except SessionReplacedError:
+                    outcome = ERROR_SESSION_REPLACED
+                except EufySecurityError as err:
+                    outcome = errors.flow_error_key(err)
+            await self._async_release_pending()
+        _LOGGER.debug(
+            "Two-step sign-in from the %s flow: %s",
+            self.source,
+            "signed in" if outcome is None else outcome,
+        )
+        if outcome is None:
+            self._unloaded_entry = False
+            return self.async_update_reload_and_abort(entry)
+        self._reload_if_unloaded(entry)
+        return self._credentials_form(entry, {"base": outcome})
+
+    def _code_refused(
+        self, pending: runtime.PendingVerification, err: LoginChallengeError
+    ) -> ConfigFlowResult:
+        """eufy did not take the code: keep the client and ask again with the new login id."""
+        pending.login_id = err.login_id
+        pending.code_requested = err.code_requested
+        return self._verify_code_form({"base": ERROR_INVALID_VERIFY_CODE})
+
+    def _verify_code_form(self, form_errors: dict[str, str]) -> ConfigFlowResult:
+        """The code form; it names no account, so no e-mail address reaches it."""
+        return self.async_show_form(
+            step_id=STEP_VERIFY_CODE, data_schema=VERIFY_CODE_SCHEMA, errors=form_errors
+        )
+
+    async def _async_source_start(self) -> ConfigFlowResult:
+        """The first step of this flow's source."""
+        if self.source == SOURCE_USER:
+            return await self.async_step_user()
+        if self.source == SOURCE_RECONFIGURE:
+            return await self.async_step_reconfigure()
+        return await self.async_step_reauth_confirm()
+
+    async def _async_release_pending(self) -> None:
+        """Close the client held for the code; closing saves the account store."""
+        pending, self._pending = self._pending, None
+        if pending is not None:
+            await pending.async_close()
+
+    @callback
+    def async_remove(self) -> None:
+        """A flow left at the code step: close its client, then undo what the step held.
+
+        Home Assistant calls this whenever the flow ends; after a finished sign-in
+        nothing is pending. A new account's store is forgotten (no entry holds it); an
+        entry this flow unloaded is set up again.
+        """
+        pending, self._pending = self._pending, None
+        if pending is None:
+            return
+        entry: ConfigEntry | None = None
+        if self.source != SOURCE_USER and self._unloaded_entry:
+            entry = self._flow_entry()
+            self._unloaded_entry = False
+        self.hass.async_create_task(
+            self._async_abandon(pending, entry, self._new_account),
+            f"{DOMAIN} close an unfinished two-step sign-in",
+        )
+
+    async def _async_abandon(
+        self,
+        pending: runtime.PendingVerification,
+        entry: ConfigEntry | None,
+        new_account: str | None,
+    ) -> None:
+        """Close ``pending``, then forget a new account's store or set ``entry`` up again."""
+        await pending.async_close()
+        if self.source == SOURCE_USER and new_account:
+            await async_forget_account(
+                runtime.cache_store(self.hass, new_account), keep_install_identity=True
+            )
+        elif entry is not None and entry.state is ConfigEntryState.NOT_LOADED:
+            await self.hass.config_entries.async_setup(entry.entry_id)
 
 
 class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):

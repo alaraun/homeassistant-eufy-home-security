@@ -23,6 +23,7 @@ from eufy_home_security import (
     RateLimitedError,
     RefreshCooldownError,
     SessionCache,
+    SessionRejectedError,
     SessionReplacedError,
     StationClaims,
     StationUnreachableError,
@@ -125,7 +126,7 @@ async def test_an_empty_or_malformed_email_is_refused_without_a_sign_in(
 @pytest.mark.parametrize(
     ("error", "key"),
     [
-        (LoginChallengeError("verify_code"), "login_challenge"),
+        (LoginChallengeError("captcha"), "login_challenge"),
         (AuthenticationError("rejected"), "invalid_auth"),
         (LoginLimitedError(retry_after=60), "login_limited"),
         (SessionReplacedError(), "session_replaced"),
@@ -154,6 +155,8 @@ async def test_library_errors_are_form_errors(
     ("error", "key"),
     [
         (LoginChallengeError("captcha"), "login_challenge"),
+        (LoginChallengeError("verify_code"), "login_challenge"),
+        (SessionRejectedError("refused again", code=401), "session_rejected"),
         (AuthenticationError("rejected"), "invalid_auth"),
         (RateLimitedError(), "login_limited"),
         (LoginLimitedError(retry_after=60), "login_limited"),
@@ -220,7 +223,7 @@ async def test_a_failed_add_forgets_the_password_but_keeps_the_login_record(
 
 
 def test_the_login_challenge_message_sends_the_user_to_the_eufy_app() -> None:
-    """There is no challenge step: the message must say where to answer it."""
+    """A captcha has no step: the message must say where to answer it."""
     text = json.loads(_EN_PATH.read_text())["config"]["error"]["login_challenge"]
     assert "eufy app" in text.lower()
 
@@ -491,9 +494,9 @@ async def test_a_login_challenge_during_reauth_is_a_form_error(
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """No challenge step: the user answers it in the eufy app and tries again."""
+    """A captcha has no step: the user answers it in the eufy app and tries again."""
     entry = await set_up_warm(hass, seed_warm_cache)
-    fake_cloud.login_error = LoginChallengeError("verify_code")
+    fake_cloud.login_error = LoginChallengeError("captcha")
 
     result = await entry.start_reauth_flow(hass)
     result = await _submit_reauth(hass, result)
@@ -716,7 +719,7 @@ async def test_a_rejected_password_during_reconfigure_is_a_form_error_and_the_en
     [
         (LoginLimitedError(retry_after=3600), "login_limited"),
         (CommunicationError("down"), "cannot_connect"),
-        (LoginChallengeError("verify_code"), "login_challenge"),
+        (LoginChallengeError("captcha"), "login_challenge"),
     ],
 )
 async def test_a_login_limit_during_reconfigure_is_a_form_error_and_nothing_retries(

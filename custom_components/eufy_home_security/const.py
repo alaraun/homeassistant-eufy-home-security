@@ -189,6 +189,9 @@ STEP_REAUTH_TAKE_OVER: Final = "reauth_take_over"
 # The user-started sign-in from the entry's menu; the take-over
 # confirmation above is shared with reauth.
 STEP_RECONFIGURE: Final = "reconfigure"
+# The code of eufy's two-step verification, after any of the steps above signed in.
+STEP_VERIFY_CODE: Final = "verify_code"
+CONF_VERIFY_CODE: Final = "verify_code"
 
 # Config-flow form errors (config.error in strings.json). Each string is a remedy.
 ERROR_INVALID_EMAIL: Final = "invalid_email"
@@ -197,6 +200,10 @@ ERROR_INVALID_AUTH: Final = "invalid_auth"
 ERROR_LOGIN_LIMITED: Final = "login_limited"
 ERROR_SESSION_REPLACED: Final = "session_replaced"
 ERROR_CANNOT_CONNECT: Final = "cannot_connect"
+# eufy did not take the two-step code (wrong or expired); a new one may be on its way.
+ERROR_INVALID_VERIFY_CODE: Final = "invalid_verify_code"
+# eufy accepted the sign-in, then refused the session even after one more sign-in.
+ERROR_SESSION_REJECTED: Final = "session_rejected"
 
 # Translated exceptions (the top-level "exceptions" key of strings.json).
 EXC_AUTH_FAILED: Final = "auth_failed"
