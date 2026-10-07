@@ -198,8 +198,9 @@ async def test_a_failed_add_forgets_the_password_but_keeps_the_login_record(
 
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "cannot_connect"}
-    # Not vacuous: the sign-in really happened before discovery failed.
-    assert cloud_calls(fake_cloud)[:2] == ["login", "devices"]
+    # Not vacuous: the sign-in really happened before discovery failed. A cold login
+    # signs in to every cloud region.
+    assert cloud_calls(fake_cloud)[:3] == ["login", "login@us", "devices"]
     assert hass.config_entries.async_entries(DOMAIN) == []
     cache = await _cached(hass)
     assert cache.password is None

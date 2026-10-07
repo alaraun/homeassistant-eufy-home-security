@@ -340,7 +340,9 @@ class EufyRefreshDeviceListButton(ButtonEntity):
     async def async_press(self) -> None:
         """Fetch the device list once; reload the entry when the station list changed.
 
-        Never retried. A changed paired-device list reaches the router as
+        The fetch asks the cloud regions that listed devices before, or every region
+        when the entry's region option is on; a region that listed none is otherwise
+        not asked. Never retried. A changed paired-device list reaches the router as
         ``DevicesChanged`` during the fetch, and the router schedules the reload; a
         station added or removed is found here by comparing the served stations with
         the client's. Nothing is awaited after the fetch, so the reload cannot unload

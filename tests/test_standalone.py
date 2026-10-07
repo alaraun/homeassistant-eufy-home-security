@@ -60,6 +60,7 @@ from custom_components.eufy_home_security.const import (
     CAMERA_KEY,
     CONF_CAMERA_IMAGE,
     CONF_EVENT_VIDEOS,
+    CONF_SCAN_REGIONS,
     DETECTION_EVENT_KEY,
     DOMAIN,
     GUARD_MODE_KEY,
@@ -487,9 +488,10 @@ async def test_diagnostics_describe_the_standalone_station(
 async def test_refresh_device_list_brings_in_a_new_standalone_station(
     hass: HomeAssistant, fake_cloud, seed_warm_cache, built_clients, fake_station
 ):
+    """An account that listed nothing finds a new station only with the region option on."""
     fake_cloud.devices = []
     seed_warm_cache()
-    entry = add_entry(hass)
+    entry = add_entry(hass, options={CONF_SCAN_REGIONS: True})
     await setup_entry(hass, entry)
 
     assert not entry.runtime_data.coordinators

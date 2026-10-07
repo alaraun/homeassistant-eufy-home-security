@@ -55,6 +55,8 @@ account:
 1. Add the device to the HomeBase or account in the eufy app.
 2. If Home Assistant uses a shared account, share the new device to it as well.
 3. In Home Assistant, press **Refresh device list** on the **eufy account** device.
+   A device homed on a region that listed none before needs the option **Look for
+   devices in every eufy region** first; see [network.md](network.md#eufy-regions).
 4. For a pan/tilt camera, press **Refresh presets** once.
 
 A device removed from the account goes after **Refresh device list** and a reload of

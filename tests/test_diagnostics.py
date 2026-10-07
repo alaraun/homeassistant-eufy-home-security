@@ -92,6 +92,9 @@ async def test_the_diagnostics_download_has_the_cache_summary_and_session_health
     cache = data["cache"]
     assert isinstance(cache, dict)
     assert "cloud_status" in cache
+    regions = cache["cloud_status"]["regions"]
+    assert regions["eu"]["suspended"] is False
+    assert regions["us"]["suspended"] is True
 
     stations = data["stations"]
     assert isinstance(stations, dict)
@@ -120,6 +123,7 @@ async def test_the_diagnostics_download_has_the_cache_summary_and_session_health
     assert isinstance(camera, dict)
     assert camera["device_sn"] == redact_serial(SYNTHETIC.camera_sn)
     assert camera["name"] == "**REDACTED**"
+    assert camera["region"] == "eu", "each device names the cloud region that listed it"
 
     assert data["push"] == {"running": False, "error": None}
     assert data["deduplicator"] == {"dropped_duplicates": 0, "dropped_repeats": 0}

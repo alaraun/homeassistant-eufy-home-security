@@ -112,6 +112,7 @@ def build_client(
     *,
     claims: StationClaims | None = None,
     max_sessions: int = DEFAULT_STATION_SESSIONS,
+    scan_regions: bool = False,
 ) -> EufySecurity:
     """Build a ``EufySecurity`` on the account store: the single construction site.
 
@@ -125,6 +126,8 @@ def build_client(
     account's entry. No station inclusion map and no shared install
     state. ``max_sessions`` is every station's session budget
     (:func:`session_budget`); a flow's short-lived client keeps the library default.
+    ``scan_regions`` makes every device-list fetch ask every cloud region (the
+    entry's option); a flow's client keeps the library default.
     """
     return EufySecurity(
         async_get_clientsession(hass),
@@ -133,6 +136,7 @@ def build_client(
         store=cache_store(hass, email),
         claims=claims,
         max_sessions=max_sessions,
+        scan_regions=scan_regions,
     )
 
 

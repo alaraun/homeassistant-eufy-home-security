@@ -63,9 +63,11 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.eufy_home_security import detections, errors, runtime
 from custom_components.eufy_home_security.const import (
+    CONF_SCAN_REGIONS,
     DETECTION_EVENT_KEY,
     DOMAIN,
     POLL_INTERVAL_SECONDS,
+    REFRESH_DEVICE_LIST_KEY,
     STORAGE_POLL_INTERVAL_SECONDS,
 )
 
@@ -862,5 +864,94 @@ async def test_a_cipher_issue_left_by_a_failed_setup_is_deleted_by_the_next_setu
 
     assert await setup_entry(hass, entry)
     assert _cipher_issues(hass, entry) == {}
+
+    await _unload(hass, entry)
+
+
+def _no_devices_issue(hass: HomeAssistant, entry: MockConfigEntry) -> ir.IssueEntry | None:
+    return ir.async_get(hass).async_get_issue(DOMAIN, errors.no_devices_issue_id(entry.entry_id))
+
+
+async def _press_refresh_device_list(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    button = entity_id_for(hass, "button", entry.entry_id, REFRESH_DEVICE_LIST_KEY)
+    await hass.services.async_call("button", "press", {ATTR_ENTITY_ID: button}, blocking=True)
+    await hass.async_block_till_done()
+
+
+async def test_an_account_listing_no_devices_in_any_region_raises_the_no_devices_issue(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Every region suspended: one non-fixable issue naming the regions; a press asks nothing.
+
+    Without the region option a region that listed no devices is never asked again,
+    so the default Refresh device list sends no device-list request; unload deletes
+    the issue.
+    """
+    fake_cloud.devices = []
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    issue = _no_devices_issue(hass, entry)
+    assert issue is not None
+    assert issue.is_fixable is False
+    assert issue.translation_key == "no_devices"
+    assert issue.translation_placeholders is not None
+    assert issue.translation_placeholders["regions"] == "eu, us"
+    assert set(issue.translation_placeholders) == {"account", "regions"}
+
+    before = len(cloud_calls(fake_cloud))
+    await _press_refresh_device_list(hass, entry)
+    assert cloud_calls(fake_cloud)[before:] == []
+
+    await _unload(hass, entry)
+    assert _no_devices_issue(hass, entry) is None
+
+
+async def test_an_account_with_devices_has_no_no_devices_issue(
+    hass: HomeAssistant,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """One region listing the station is enough: the other region's suspension is no issue."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    regions = (await entry.runtime_data.eufy.async_cloud_status()).regions
+    assert regions["us"].suspended is True
+    assert regions["eu"].suspended is False
+    assert _no_devices_issue(hass, entry) is None
+
+    await _unload(hass, entry)
+
+
+async def test_with_the_region_option_a_press_finds_a_station_homed_on_the_other_region(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The option makes a press ask every region; the station found reloads the entry and
+    the no-devices issue goes. The station keeps the region that listed it."""
+    listed = list(fake_cloud.devices)
+    fake_cloud.devices = []
+    seed_warm_cache()
+    entry = add_entry(hass, options={CONF_SCAN_REGIONS: True})
+    assert await setup_entry(hass, entry)
+    assert _no_devices_issue(hass, entry) is not None
+    assert not entry.runtime_data.coordinators
+
+    fake_cloud.region_devices = {"us": listed}
+    before = len(built_clients)
+    await _press_refresh_device_list(hass, entry)
+    await wait_until(
+        lambda: len(built_clients) == before + 1 and entry.state is ConfigEntryState.LOADED,
+        timeout=15,
+    )
+
+    assert "devices@us" in fake_cloud.calls
+    assert _no_devices_issue(hass, entry) is None
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+    assert station.device.region == "us"
 
     await _unload(hass, entry)

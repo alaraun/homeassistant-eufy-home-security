@@ -1,4 +1,4 @@
-"""The entry's ten options, driven through the real options flow.
+"""The entry's eleven options, driven through the real options flow.
 
 Each option but the recording length and the sessions per HomeBase is read once at
 setup, so the automatic reload is what applies a change.
@@ -39,6 +39,7 @@ from custom_components.eufy_home_security.const import (
     CONF_EVENT_VIDEOS,
     CONF_LIVE_SNAPSHOT,
     CONF_RECORD_LENGTH,
+    CONF_SCAN_REGIONS,
     CONF_SESSION_PROBE,
     CONF_STATION_SESSIONS,
     DEFAULT_ALARM_TIMEOUT_MINUTES,
@@ -73,7 +74,7 @@ def _registered(hass: HomeAssistant, domain: str, serial: str, key: str) -> str 
     return er.async_get(hass).async_get_entity_id(domain, DOMAIN, entity_unique_id(serial, key))
 
 
-async def test_the_options_form_offers_its_ten_options_with_their_defaults(
+async def test_the_options_form_offers_its_eleven_options_with_their_defaults(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
@@ -103,12 +104,25 @@ async def test_the_options_form_offers_its_ten_options_with_their_defaults(
         CONF_LIVE_SNAPSHOT,
         CONF_SESSION_PROBE,
         CONF_CLOUD_PUSH,
+        CONF_SCAN_REGIONS,
         CONF_EVENT_HISTORY_DAYS,
         CONF_EVENT_VIDEOS,
         CONF_RECORD_LENGTH,
         CONF_STATION_SESSIONS,
-    ], "the options form does not offer exactly its ten options, in order"
-    hold, timeout, camera_image, live, probe, push, history_days, videos, length, sessions = markers
+    ], "the options form does not offer exactly its eleven options, in order"
+    (
+        hold,
+        timeout,
+        camera_image,
+        live,
+        probe,
+        push,
+        scan_regions,
+        history_days,
+        videos,
+        length,
+        sessions,
+    ) = markers
     assert hold.default() == DEFAULT_DETECTION_HOLD_SECONDS == 10
     assert timeout.default() == DEFAULT_ALARM_TIMEOUT_MINUTES == 10
     assert camera_image.default() == "hd", "the camera image does not default to HD"
@@ -117,6 +131,9 @@ async def test_the_options_form_offers_its_ten_options_with_their_defaults(
         "the session probe is on by default: a kick-out must surface without a user action"
     )
     assert push.default() is False, "cloud push uses eufy's cloud: opt-in only"
+    assert scan_regions.default() is False, (
+        "asking every region may cost a sign-in on each fetch: opt-in only"
+    )
     assert history_days.default() == DEFAULT_EVENT_HISTORY_DAYS == 7
     assert videos.default() is False, "event videos take storage: opt-in only"
     assert length.default() == DEFAULT_RECORD_LENGTH_SECONDS == 30
@@ -167,14 +184,14 @@ async def test_hold_and_timeout_outside_their_ranges_are_refused(
     await hass.async_block_till_done()
 
 
-async def test_the_saved_options_are_exactly_the_ten_offered(
+async def test_the_saved_options_are_exactly_the_eleven_offered(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The save is rebuilt from the ten keys, four bools, five ints and a choice; it reloads."""
+    """The save is rebuilt from the eleven keys, five bools, five ints and a choice; it reloads."""
 
     async def no_push(_eufy: EufySecurity) -> None:
         """The library fakes no push; tests/test_cloud_push.py covers its start."""
@@ -193,6 +210,7 @@ async def test_the_saved_options_are_exactly_the_ten_offered(
             CONF_LIVE_SNAPSHOT: True,
             CONF_SESSION_PROBE: False,
             CONF_CLOUD_PUSH: True,
+            CONF_SCAN_REGIONS: True,
             CONF_EVENT_HISTORY_DAYS: 29.6,
             CONF_EVENT_VIDEOS: True,
             CONF_RECORD_LENGTH: 44.5,
@@ -207,6 +225,7 @@ async def test_the_saved_options_are_exactly_the_ten_offered(
         CONF_LIVE_SNAPSHOT: True,
         CONF_SESSION_PROBE: False,
         CONF_CLOUD_PUSH: True,
+        CONF_SCAN_REGIONS: True,
         CONF_EVENT_HISTORY_DAYS: 30,
         CONF_EVENT_VIDEOS: True,
         CONF_RECORD_LENGTH: 45,
@@ -218,6 +237,7 @@ async def test_the_saved_options_are_exactly_the_ten_offered(
     assert type(entry.options[CONF_LIVE_SNAPSHOT]) is bool
     assert type(entry.options[CONF_SESSION_PROBE]) is bool
     assert type(entry.options[CONF_CLOUD_PUSH]) is bool
+    assert type(entry.options[CONF_SCAN_REGIONS]) is bool
     assert type(entry.options[CONF_DETECTION_HOLD]) is int
     assert type(entry.options[CONF_ALARM_TIMEOUT]) is int
     assert type(entry.options[CONF_EVENT_VIDEOS]) is bool
@@ -311,6 +331,43 @@ async def test_the_camera_image_description_is_built_from_the_library_image_sour
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+async def test_the_region_option_reaches_the_client_at_setup_and_on_a_reload(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Off: the next fetch skips a region that listed no devices; on: it asks every region."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    assert built_clients[-1].cloud.regions_to_list() == ["eu"]
+
+    await _submit_options(hass, entry, {CONF_SCAN_REGIONS: True})
+
+    assert entry.options[CONF_SCAN_REGIONS] is True
+    assert built_clients[-1].cloud.regions_to_list() == ["eu", "us"]
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize("scan_regions", [False, True])
+async def test_build_client_hands_the_region_option_to_the_library(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, scan_regions: bool
+) -> None:
+    """The real construction site passes ``scan_regions`` through, both values."""
+    seen: list[dict[str, Any]] = []
+
+    def capture(*_args: Any, **kwargs: Any) -> object:
+        seen.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(runtime, "EufySecurity", capture)
+
+    runtime.build_client(hass, SYNTHETIC.email, None, scan_regions=scan_regions)
+
+    assert seen[0]["scan_regions"] is scan_regions
 
 
 def _station_budget(entry: MockConfigEntry) -> int:
