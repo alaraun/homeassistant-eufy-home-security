@@ -44,6 +44,7 @@ _HA_ATTRIBUTES: Final = frozenset(
         "min",
         "options",
         "restored",
+        "supported_features",
         "unit_of_measurement",
     }
 )

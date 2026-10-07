@@ -29,7 +29,7 @@ dev = [
     "av==17.0.1",
     # The library, at the manifest's pin. Editable from the sibling checkout via
     # [tool.uv.sources]; CI installs the PyPI release instead (.github/workflows/ci.yml).
-    "eufy-home-security==0.2.1",
+    "eufy-home-security==0.2.2",
     "ruff",
     "mypy",
 ]

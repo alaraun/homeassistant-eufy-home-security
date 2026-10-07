@@ -1298,6 +1298,7 @@ async def test_a_stream_that_ends_by_itself_is_a_clean_end_not_an_error(
 def test_a_model_without_the_live_stream_capability_advertises_no_stream() -> None:
     """The gate is the library's catalog, never a serial prefix."""
     assert detections.has_live_stream(SYNTHETIC.camera_sn) is True
+    assert detections.has_live_stream("T8161P0000000001") is True  # eufyCam 3C, declared
     assert detections.has_live_stream(SENSOR_SN) is False
     assert detections.has_live_stream(SYNTHETIC.station_sn) is False
 

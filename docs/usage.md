@@ -220,6 +220,8 @@ Browser support: [network.md](network.md#browsers). Adding devices:
 - While a capture runs, other captures and preset edits are refused and nothing is
   sent.
 - The actions target the camera entity, for camera cards with PTZ controls.
+- A camera without presets (T8410) gets only the pan/tilt buttons and `pan_tilt`; the
+  preset actions are refused, and `zoom` on a camera without zoom too. Nothing is sent.
 
 ## Standalone battery cameras
 

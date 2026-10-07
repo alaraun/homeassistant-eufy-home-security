@@ -73,7 +73,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   and `Refresh event image`.
 - **Picture:** a fixed 16:9 frame. Top left says what the still is (`Event · 2 h ago`, `Snapshot`, `No still yet`)
   or `● LIVE 1:42` while live; next to it the battery chip (charging and solar charging shown on its icon).
-  - Idle: a play button (timed live view) and ∞ (continuous).
+  - Idle: a play button (timed live view) and ∞ (continuous). A camera without live video shows
+    `No live view for this model` instead, and its menu has no live view or `Record a clip`.
   - Live: a bar with Stop, ∞, Record, sound (starts muted), presets and full screen.
   - Pan/tilt cameras: a pan/tilt pad with a home button (the default preset), usable once the live picture shows.
     Zoom cameras: a zoom pill (−, the value, +, and a reset to 1×), usable in every state.

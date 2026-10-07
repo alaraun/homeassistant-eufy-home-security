@@ -238,6 +238,9 @@
     "pan_tilt_unsupported": {
       "message": "This camera cannot pan, tilt or zoom, so nothing was sent."
     },
+    "zoom_unsupported": {
+      "message": "This camera has no zoom, so nothing was sent."
+    },
     "ptz_command_not_handled": {
       "message": "The HomeBase refused this camera command as one it does not handle, so the camera did not change. Trying again will not help."
     },

@@ -99,6 +99,7 @@ from .const import (
     EXC_STATION_KEY_REJECTED,
     EXC_STATION_UNREACHABLE,
     EXC_ZOOM_NEEDS_SINGLE_VIEW,
+    EXC_ZOOM_UNSUPPORTED,
     ISSUE_ACCOUNT_ID_MISMATCH,
     ISSUE_CIPHER_UNAVAILABLE,
     ISSUE_CREDENTIALS_REFRESHED,
@@ -638,7 +639,7 @@ def preset_not_set(index: int) -> ServiceValidationError:
 
 
 def presets_unsupported() -> ServiceValidationError:
-    """The capture_preset action on a camera whose model has no presets; nothing sent."""
+    """A preset action on a camera whose model has no presets; nothing sent."""
     return ServiceValidationError(
         translation_domain=DOMAIN, translation_key=EXC_PRESETS_UNSUPPORTED
     )
@@ -660,10 +661,15 @@ def pan_tilt_not_applied() -> HomeAssistantError:
 
 
 def pan_tilt_unsupported() -> ServiceValidationError:
-    """A pan/tilt, go-to or zoom action on a camera whose model cannot; nothing sent."""
+    """A pan/tilt, preset or zoom action on a camera whose model cannot pan/tilt; nothing sent."""
     return ServiceValidationError(
         translation_domain=DOMAIN, translation_key=EXC_PAN_TILT_UNSUPPORTED
     )
+
+
+def zoom_unsupported() -> ServiceValidationError:
+    """The zoom action on a pan/tilt camera without zoom or a live stream; nothing sent."""
+    return ServiceValidationError(translation_domain=DOMAIN, translation_key=EXC_ZOOM_UNSUPPORTED)
 
 
 def ptz_command_not_handled() -> HomeAssistantError:
