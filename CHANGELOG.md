@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.1.6](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.5...v0.1.6) (2026-10-07)
+
+
+### Bug Fixes
+
+* a station key eufy serves unusable gets its own repair ([#24](https://github.com/alaraun/homeassistant-eufy-home-security/issues/24)) ([627729c](https://github.com/alaraun/homeassistant-eufy-home-security/commit/627729c5fa14f21081d5320f2a5ce00f3180162e)), closes [#15](https://github.com/alaraun/homeassistant-eufy-home-security/issues/15)
+
 ## [0.1.5](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.4...v0.1.5) (2026-10-07)
 
 
