@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.1.5](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.4...v0.1.5) (2026-10-07)
+
+
+### Bug Fixes
+
+* ask for eufy's two-step verification code when signing in ([#22](https://github.com/alaraun/homeassistant-eufy-home-security/issues/22)) ([1f282cc](https://github.com/alaraun/homeassistant-eufy-home-security/commit/1f282cc25b039a8295d46cb2b1d233f24c9fa62b)), closes [#19](https://github.com/alaraun/homeassistant-eufy-home-security/issues/19)
+
 ## [0.1.4](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.3...v0.1.4) (2026-10-07)
 
 
