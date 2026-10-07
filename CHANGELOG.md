@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.1.4](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.3...v0.1.4) (2026-10-07)
+
+
+### Features
+
+* support the T8410 and the T8161 with eufy-home-security 0.2.2 ([#20](https://github.com/alaraun/homeassistant-eufy-home-security/issues/20)) ([b57f2b2](https://github.com/alaraun/homeassistant-eufy-home-security/commit/b57f2b2e258a1762999fe19c2af1bd8dab9523ee))
+
 ## [0.1.3](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.2...v0.1.3) (2026-10-07)
 
 
