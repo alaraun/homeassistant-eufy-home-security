@@ -34,6 +34,7 @@ storage figures, event-video copy counters (`recording_sync`), cloud push state
 | Fetched the key again | the key was refreshed; information only | dismiss |
 | HomeBase stamps its events with another eufy account | commands may be ignored | check that the account is the owner or the owner shared the HomeBase with it |
 | eufy has no key for a station | eufy holds no key for the key number the station uses, so it cannot connect; its entities are unavailable | in the eufy app, on the owner's account, check the station is there and shared with this account, then reload; asked again at most once an hour otherwise |
+| No eufy devices found | no eufy region lists a device for the account | check the account sees the devices in the eufy app, turn on **Look for devices in every eufy region**, press **Refresh device list**; see [network.md](network.md#eufy-regions) |
 | Camera event history is not kept | no host directory mounted at `/media` (Container) | see [usage.md](usage.md#event-history) |
 | eufy cloud push is not running | cloud push is on but not receiving; standalone cameras' detections are late or missing | retries by itself; check internet access and the log, or switch the option off; see [usage.md](usage.md#cloud-push) |
 

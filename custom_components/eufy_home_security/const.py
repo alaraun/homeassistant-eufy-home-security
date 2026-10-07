@@ -82,6 +82,10 @@ CONF_STATION_SESSIONS: Final = "station_sessions"
 # without a HomeBase takes to Home Assistant. Started after the platforms, in the
 # background; a change reloads the entry.
 CONF_CLOUD_PUSH: Final = "cloud_push"
+# Every device-list fetch asks every eufy cloud region (the library's ``scan_regions``),
+# off by default: a region that listed no devices is otherwise not asked again. A
+# change reloads the entry.
+CONF_SCAN_REGIONS: Final = "scan_regions"
 # The wait before a failed first push start is tried again, doubling up to the cap.
 # The library restarts a listener that has listened once by itself.
 PUSH_START_RETRY_MIN_SECONDS: Final = 60.0
@@ -292,6 +296,8 @@ ISSUE_ACCOUNT_ID_MISMATCH: Final = "account_id_mismatch"
 ISSUE_PUSH_NOT_RUNNING: Final = "push_not_running"
 # The cloud holds no key for the cipher a station named, under the station's owner.
 ISSUE_CIPHER_UNAVAILABLE: Final = "cipher_unavailable"
+# The account lists no devices in any eufy cloud region, and none is asked again.
+ISSUE_NO_DEVICES: Final = "no_devices"
 
 # Camera snapshots. The camera entity's unique-id key; it has no name of its
 # own, the camera is its device.

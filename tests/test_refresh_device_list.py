@@ -2,6 +2,7 @@
 
 import asyncio
 
+import pytest
 from conftest import (
     SENSOR_SN,
     add_motion_sensor,
@@ -26,7 +27,11 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from custom_components.eufy_home_security import errors
-from custom_components.eufy_home_security.const import DOMAIN, REFRESH_DEVICE_LIST_KEY
+from custom_components.eufy_home_security.const import (
+    CONF_SCAN_REGIONS,
+    DOMAIN,
+    REFRESH_DEVICE_LIST_KEY,
+)
 
 
 async def test_the_account_device_carries_the_refresh_button(
@@ -73,6 +78,62 @@ async def test_a_press_that_changes_nothing_fetches_once_and_does_not_reload(
     assert cloud_calls(fake_cloud)[n:] == ["devices"]
     assert len(built_clients) == before
     assert entry.state.value == "loaded"
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize(
+    ("options", "asked"),
+    [
+        ({}, ["devices"]),
+        ({CONF_SCAN_REGIONS: False}, ["devices"]),
+        ({CONF_SCAN_REGIONS: True}, ["devices", "devices@us"]),
+    ],
+)
+async def test_a_press_asks_a_region_that_listed_no_devices_only_with_the_region_option(
+    hass: HomeAssistant,
+    fake_cloud,
+    built_clients,
+    fake_station,
+    seed_warm_cache,
+    options,
+    asked,
+):
+    """The us region listed nothing (suspended): a press asks it only with the option on."""
+    entry = await set_up_warm(hass, seed_warm_cache, options=options)
+    n = len(cloud_calls(fake_cloud))
+
+    btn_id = entity_id_for(hass, "button", entry.entry_id, REFRESH_DEVICE_LIST_KEY)
+    await hass.services.async_call("button", "press", {"entity_id": btn_id}, blocking=True)
+    await hass.async_block_till_done()
+
+    assert cloud_calls(fake_cloud)[n:] == asked
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize(
+    ("options", "asked"),
+    [({}, ["devices"]), ({CONF_SCAN_REGIONS: True}, ["devices", "devices@us"])],
+)
+async def test_the_session_check_asks_every_region_only_with_the_region_option(
+    hass: HomeAssistant,
+    fake_cloud,
+    built_clients,
+    fake_station,
+    seed_warm_cache,
+    options,
+    asked,
+):
+    """The session check's device-list read follows the option like a press does."""
+    entry = await set_up_warm(hass, seed_warm_cache, options=options)
+    n = len(cloud_calls(fake_cloud))
+
+    await entry.runtime_data.eufy.async_probe_cloud_session()
+
+    assert cloud_calls(fake_cloud)[n:] == asked
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

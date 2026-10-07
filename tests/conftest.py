@@ -289,6 +289,7 @@ def built_clients(
         *,
         claims: StationClaims | None = None,
         max_sessions: int = DEFAULT_STATION_SESSIONS,
+        scan_regions: bool = False,
     ) -> EufySecurity:
         stamp_product_codes(fake_cloud)
         eufy = build_eufy_security(
@@ -299,6 +300,7 @@ def built_clients(
             password=password,
             claims=claims,
             max_sessions=max_sessions,
+            scan_regions=scan_regions,
         )
         built.append(eufy)
         return eufy

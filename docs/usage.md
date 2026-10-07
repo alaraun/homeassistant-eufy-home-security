@@ -12,6 +12,7 @@
 | Live snapshot for cameras without a detection image | Off | A camera without a detection image takes one live still, at most every 5 min. Wakes battery cameras |
 | Check the eufy session every 6 hours | On | One cloud read (not a sign-in) that notices when another client ended Home Assistant's session |
 | Cloud push for cameras without a HomeBase | Off | Receives eufy's push messages; needed for detections of a standalone camera. See [Cloud push](#cloud-push) |
+| Look for devices in every eufy region | Off | Every device list asks both eufy regions, also one that listed no devices; may cost a sign-in. See [network.md](network.md#eufy-regions) |
 | Event history (days) | 7 | 0–365. Days of camera images and videos kept in the media folder; 0 keeps none |
 | Save event videos | Off | Copies each HomeBase recording from then on into the event history; see [Event videos](#event-videos) |
 | Recording length (seconds) | 30 | 5–300. Length of a **Record clip** action that names no duration |

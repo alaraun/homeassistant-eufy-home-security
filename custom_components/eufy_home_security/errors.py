@@ -52,6 +52,7 @@ from eufy_home_security import (
     LoginChallengeError,
     RateLimitedError,
     RefreshCooldownError,
+    RegionStatus,
     SessionReplacedError,
     Station,
     redact,
@@ -106,6 +107,7 @@ from .const import (
     ISSUE_LOGIN_LIMITED,
     ISSUE_LOGIN_LIMITED_NO_WAIT,
     ISSUE_MEDIA_NOT_PERSISTENT,
+    ISSUE_NO_DEVICES,
     ISSUE_PUSH_NOT_RUNNING,
     ISSUE_SESSION_REPLACED,
     MEDIA_DOCS_URL,
@@ -959,18 +961,19 @@ def raise_account_mismatch_issue(hass: HomeAssistant, entry: ConfigEntry[Any], s
 
 
 def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:
-    """Delete the entry's account-id-mismatch and cipher-unavailable issues.
+    """Delete the entry's account-id-mismatch, cipher-unavailable and no-devices issues.
 
     Unload, the start of every setup attempt and entry removal call it, so an issue
     raised by an attempt that then failed (and so was never unloaded) does not
     outlive it. Found by the entry's issue id prefixes in the issue registry rather
     than through the device registry, whose rows can already be gone at removal. A
-    later setup then decides afresh from the stations' own stamps and keys. Logs
-    nothing.
+    later setup then decides afresh from the stations' own stamps and keys and the
+    cached device list. Logs nothing.
     """
     prefixes = (
         account_id_mismatch_issue_id(entry.entry_id, ""),
         cipher_unavailable_issue_id(entry.entry_id, ""),
+        no_devices_issue_id(entry.entry_id),
     )
     stale = [
         issue_id
@@ -979,6 +982,39 @@ def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) ->
     ]
     for issue_id in stale:
         ir.async_delete_issue(hass, DOMAIN, issue_id)
+
+
+def no_devices_issue_id(entry_id: str) -> str:
+    """The account's no-devices issue: one per entry."""
+    return f"{ISSUE_NO_DEVICES}_{entry_id}"
+
+
+def sync_no_devices_issue(
+    hass: HomeAssistant, entry: ConfigEntry[Any], regions: Mapping[str, RegionStatus]
+) -> None:
+    """Show the account's no-devices issue while every cloud region is suspended.
+
+    A region is suspended when its last device list was empty; the library asks it
+    again only on a fetch with every region (the entry's region option). Non-fixable:
+    the remedy is the option and a device-list refresh. No region listed yet (an
+    empty mapping) withdraws the issue.
+    """
+    issue_id = no_devices_issue_id(entry.entry_id)
+    if not regions or not all(status.suspended for status in regions.values()):
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=ISSUE_NO_DEVICES,
+        translation_placeholders={
+            "account": account_label(entry),
+            "regions": ", ".join(sorted(regions)),
+        },
+    )
 
 
 def push_not_running_issue_id(entry_id: str) -> str:

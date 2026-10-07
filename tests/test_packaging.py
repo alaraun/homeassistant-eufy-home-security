@@ -59,7 +59,7 @@ _REQUIRED_MANIFEST_KEYS = (
 # requirement. These tests hold the rule locally, including the PEP 440 shape.
 # An exact pin: Home Assistant installs a requirement only when the installed
 # version does not satisfy it, so a wildcard never upgrades an existing install.
-_LIBRARY_REQUIREMENT = "eufy-home-security==0.2.0"
+_LIBRARY_REQUIREMENT = "eufy-home-security==0.2.1"
 _SANCTIONED_REQUIREMENTS = [_LIBRARY_REQUIREMENT]
 
 
@@ -720,6 +720,7 @@ def test_the_options_flow_offers_exactly_its_ten_options() -> None:
         CONF_EVENT_VIDEOS,
         CONF_LIVE_SNAPSHOT,
         CONF_RECORD_LENGTH,
+        CONF_SCAN_REGIONS,
         CONF_SESSION_PROBE,
         CONF_STATION_SESSIONS,
         DEFAULT_EVENT_HISTORY_DAYS,
@@ -743,6 +744,7 @@ def test_the_options_flow_offers_exactly_its_ten_options() -> None:
         CONF_LIVE_SNAPSHOT,
         CONF_SESSION_PROBE,
         CONF_CLOUD_PUSH,
+        CONF_SCAN_REGIONS,
         CONF_EVENT_HISTORY_DAYS,
         CONF_EVENT_VIDEOS,
         CONF_RECORD_LENGTH,
@@ -750,13 +752,26 @@ def test_the_options_flow_offers_exactly_its_ten_options() -> None:
     ]
     keys = [str(key) for key in OPTIONS_SCHEMA.schema]
     assert keys == expected, (
-        f"the options schema offers {keys}; this entry has exactly ten options, and "
+        f"the options schema offers {keys}; this entry has exactly eleven options, and "
         f"another one added here without a decision would ship unannounced"
     )
-    hold, timeout, camera_image, live, probe, push, history_days, videos, length, sessions = (
-        OPTIONS_SCHEMA.schema
-    )
+    (
+        hold,
+        timeout,
+        camera_image,
+        live,
+        probe,
+        push,
+        scan_regions,
+        history_days,
+        videos,
+        length,
+        sessions,
+    ) = OPTIONS_SCHEMA.schema
     assert push.default() is False, "cloud push uses eufy's cloud: opt-in only"
+    assert scan_regions.default() is False, (
+        "asking every region may cost a sign-in on each fetch: opt-in only"
+    )
     assert history_days.default() == DEFAULT_EVENT_HISTORY_DAYS
     assert videos.default() is False, "event videos take storage: opt-in only"
     assert length.default() == DEFAULT_RECORD_LENGTH_SECONDS == 30

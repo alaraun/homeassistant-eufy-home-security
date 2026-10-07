@@ -51,6 +51,7 @@ from .const import (
     CONF_EVENT_VIDEOS,
     CONF_LIVE_SNAPSHOT,
     CONF_RECORD_LENGTH,
+    CONF_SCAN_REGIONS,
     CONF_SESSION_PROBE,
     CONF_STATION_SESSIONS,
     DEFAULT_ALARM_TIMEOUT_MINUTES,
@@ -110,7 +111,9 @@ RECONFIGURE_SCHEMA = vol.Schema(
 # detection shows; a live keyframe for a camera with no detection image (wakes a
 # battery camera); the session probe (one read with the saved session 60 s after start
 # and every 6 h, never a sign-in); eufy's cloud push (off by default: the detections
-# of a camera without a HomeBase, through eufy's cloud); the event-history days; event
+# of a camera without a HomeBase, through eufy's cloud); every cloud region on each
+# device-list fetch (off by default: a region that listed no devices may cost a
+# sign-in each time); the event-history days; event
 # videos (each HomeBase recording copied into the history, off by default); the record
 # action's default length; the P2P sessions held to each HomeBase (range and default
 # are the library's). Read once at setup, so a change applies on the reload, except the
@@ -145,6 +148,7 @@ OPTIONS_SCHEMA = vol.Schema(
         vol.Required(CONF_LIVE_SNAPSHOT, default=False): BooleanSelector(),
         vol.Required(CONF_SESSION_PROBE, default=True): BooleanSelector(),
         vol.Required(CONF_CLOUD_PUSH, default=False): BooleanSelector(),
+        vol.Required(CONF_SCAN_REGIONS, default=False): BooleanSelector(),
         vol.Required(CONF_EVENT_HISTORY_DAYS, default=DEFAULT_EVENT_HISTORY_DAYS): NumberSelector(
             NumberSelectorConfig(
                 min=0,
@@ -500,7 +504,7 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
-    """The entry's ten options, from the detection hold to sessions per HomeBase.
+    """The entry's eleven options, from the detection hold to sessions per HomeBase.
 
     Three things worth knowing about this class:
 
@@ -519,9 +523,9 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
     """
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Show the options, and save exactly the ten they offer: four bools, five ints, a choice.
+        """Show the options, and save exactly the eleven they offer: five bools, five ints, a choice.
 
-        The saved mapping is rebuilt from those ten keys rather than passing
+        The saved mapping is rebuilt from those eleven keys rather than passing
         ``user_input`` through, so a submission carrying more than the schema asked
         for cannot persist anything else into the entry's options. The selectors
         have already refused a duration outside its range.
@@ -538,6 +542,7 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
                 CONF_LIVE_SNAPSHOT: bool(user_input[CONF_LIVE_SNAPSHOT]),
                 CONF_SESSION_PROBE: bool(user_input[CONF_SESSION_PROBE]),
                 CONF_CLOUD_PUSH: bool(user_input[CONF_CLOUD_PUSH]),
+                CONF_SCAN_REGIONS: bool(user_input[CONF_SCAN_REGIONS]),
                 CONF_EVENT_HISTORY_DAYS: int(user_input[CONF_EVENT_HISTORY_DAYS] + 0.5),
                 CONF_EVENT_VIDEOS: bool(user_input[CONF_EVENT_VIDEOS]),
                 CONF_RECORD_LENGTH: int(user_input[CONF_RECORD_LENGTH] + 0.5),

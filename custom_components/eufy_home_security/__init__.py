@@ -48,6 +48,7 @@ from .const import (
     CONF_EVENT_HISTORY_DAYS,
     CONF_EVENT_VIDEOS,
     CONF_LIVE_SNAPSHOT,
+    CONF_SCAN_REGIONS,
     DEFAULT_EVENT_HISTORY_DAYS,
     DOMAIN,
 )
@@ -167,6 +168,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         None,
         claims=runtime.station_claims(hass),
         max_sessions=runtime.session_budget(entry.options),
+        scan_regions=entry.options.get(CONF_SCAN_REGIONS, False) is True,
     )
     # The cloud push start, once setup has started it (below).
     push_start: list[asyncio.Task[None]] = []
@@ -246,6 +248,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     except EufySecurityError as err:
         # No cached device list either (a cold cache): only now is the entry not ready.
         raise errors.cache_unavailable(err) from err
+    errors.sync_no_devices_issue(hass, entry, (await eufy.async_cloud_status()).regions)
 
     coordinators: dict[str, StationCoordinator] = {
         serial: StationCoordinator(hass, entry, station)

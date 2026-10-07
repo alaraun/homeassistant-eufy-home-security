@@ -16,7 +16,7 @@
 |---|---|---|
 | Home Assistant → station | UDP 32108, then UDP to the station | discovery, every local command, stills, live video |
 | station → Home Assistant | UDP from a random high port, new every session | replies on the same session |
-| Home Assistant → internet | HTTPS to `*.eufy.com` and `security-app-*.eufylife.com` | sign-in, device list, device keys, session check |
+| Home Assistant → internet | HTTPS to `*.eufy.com`, `security-app.eufylife.com` and `security-app-eu.eufylife.com` | sign-in, device list, device keys, session check |
 | Home Assistant → internet | UDP 32100 to eufy's rendezvous servers | waking a standalone battery camera |
 | Home Assistant → internet | HTTPS to `*.google.com`, `*.googleapis.com` and `app-push-*.eufy.com`; TCP 5228 to `mtalk.google.com` | [Cloud push](usage.md#cloud-push) only |
 
@@ -76,6 +76,21 @@ location /api/hls/ {
 - eufy allows only a few sign-ins per account per day and locks the account for
   24 hours after repeated failures. Home Assistant signs in only at setup and on
   **Reconfigure**.
+
+## eufy regions
+
+- eufy runs two clouds, `eu` and `us`. Both accept the account's sign-in, but each
+  lists only the devices homed on it.
+- Adding the account signs in to both and asks both for devices. Each device then
+  uses the region that listed it.
+- A region that listed no devices is not asked again, so it costs no sign-in. A
+  device homed on that region later stays hidden until the option **Look for devices
+  in every eufy region** is on and **Refresh device list** is pressed.
+- With the option on, every device list Home Assistant fetches asks both regions:
+  **Refresh device list**, the session check, and the hourly refresh while a camera
+  without a HomeBase is set up. A region whose session has run out costs a sign-in.
+- When no region lists any device, the repair issue **No eufy devices found** shows;
+  see [troubleshooting.md](troubleshooting.md#repair-issues).
 
 ## HomeBase sessions
 
