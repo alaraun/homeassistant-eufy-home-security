@@ -39,6 +39,7 @@ from eufy_home_security import (
     AuthenticationError,
     CameraWakeError,
     CipherUnavailableError,
+    CipherUnusableError,
     CloudError,
     CloudProblem,
     CloudStatus,
@@ -99,6 +100,7 @@ from .const import (
     EXC_SETTING_UNCONFIRMED,
     EXC_SETTING_VALUE_INVALID,
     EXC_STATION_KEY_REJECTED,
+    EXC_STATION_KEY_UNUSABLE,
     EXC_STATION_UNREACHABLE,
     EXC_ZOOM_NEEDS_SINGLE_VIEW,
     EXC_ZOOM_UNSUPPORTED,
@@ -107,6 +109,7 @@ from .const import (
     ISSUE_CREDENTIALS_REFRESHED,
     ISSUE_CREDENTIALS_REFRESHED_LOGIN,
     ISSUE_KEY_REJECTED,
+    ISSUE_KEY_UNUSABLE,
     ISSUE_LOGIN_LIMITED,
     ISSUE_LOGIN_LIMITED_NO_WAIT,
     ISSUE_MEDIA_NOT_PERSISTENT,
@@ -249,6 +252,8 @@ def arm_failed(
       ``CommandUnsupportedError`` included).
     - ``KeyRejectedError``: the write reconnected and the station rejected even its
       re-fetched key; the station's key-rejected repair is the remedy.
+    - ``CipherUnusableError``: eufy serves the station a key that cannot be used; the
+      station's key-unusable repair explains it.
     - ``CloudError``: the reconnect needed the key or owner id fetched again and eufy
       was down or refused. Nothing here signs in.
     - Anything else (``CommunicationError``, or a ``ProtocolError`` met while the
@@ -257,7 +262,7 @@ def arm_failed(
       asleep: a wake takes about ten seconds and may fail.
 
     The only placeholder is ``target``, the requested mode's lower-case name: no
-    serial and no library text. Five of these six messages are shared with
+    serial and no library text. Six of these seven messages are shared with
     :func:`setting_write_failed`. The caller lets a plain ``UnsupportedError`` propagate.
     """
     if is_session_replaced_failure(err):
@@ -268,6 +273,8 @@ def arm_failed(
         key = EXC_GUARD_MODE_NOT_APPLIED
     elif isinstance(err, KeyRejectedError):
         key = EXC_STATION_KEY_REJECTED
+    elif isinstance(err, CipherUnusableError):
+        key = EXC_STATION_KEY_UNUSABLE
     elif isinstance(err, CloudError):
         key = EXC_CLOUD_UNAVAILABLE
     else:
@@ -305,6 +312,8 @@ def setting_write_failed(
         key = EXC_SETTING_NOT_APPLIED
     elif isinstance(err, KeyRejectedError):
         key = EXC_STATION_KEY_REJECTED
+    elif isinstance(err, CipherUnusableError):
+        key = EXC_STATION_KEY_UNUSABLE
     elif isinstance(err, CloudError):
         key = EXC_CLOUD_UNAVAILABLE
     else:
@@ -821,36 +830,69 @@ def raise_key_rejected_issue(hass: HomeAssistant, entry: ConfigEntry[Any], seria
     )
 
 
+def key_unusable_issue_id(entry_id: str, device_id: str) -> str:
+    """A station's key-unusable issue, by its device-registry id, never its serial."""
+    return f"{ISSUE_KEY_UNUSABLE}_{entry_id}_{device_id}"
+
+
+def raise_key_unusable_issue(hass: HomeAssistant, entry: ConfigEntry[Any], serial: str) -> None:
+    """One issue for a station whose key from eufy cannot be used (``CipherUnusableError``).
+
+    The key does not parse, and eufy serves the same bytes on every fetch, so the
+    library fetches nothing again and no fix flow is offered. Not fixable and not
+    persistent; the id is per device. Cleared when the station connects, and with
+    every setup attempt, which decides afresh.
+    """
+    device = _station_device(hass, entry, serial)
+    if device is None:
+        _LOGGER.debug(
+            "Station %s has no registered device; no key-unusable issue", redact_serial(serial)
+        )
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        key_unusable_issue_id(entry.entry_id, device.id),
+        is_fixable=False,
+        is_persistent=False,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key=ISSUE_KEY_UNUSABLE,
+        translation_placeholders={"station": station_label(device)},
+    )
+
+
 def raise_key_rejected_issues(
     hass: HomeAssistant,
     entry: ConfigEntry[Any],
     stations: Iterable[Station],
     start_errors: Mapping[str, EufySecurityError],
 ) -> None:
-    """The key-rejected issue for every station either source names.
+    """The key-rejected or key-unusable issue for every station either source names.
 
-    A station's rejection can be in the ``async_start`` result, or only in
+    A station's key error can be in the ``async_start`` result, or only in
     ``Station.last_error``: a station that started but whose first refresh failed
-    on a rejected key is absent from the start result. Every station is checked,
-    and a station named by both sources still has one issue.
+    on its key is absent from the start result. Every station is checked, and a
+    station named by both sources still has one issue.
     """
     for station in stations:
-        if isinstance(start_errors.get(station.serial), KeyRejectedError) or isinstance(
-            station.last_error, KeyRejectedError
-        ):
+        errs = (start_errors.get(station.serial), station.last_error)
+        if any(isinstance(err, KeyRejectedError) for err in errs):
             raise_key_rejected_issue(hass, entry, station.serial)
+        elif any(isinstance(err, CipherUnusableError) for err in errs):
+            raise_key_unusable_issue(hass, entry, station.serial)
 
 
 def clear_station_issues(hass: HomeAssistant, entry: ConfigEntry[Any], serial: str) -> None:
     """The station is connected: its key is accepted, so its key issues go.
 
-    Both the key-rejected and the cipher-unavailable issue are deleted. The
+    The key-rejected, key-unusable and cipher-unavailable issues are deleted. The
     credentials-refreshed notice stays: it is emitted about a second before the
     reconnect it enables, so clearing it here would delete it unseen.
     """
     device = _station_device(hass, entry, serial)
     if device is not None:
         ir.async_delete_issue(hass, DOMAIN, key_rejected_issue_id(entry.entry_id, device.id))
+        ir.async_delete_issue(hass, DOMAIN, key_unusable_issue_id(entry.entry_id, device.id))
         ir.async_delete_issue(hass, DOMAIN, cipher_unavailable_issue_id(entry.entry_id, device.id))
 
 
@@ -972,7 +1014,8 @@ def raise_account_mismatch_issue(hass: HomeAssistant, entry: ConfigEntry[Any], s
 
 
 def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:
-    """Delete the entry's account-id-mismatch, cipher-unavailable and no-devices issues.
+    """Delete the entry's account-id-mismatch, cipher-unavailable, key-unusable and
+    no-devices issues.
 
     Unload, the start of every setup attempt and entry removal call it, so an issue
     raised by an attempt that then failed (and so was never unloaded) does not
@@ -984,6 +1027,7 @@ def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) ->
     prefixes = (
         account_id_mismatch_issue_id(entry.entry_id, ""),
         cipher_unavailable_issue_id(entry.entry_id, ""),
+        key_unusable_issue_id(entry.entry_id, ""),
         no_devices_issue_id(entry.entry_id),
     )
     stale = [

@@ -151,22 +151,22 @@
         "step": {
           "confirm": {
             "title": "Allow one more key fetch for {station}",
-            "description": "The HomeBase {station} rejects its key, even after Home Assistant fetched the key from eufy again once, so its entities are unavailable; Home Assistant does not fetch the key again by itself. Confirm to reload the eufy account and allow one more key fetch, for example after the HomeBase was reset or moved to another account. If the HomeBase still rejects it, this repair comes back."
+            "description": "{station} rejects its key, even after Home Assistant fetched the key from eufy again once, so its entities are unavailable; Home Assistant does not fetch the key again by itself. Confirm to reload the eufy account and allow one more key fetch, for example after the station was reset or moved to another account. If it still rejects the key, this repair comes back."
           }
         },
         "abort": {
-          "entry_not_loaded": "The eufy account or this HomeBase is not loaded in Home Assistant right now. Wait until it has finished loading, then open this repair again.",
+          "entry_not_loaded": "The eufy account or this station is not loaded in Home Assistant right now. Wait until it has finished loading, then open this repair again.",
           "reset_failed": "Home Assistant could not allow another key fetch, so nothing changed and this repair stays open. Try again later."
         }
       }
     },
     "credentials_refreshed": {
       "title": "Fetched the key for {station} again",
-      "description": "The HomeBase {station} rejected its old key, so Home Assistant fetched its key or owner id from eufy again. No sign-in was needed. You can dismiss this notice."
+      "description": "{station} rejected its old key, so Home Assistant fetched its key or owner id from eufy again. No sign-in was needed. You can dismiss this notice."
     },
     "credentials_refreshed_login": {
       "title": "Fetched the key for {station} again, with a sign-in",
-      "description": "The HomeBase {station} rejected its old key, so Home Assistant fetched its key or owner id from eufy again. This cost one eufy sign-in, and eufy limits how often an account may sign in. You can dismiss this notice."
+      "description": "{station} rejected its old key, so Home Assistant fetched its key or owner id from eufy again. This cost one eufy sign-in, and eufy limits how often an account may sign in. You can dismiss this notice."
     },
     "account_id_mismatch": {
       "title": "{station} stamps its events with another eufy account",
@@ -183,6 +183,10 @@
     "cipher_unavailable": {
       "title": "eufy has no key for {station}",
       "description": "{station} uses key number {cipher} for its local connection, but eufy holds no such key for the station's owner, so Home Assistant cannot connect to it and its entities are unavailable. Signing in again does not help. In the eufy app, on the account that set the station up, check that the station is still there and shared with the account Home Assistant uses; share it again if needed. Then reload the integration: Home Assistant asks eufy again on every reload, and on its own at most once an hour."
+    },
+    "key_unusable": {
+      "title": "eufy serves an unusable key for {station}",
+      "description": "{station} uses an older connection method whose key eufy serves in a form that cannot be read, so Home Assistant cannot connect to it and its entities are unavailable. Fetching the key again returns the same, and signing in again does not help. If the eufy app offers a firmware update for this device, install it, then reload the integration."
     },
     "no_devices": {
       "title": "No eufy devices found for {account}",
@@ -221,7 +225,10 @@
       "message": "Another app or device signed in with the eufy account and ended Home Assistant's session, so {target} was not set. Waking a battery camera needs a key from eufy, which refuses the ended session. Open the account's repair under Settings > System > Repairs to sign in again, or use Reconfigure on the account entry; Home Assistant does not sign in again by itself."
     },
     "station_key_rejected": {
-      "message": "The HomeBase rejected its key, so {target} was not set. Open this HomeBase's repair under Settings > System > Repairs to let Home Assistant fetch its key once more."
+      "message": "The station rejected its key, so {target} was not set. Open its repair under Settings > System > Repairs to let Home Assistant fetch its key once more."
+    },
+    "station_key_unusable": {
+      "message": "eufy serves this station a key that cannot be used, so {target} was not set. See its repair under Settings > System > Repairs."
     },
     "cloud_unavailable": {
       "message": "Changing {target} needed the HomeBase's key fetched from eufy again, and eufy could not be reached or is temporarily refusing this account, so it was not set. Check Settings > System > Repairs for this account and try again later; Home Assistant does not sign in again by itself."
