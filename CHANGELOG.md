@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.1.3](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.2...v0.1.3) (2026-10-07)
+
+
+### Features
+
+* look for devices in every eufy region only when the option is on ([#17](https://github.com/alaraun/homeassistant-eufy-home-security/issues/17)) ([1e9f99e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/1e9f99e56623f02135ed553e0e5b06dd43607a75))
+
 ## [0.1.2](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.1...v0.1.2) (2026-10-06)
 
 
