@@ -5,6 +5,14 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.1.9](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.8...v0.1.9) (2026-10-08)
+
+
+### Features
+
+* extra eufy sign-in countries for homes shared from another country ([#34](https://github.com/alaraun/homeassistant-eufy-home-security/issues/34)) ([b9d8274](https://github.com/alaraun/homeassistant-eufy-home-security/commit/b9d827421dac2b8b8e1cb9d4c788961515275248))
+* sign in with the eufy app's country; name unaccepted invitations ([#33](https://github.com/alaraun/homeassistant-eufy-home-security/issues/33)) ([b7c4c96](https://github.com/alaraun/homeassistant-eufy-home-security/commit/b7c4c96d42b43465fa2c17e43a393fde4f50aa28))
+
 ## [0.1.8](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.7...v0.1.8) (2026-10-08)
 
 
