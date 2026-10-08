@@ -38,6 +38,7 @@ from custom_components.eufy_home_security.const import (
     CONF_DETECTION_HOLD,
     CONF_EVENT_HISTORY_DAYS,
     CONF_EVENT_VIDEOS,
+    CONF_EXTRA_COUNTRIES,
     CONF_LIVE_SNAPSHOT,
     CONF_RECORD_LENGTH,
     CONF_SCAN_REGIONS,
@@ -75,7 +76,7 @@ def _registered(hass: HomeAssistant, domain: str, serial: str, key: str) -> str 
     return er.async_get(hass).async_get_entity_id(domain, DOMAIN, entity_unique_id(serial, key))
 
 
-async def test_the_options_form_offers_its_twelve_options_with_their_defaults(
+async def test_the_options_form_offers_its_thirteen_options_with_their_defaults(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
@@ -106,12 +107,13 @@ async def test_the_options_form_offers_its_twelve_options_with_their_defaults(
         CONF_SESSION_PROBE,
         CONF_CLOUD_PUSH,
         CONF_COUNTRY,
+        CONF_EXTRA_COUNTRIES,
         CONF_SCAN_REGIONS,
         CONF_EVENT_HISTORY_DAYS,
         CONF_EVENT_VIDEOS,
         CONF_RECORD_LENGTH,
         CONF_STATION_SESSIONS,
-    ], "the options form does not offer exactly its twelve options, in order"
+    ], "the options form does not offer exactly its thirteen options, in order"
     (
         hold,
         timeout,
@@ -120,6 +122,7 @@ async def test_the_options_form_offers_its_twelve_options_with_their_defaults(
         probe,
         push,
         country,
+        extra_countries,
         scan_regions,
         history_days,
         videos,
@@ -135,6 +138,7 @@ async def test_the_options_form_offers_its_twelve_options_with_their_defaults(
     )
     assert push.default() is False, "cloud push uses eufy's cloud: opt-in only"
     assert country.default() == "", "an empty country means Home Assistant's"
+    assert extra_countries.default() == [], "each extra country costs a sign-in: none by default"
     assert scan_regions.default() is False, (
         "asking every region may cost a sign-in on each fetch: opt-in only"
     )
@@ -188,15 +192,15 @@ async def test_hold_and_timeout_outside_their_ranges_are_refused(
     await hass.async_block_till_done()
 
 
-async def test_the_saved_options_are_exactly_the_twelve_offered(
+async def test_the_saved_options_are_exactly_the_thirteen_offered(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The save is rebuilt from the twelve keys, five bools, five ints, a choice and a
-    country; it reloads."""
+    """The save is rebuilt from the thirteen keys, five bools, five ints, a choice, a
+    country and a country list; it reloads."""
 
     async def no_push(_eufy: EufySecurity) -> None:
         """The library fakes no push; tests/test_cloud_push.py covers its start."""
@@ -216,6 +220,7 @@ async def test_the_saved_options_are_exactly_the_twelve_offered(
             CONF_SESSION_PROBE: False,
             CONF_CLOUD_PUSH: True,
             CONF_COUNTRY: "CH",
+            CONF_EXTRA_COUNTRIES: ["EE"],
             CONF_SCAN_REGIONS: True,
             CONF_EVENT_HISTORY_DAYS: 29.6,
             CONF_EVENT_VIDEOS: True,
@@ -232,6 +237,7 @@ async def test_the_saved_options_are_exactly_the_twelve_offered(
         CONF_SESSION_PROBE: False,
         CONF_CLOUD_PUSH: True,
         CONF_COUNTRY: "CH",
+        CONF_EXTRA_COUNTRIES: ["EE"],
         CONF_SCAN_REGIONS: True,
         CONF_EVENT_HISTORY_DAYS: 30,
         CONF_EVENT_VIDEOS: True,

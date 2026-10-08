@@ -90,6 +90,10 @@ CONF_SCAN_REGIONS: Final = "scan_regions"
 # lists a device only to a login with the country it is held under. Empty means Home
 # Assistant's country. A change reloads the entry and asks every login scope once.
 CONF_COUNTRY: Final = "country"
+# Further countries the account signs in with, one sign-in each on the country's home
+# region: a home shared from an account in another country is listed only under that
+# country. A change reloads the entry and asks every login scope once.
+CONF_EXTRA_COUNTRIES: Final = "extra_countries"
 # The wait before a failed first push start is tried again, doubling up to the cap.
 # The library restarts a listener that has listened once by itself.
 PUSH_START_RETRY_MIN_SECONDS: Final = 60.0

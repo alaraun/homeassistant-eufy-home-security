@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -42,6 +42,7 @@ from eufy_home_security import (
 
 from .const import (
     CONF_COUNTRY,
+    CONF_EXTRA_COUNTRIES,
     CONF_STATION_SESSIONS,
     DOMAIN,
     PUSH_START_RETRY_MAX_SECONDS,
@@ -102,6 +103,21 @@ def login_country(hass: HomeAssistant, options: Mapping[str, Any]) -> str:
     return hass.config.country or ""
 
 
+def login_countries(hass: HomeAssistant, options: Mapping[str, Any]) -> str | list[str]:
+    """What the library's ``country`` takes: the login country, then each extra one.
+
+    A single country (or ``""``) as a string; duplicates and empty codes are left out.
+    """
+    extras = options.get(CONF_EXTRA_COUNTRIES)
+    codes = [login_country(hass, options)]
+    if isinstance(extras, list):
+        codes += [code for code in extras if isinstance(code, str)]
+    unique = [code for index, code in enumerate(codes) if code and code not in codes[:index]]
+    if len(unique) > 1:
+        return unique
+    return unique[0] if unique else ""
+
+
 def request_rescan_at_setup(hass: HomeAssistant, entry_id: str) -> None:
     """Make the entry's next setup ask every login scope once (a changed login country)."""
     hass.data.setdefault(RESCAN_AT_SETUP, set()).add(entry_id)
@@ -157,7 +173,7 @@ def build_client(
     claims: StationClaims | None = None,
     max_sessions: int = DEFAULT_STATION_SESSIONS,
     scan_regions: bool = False,
-    country: str = "",
+    country: str | Sequence[str] = "",
 ) -> EufySecurity:
     """Build a ``EufySecurity`` on the account store: the single construction site.
 
@@ -173,8 +189,8 @@ def build_client(
     (:func:`session_budget`); a flow's short-lived client keeps the library default.
     ``scan_regions`` makes every device-list fetch ask every cloud region (the
     entry's option); a flow's client keeps the library default. ``country`` is the
-    login country (:func:`login_country`); every client sends Home Assistant's time
-    zone, as the eufy app sends the phone's.
+    login country, or it and the extra ones (:func:`login_countries`); every client
+    sends Home Assistant's time zone, as the eufy app sends the phone's.
     """
     return EufySecurity(
         async_get_clientsession(hass),
