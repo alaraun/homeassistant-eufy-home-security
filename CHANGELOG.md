@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.1.7](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.6...v0.1.7) (2026-10-08)
+
+
+### Features
+
+* the diagnostics download carries the library's account report ([#27](https://github.com/alaraun/homeassistant-eufy-home-security/issues/27)) ([c9d7ec7](https://github.com/alaraun/homeassistant-eufy-home-security/commit/c9d7ec7d9f88c2b8aeda9c611c865a8f2ad94c9d))
+
 ## [0.1.6](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.5...v0.1.6) (2026-10-07)
 
 
