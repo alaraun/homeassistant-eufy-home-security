@@ -25,11 +25,12 @@ from homeassistant.components.repairs import (
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import issue_registry as ir
 
 from eufy_home_security import EufySecurityError
 
 from . import errors, runtime
-from .const import DOMAIN, ISSUE_KEY_REJECTED, ISSUE_SESSION_REPLACED
+from .const import DOMAIN, ISSUE_KEY_REJECTED, ISSUE_PENDING_INVITES, ISSUE_SESSION_REPLACED
 from .runtime import EufyConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
@@ -148,6 +149,49 @@ class KeyRejectedFix(RepairsFlow):
         return self.async_create_entry(data={})
 
 
+class PendingInvitesFix(RepairsFlow):
+    """Ask every login scope again once the user accepted an invitation in the eufy app.
+
+    On confirmation the entry is reloaded with one rescan at its setup
+    (``runtime.request_rescan_at_setup``): every login scope is asked for its devices,
+    including one that listed none before, and the invitations are read again. The
+    fix itself sends nothing; a scope whose session lapsed costs a sign-in at setup.
+    """
+
+    def __init__(self, entry_id: str) -> None:
+        self._entry_id = entry_id
+
+    async def async_step_init(self, user_input: dict[str, str] | None = None) -> RepairsFlowResult:
+        """Open straight on the confirmation."""
+        return await self.async_step_confirm()
+
+    async def async_step_confirm(
+        self, user_input: dict[str, str] | None = None
+    ) -> RepairsFlowResult:
+        """Ask first, naming the invitations the issue shows; on submit, reload with one
+        rescan."""
+        if user_input is None:
+            entry = self.hass.config_entries.async_get_entry(self._entry_id)
+            issue = ir.async_get(self.hass).async_get_issue(
+                DOMAIN, errors.pending_invites_issue_id(self._entry_id)
+            )
+            placeholders = (issue.translation_placeholders if issue is not None else None) or {}
+            return self.async_show_form(
+                step_id="confirm",
+                data_schema=vol.Schema({}),
+                description_placeholders={
+                    "account": errors.account_label(entry) if entry is not None else "",
+                    "invites": placeholders.get("invites", ""),
+                },
+            )
+        entry = _loaded_entry(self.hass, self._entry_id)
+        if entry is None:
+            return self.async_abort(reason="entry_not_loaded")
+        runtime.request_rescan_at_setup(self.hass, entry.entry_id)
+        self.hass.config_entries.async_schedule_reload(entry.entry_id)
+        return self.async_create_entry(data={})
+
+
 async def async_create_fix_flow(
     hass: HomeAssistant,
     issue_id: str,
@@ -158,4 +202,6 @@ async def async_create_fix_flow(
         return SessionReplacedFix(str(data["entry_id"]))
     if issue_id.startswith(f"{ISSUE_KEY_REJECTED}_") and data is not None:
         return KeyRejectedFix(str(data["entry_id"]), str(data["device_id"]))
+    if issue_id.startswith(f"{ISSUE_PENDING_INVITES}_") and data is not None:
+        return PendingInvitesFix(str(data["entry_id"]))
     return ConfirmRepairFlow()

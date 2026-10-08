@@ -169,6 +169,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         claims=runtime.station_claims(hass),
         max_sessions=runtime.session_budget(entry.options),
         scan_regions=entry.options.get(CONF_SCAN_REGIONS, False) is True,
+        country=runtime.login_country(hass, entry.options),
     )
     # The cloud push start, once setup has started it (below).
     push_start: list[asyncio.Task[None]] = []
@@ -244,11 +245,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     if eufy.session_replaced:
         errors.raise_session_replaced_issue(hass, entry)
     try:
-        await eufy.async_discover()
+        # Every login scope once after the login country changed (options) or the
+        # pending-invitations fix; otherwise the cached list or the usual refresh.
+        await eufy.async_discover(rescan_regions=runtime.take_rescan_at_setup(hass, entry.entry_id))
     except EufySecurityError as err:
         # No cached device list either (a cold cache): only now is the entry not ready.
         raise errors.cache_unavailable(err) from err
     errors.sync_no_devices_issue(hass, entry, (await eufy.async_cloud_status()).regions)
+    if not eufy.stations:
+        # A shared home shows only once its invitation is accepted in the eufy app.
+        errors.sync_pending_invites_issue(hass, entry, await runtime.async_pending_invites(eufy))
 
     coordinators: dict[str, StationCoordinator] = {
         serial: StationCoordinator(hass, entry, station)

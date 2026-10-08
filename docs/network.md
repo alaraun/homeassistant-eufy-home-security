@@ -69,7 +69,9 @@ location /api/hls/ {
 ## eufy account
 
 - The account must see the HomeBase: the owner's, or one the owner shared it with
-  in the eufy app.
+  in the eufy app. A shared home shows only after the invitation is accepted in the
+  eufy app, signed in with that account; until then the repair **eufy invitation not
+  accepted** names it.
 - A sign-in from another client ends the earlier session of the same account. Give
   Home Assistant its own account, shared from the owner's app; share devices added
   later again.
@@ -80,6 +82,18 @@ location /api/hls/ {
   sends it by e-mail, and the setup, re-authentication and **Reconfigure** dialogs ask
   for it after the password. The session is saved; a restart signs in again only
   after eufy ended it.
+
+## eufy sign-in country
+
+- eufy lists a device only to a sign-in with the country the device was set up or
+  shared under. With another country the account signs in fine but lists nothing.
+- Home Assistant signs in with the integration's **eufy sign-in country** option,
+  Home Assistant's own country by default (**Settings → System → General**). Set it to
+  the country your eufy app signs in with (its sign-in screen shows it).
+- Changing the option reloads the integration, signs in once more with the new
+  country and asks eufy once for the devices.
+- Every request also carries Home Assistant's time zone, as the eufy app sends the
+  phone's.
 
 ## eufy regions
 

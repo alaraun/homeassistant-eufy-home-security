@@ -72,6 +72,8 @@ from custom_components.eufy_home_security.const import (
 )
 
 _CIPHER_CALL = f"cipher:{redact_serial(SYNTHETIC.station_sn)}"
+# The fake cloud's records of the two pending-invitation reads.
+_INVITE_CALLS: Final = ("house_invites", "device_invites")
 _NOTICE_KEYS = ("credentials_refreshed", "credentials_refreshed_login")
 # The owner account a mismatched station stamps on its records: synthetic, 40 hex
 # characters, and never the account id the library sends.
@@ -925,11 +927,12 @@ async def test_an_account_listing_no_devices_in_any_region_raises_the_no_devices
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """Every region suspended: one non-fixable issue naming the regions; a press asks nothing.
+    """Every region suspended: one non-fixable issue naming the regions; a press asks
+    for no device list.
 
     Without the region option a region that listed no devices is never asked again,
-    so the default Refresh device list sends no device-list request; unload deletes
-    the issue.
+    so the default Refresh device list sends no device-list request, only the
+    pending-invitation reads; unload deletes the issue.
     """
     fake_cloud.devices = []
     entry = await set_up_warm(hass, seed_warm_cache)
@@ -944,7 +947,9 @@ async def test_an_account_listing_no_devices_in_any_region_raises_the_no_devices
 
     before = len(cloud_calls(fake_cloud))
     await _press_refresh_device_list(hass, entry)
-    assert cloud_calls(fake_cloud)[before:] == []
+    pressed = cloud_calls(fake_cloud)[before:]
+    assert [call for call in pressed if not call.startswith(_INVITE_CALLS)] == []
+    assert pressed, "the press read the pending invitations"
 
     await _unload(hass, entry)
     assert _no_devices_issue(hass, entry) is None

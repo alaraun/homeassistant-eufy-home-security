@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import CONF_EMAIL
@@ -41,6 +41,7 @@ from eufy_home_security import (
     CipherUnavailableError,
     CipherUnusableError,
     CloudError,
+    CloudInvite,
     CloudProblem,
     CloudStatus,
     CommandError,
@@ -114,6 +115,7 @@ from .const import (
     ISSUE_LOGIN_LIMITED_NO_WAIT,
     ISSUE_MEDIA_NOT_PERSISTENT,
     ISSUE_NO_DEVICES,
+    ISSUE_PENDING_INVITES,
     ISSUE_PUSH_NOT_RUNNING,
     ISSUE_SESSION_REPLACED,
     MEDIA_DOCS_URL,
@@ -1014,8 +1016,8 @@ def raise_account_mismatch_issue(hass: HomeAssistant, entry: ConfigEntry[Any], s
 
 
 def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:
-    """Delete the entry's account-id-mismatch, cipher-unavailable, key-unusable and
-    no-devices issues.
+    """Delete the entry's account-id-mismatch, cipher-unavailable, key-unusable,
+    no-devices and pending-invitations issues.
 
     Unload, the start of every setup attempt and entry removal call it, so an issue
     raised by an attempt that then failed (and so was never unloaded) does not
@@ -1029,6 +1031,7 @@ def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) ->
         cipher_unavailable_issue_id(entry.entry_id, ""),
         key_unusable_issue_id(entry.entry_id, ""),
         no_devices_issue_id(entry.entry_id),
+        pending_invites_issue_id(entry.entry_id),
     )
     stale = [
         issue_id
@@ -1068,6 +1071,49 @@ def sync_no_devices_issue(
         translation_placeholders={
             "account": account_label(entry),
             "regions": ", ".join(sorted(regions)),
+        },
+    )
+
+
+def pending_invites_issue_id(entry_id: str) -> str:
+    """The account's pending-invitations issue: one per entry."""
+    return f"{ISSUE_PENDING_INVITES}_{entry_id}"
+
+
+def _invite_text(invite: CloudInvite) -> str:
+    """One invitation as the repair names it: the home, or the shared device's model."""
+    shared = f"“{invite.house_name}”" if invite.kind == "house" else invite.product_code or ""
+    return f"{shared} from {invite.inviter}" if invite.inviter else shared
+
+
+def sync_pending_invites_issue(
+    hass: HomeAssistant, entry: ConfigEntry[Any], invites: Sequence[CloudInvite] | None
+) -> None:
+    """Show the invitations the account has not accepted; withdraw the issue when none.
+
+    ``None`` (the invitations could not be read) leaves the issue as it is. Fixable:
+    the fix asks every login scope again after the user accepted in the eufy app.
+    Not persistent, so the home names and inviters it shows are never stored or put
+    in a diagnostics download.
+    """
+    if invites is None:
+        return
+    issue_id = pending_invites_issue_id(entry.entry_id)
+    if not invites:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        data={"entry_id": entry.entry_id},
+        is_fixable=True,
+        is_persistent=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=ISSUE_PENDING_INVITES,
+        translation_placeholders={
+            "account": account_label(entry),
+            "invites": "; ".join(_invite_text(invite) for invite in invites),
         },
     )
 
