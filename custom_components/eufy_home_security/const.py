@@ -86,6 +86,10 @@ CONF_CLOUD_PUSH: Final = "cloud_push"
 # off by default: a region that listed no devices is otherwise not asked again. A
 # change reloads the entry.
 CONF_SCAN_REGIONS: Final = "scan_regions"
+# The country the account logs in with (ISO 3166 alpha-2), as the eufy app does: eufy
+# lists a device only to a login with the country it is held under. Empty means Home
+# Assistant's country. A change reloads the entry and asks every login scope once.
+CONF_COUNTRY: Final = "country"
 # The wait before a failed first push start is tried again, doubling up to the cap.
 # The library restarts a listener that has listened once by itself.
 PUSH_START_RETRY_MIN_SECONDS: Final = 60.0
@@ -312,6 +316,8 @@ ISSUE_CIPHER_UNAVAILABLE: Final = "cipher_unavailable"
 ISSUE_KEY_UNUSABLE: Final = "key_unusable"
 # The account lists no devices in any eufy cloud region, and none is asked again.
 ISSUE_NO_DEVICES: Final = "no_devices"
+# Invitations sent to the account that it has not accepted in the eufy app.
+ISSUE_PENDING_INVITES: Final = "pending_invites"
 
 # Camera snapshots. The camera entity's unique-id key; it has no name of its
 # own, the camera is its device.

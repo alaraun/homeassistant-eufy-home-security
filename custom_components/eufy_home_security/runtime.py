@@ -32,13 +32,16 @@ from eufy_home_security import (
     DEFAULT_STATION_SESSIONS,
     MIN_STATION_SESSIONS,
     STATION_SESSION_LIMIT,
+    CloudInvite,
     EufySecurity,
+    EufySecurityError,
     LoginNeed,
     RateLimitedError,
     StationClaims,
 )
 
 from .const import (
+    CONF_COUNTRY,
     CONF_STATION_SESSIONS,
     DOMAIN,
     PUSH_START_RETRY_MAX_SECONDS,
@@ -59,6 +62,8 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 CLAIMS: HassKey[StationClaims] = HassKey(f"{DOMAIN}_claims")
+# Entries whose next setup asks every login scope once (the login country changed).
+RESCAN_AT_SETUP: HassKey[set[str]] = HassKey(f"{DOMAIN}_rescan_at_setup")
 
 _STORE_VERSION = 1
 
@@ -84,6 +89,44 @@ def cache_store(hass: HomeAssistant, email: str) -> Store[dict[str, Any]]:
     identity.
     """
     return Store(hass, _STORE_VERSION, store_key(email), private=True, atomic_writes=True)
+
+
+def login_country(hass: HomeAssistant, options: Mapping[str, Any]) -> str:
+    """The country the account logs in with: the entry's option, else Home Assistant's.
+
+    Empty when neither is set; the library then uses the country of the host's IP.
+    """
+    option = options.get(CONF_COUNTRY)
+    if isinstance(option, str) and option:
+        return option
+    return hass.config.country or ""
+
+
+def request_rescan_at_setup(hass: HomeAssistant, entry_id: str) -> None:
+    """Make the entry's next setup ask every login scope once (a changed login country)."""
+    hass.data.setdefault(RESCAN_AT_SETUP, set()).add(entry_id)
+
+
+def take_rescan_at_setup(hass: HomeAssistant, entry_id: str) -> bool:
+    """Whether this setup asks every login scope; the request is used up."""
+    pending = hass.data.get(RESCAN_AT_SETUP)
+    if pending is None or entry_id not in pending:
+        return False
+    pending.discard(entry_id)
+    return True
+
+
+async def async_pending_invites(eufy: EufySecurity) -> list[CloudInvite] | None:
+    """The invitations the account has not accepted, or None when they cannot be read.
+
+    Login-free (only scopes with a session are asked); a cloud error is logged at
+    debug, by type only, and leaves the caller's issue as it is.
+    """
+    try:
+        return await eufy.async_pending_invites()
+    except EufySecurityError as err:
+        _LOGGER.debug("Pending eufy invitations not read: %s", type(err).__name__)
+        return None
 
 
 def station_claims(hass: HomeAssistant) -> StationClaims:
@@ -114,6 +157,7 @@ def build_client(
     claims: StationClaims | None = None,
     max_sessions: int = DEFAULT_STATION_SESSIONS,
     scan_regions: bool = False,
+    country: str = "",
 ) -> EufySecurity:
     """Build a ``EufySecurity`` on the account store: the single construction site.
 
@@ -128,7 +172,9 @@ def build_client(
     state. ``max_sessions`` is every station's session budget
     (:func:`session_budget`); a flow's short-lived client keeps the library default.
     ``scan_regions`` makes every device-list fetch ask every cloud region (the
-    entry's option); a flow's client keeps the library default.
+    entry's option); a flow's client keeps the library default. ``country`` is the
+    login country (:func:`login_country`); every client sends Home Assistant's time
+    zone, as the eufy app sends the phone's.
     """
     return EufySecurity(
         async_get_clientsession(hass),
@@ -138,6 +184,8 @@ def build_client(
         claims=claims,
         max_sessions=max_sessions,
         scan_regions=scan_regions,
+        country=country,
+        timezone=hass.config.time_zone,
     )
 
 

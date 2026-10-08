@@ -20,6 +20,7 @@ from homeassistant.const import CONF_EMAIL, CONF_NAME, CONF_PASSWORD, UnitOfTime
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     BooleanSelector,
+    CountrySelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -48,6 +49,7 @@ from .const import (
     CONF_ALARM_TIMEOUT,
     CONF_CAMERA_IMAGE,
     CONF_CLOUD_PUSH,
+    CONF_COUNTRY,
     CONF_DETECTION_HOLD,
     CONF_EVENT_HISTORY_DAYS,
     CONF_EVENT_VIDEOS,
@@ -91,6 +93,8 @@ CREDENTIALS_SCHEMA = vol.Schema(
         vol.Required(CONF_PASSWORD): TextSelector(
             TextSelectorConfig(type=TextSelectorType.PASSWORD)
         ),
+        # Optional: empty means Home Assistant's country (runtime.login_country).
+        vol.Optional(CONF_COUNTRY): CountrySelector(),
     }
 )
 
@@ -120,7 +124,8 @@ VERIFY_CODE_SCHEMA = vol.Schema(
 # detection shows; a live keyframe for a camera with no detection image (wakes a
 # battery camera); the session probe (one read with the saved session 60 s after start
 # and every 6 h, never a sign-in); eufy's cloud push (off by default: the detections
-# of a camera without a HomeBase, through eufy's cloud); every cloud region on each
+# of a camera without a HomeBase, through eufy's cloud); the login country (empty:
+# Home Assistant's; a change asks every login scope once); every cloud region on each
 # device-list fetch (off by default: a region that listed no devices may cost a
 # sign-in each time); the event-history days; event
 # videos (each HomeBase recording copied into the history, off by default); the record
@@ -157,6 +162,7 @@ OPTIONS_SCHEMA = vol.Schema(
         vol.Required(CONF_LIVE_SNAPSHOT, default=False): BooleanSelector(),
         vol.Required(CONF_SESSION_PROBE, default=True): BooleanSelector(),
         vol.Required(CONF_CLOUD_PUSH, default=False): BooleanSelector(),
+        vol.Optional(CONF_COUNTRY, default=""): CountrySelector(),
         vol.Required(CONF_SCAN_REGIONS, default=False): BooleanSelector(),
         vol.Required(CONF_EVENT_HISTORY_DAYS, default=DEFAULT_EVENT_HISTORY_DAYS): NumberSelector(
             NumberSelectorConfig(
@@ -250,6 +256,7 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
         # e-mail of the account being added (the user step only).
         self._pending: runtime.PendingVerification | None = None
         self._new_account: str | None = None
+        self._new_country = ""
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Log in once and cache the session, then create the entry.
@@ -269,9 +276,12 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
         typed, never the password.
         """
         form_errors: dict[str, str] = {}
-        schema = CREDENTIALS_SCHEMA
+        schema = self.add_suggested_values_to_schema(
+            CREDENTIALS_SCHEMA, {CONF_COUNTRY: self.hass.config.country}
+        )
         if user_input is not None:
             email = user_input[CONF_EMAIL].strip().lower()
+            country = str(user_input.get(CONF_COUNTRY) or "")
             if not email:
                 form_errors[CONF_EMAIL] = ERROR_INVALID_EMAIL
             else:
@@ -279,7 +289,11 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._abort_if_unique_id_configured()
                 try:
                     eufy = runtime.build_client(
-                        self.hass, email, user_input[CONF_PASSWORD], claims=None
+                        self.hass,
+                        email,
+                        user_input[CONF_PASSWORD],
+                        claims=None,
+                        country=runtime.login_country(self.hass, {CONF_COUNTRY: country}),
                     )
                 except ValueError:
                     form_errors[CONF_EMAIL] = ERROR_INVALID_EMAIL
@@ -300,6 +314,7 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
                             await eufy.async_close()
                     if challenge is not None:
                         self._new_account = email
+                        self._new_country = country
                         self._pending = runtime.PendingVerification(
                             eufy,
                             login_id=challenge.login_id,
@@ -309,7 +324,7 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
                         )
                         return self._verify_code_form({})
                     if not form_errors:
-                        return self.async_create_entry(title=email, data={CONF_EMAIL: email})
+                        return self._create_account_entry(email, country)
                     # No entry holds this account, so nothing else would ever forget
                     # what the sign-in cached. Only after the close, which saves
                     # the client's document. The hold-offs and the install identity
@@ -319,9 +334,17 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
                         runtime.cache_store(self.hass, email), keep_install_identity=True
                     )
             schema = self.add_suggested_values_to_schema(
-                CREDENTIALS_SCHEMA, {CONF_EMAIL: user_input[CONF_EMAIL]}
+                CREDENTIALS_SCHEMA, {CONF_EMAIL: user_input[CONF_EMAIL], CONF_COUNTRY: country}
             )
         return self.async_show_form(step_id=STEP_USER, data_schema=schema, errors=form_errors)
+
+    def _create_account_entry(self, email: str, country: str) -> ConfigFlowResult:
+        """The new account's entry; a login country the user picked becomes its option."""
+        return self.async_create_entry(
+            title=email,
+            data={CONF_EMAIL: email},
+            options={CONF_COUNTRY: country} if country else {},
+        )
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
         """eufy rejected the cached password, or none is cached: ask for the current one."""
@@ -361,7 +384,13 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
             if entry.state is not ConfigEntryState.NOT_LOADED:
                 # Never two live instances on one store, and no sign-in spent beside one.
                 return ERROR_CANNOT_CONNECT
-            eufy = runtime.build_client(self.hass, entry.data[CONF_EMAIL], password, claims=None)
+            eufy = runtime.build_client(
+                self.hass,
+                entry.data[CONF_EMAIL],
+                password,
+                claims=None,
+                country=runtime.login_country(self.hass, entry.options),
+            )
             held = False
             try:
                 if password is None:
@@ -596,7 +625,7 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
             error = errors.flow_error_key(err)
         else:
             await self._async_release_pending()
-            return self.async_create_entry(title=email, data={CONF_EMAIL: email})
+            return self._create_account_entry(email, self._new_country)
         await self._async_release_pending()
         # As in the user step: no entry holds this account, so forget what was cached.
         await async_forget_account(
@@ -605,7 +634,7 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id=STEP_USER,
             data_schema=self.add_suggested_values_to_schema(
-                CREDENTIALS_SCHEMA, {CONF_EMAIL: email}
+                CREDENTIALS_SCHEMA, {CONF_EMAIL: email, CONF_COUNTRY: self._new_country}
             ),
             errors={"base": error},
         )
@@ -712,7 +741,7 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
-    """The entry's eleven options, from the detection hold to sessions per HomeBase.
+    """The entry's twelve options, from the detection hold to sessions per HomeBase.
 
     Three things worth knowing about this class:
 
@@ -731,9 +760,10 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
     """
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Show the options, and save exactly the eleven they offer: five bools, five ints, a choice.
+        """Show the options, and save exactly the twelve they offer: five bools, five ints, a
+        choice and a country.
 
-        The saved mapping is rebuilt from those eleven keys rather than passing
+        The saved mapping is rebuilt from those twelve keys rather than passing
         ``user_input`` through, so a submission carrying more than the schema asked
         for cannot persist anything else into the entry's options. The selectors
         have already refused a duration outside its range.
@@ -750,24 +780,39 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
                 CONF_LIVE_SNAPSHOT: bool(user_input[CONF_LIVE_SNAPSHOT]),
                 CONF_SESSION_PROBE: bool(user_input[CONF_SESSION_PROBE]),
                 CONF_CLOUD_PUSH: bool(user_input[CONF_CLOUD_PUSH]),
+                CONF_COUNTRY: str(user_input.get(CONF_COUNTRY) or ""),
                 CONF_SCAN_REGIONS: bool(user_input[CONF_SCAN_REGIONS]),
                 CONF_EVENT_HISTORY_DAYS: int(user_input[CONF_EVENT_HISTORY_DAYS] + 0.5),
                 CONF_EVENT_VIDEOS: bool(user_input[CONF_EVENT_VIDEOS]),
                 CONF_RECORD_LENGTH: int(user_input[CONF_RECORD_LENGTH] + 0.5),
                 CONF_STATION_SESSIONS: int(user_input[CONF_STATION_SESSIONS] + 0.5),
             }
+            if self._login_country_changed(data):
+                # The reload below logs in with the new country and lists every scope.
+                runtime.request_rescan_at_setup(self.hass, self.config_entry.entry_id)
             self._async_apply_live_options(data)
             return self.async_create_entry(data=data)
         return self.async_show_form(
             step_id=OPTIONS_STEP_INIT,
             data_schema=self.add_suggested_values_to_schema(
-                OPTIONS_SCHEMA, self.config_entry.options
+                OPTIONS_SCHEMA,
+                {CONF_COUNTRY: self.hass.config.country, **self.config_entry.options},
             ),
             description_placeholders={
                 **_camera_image_placeholders(),
                 **_session_placeholders(),
                 "history_path": str(history.history_dir(self.hass)),
             },
+        )
+
+    def _login_country_changed(self, data: Mapping[str, Any]) -> bool:
+        """Whether ``data`` logs in with another country than the stored options.
+
+        Compared as :func:`runtime.login_country` resolves it, so saving Home
+        Assistant's own country over an empty option is no change.
+        """
+        return runtime.login_country(self.hass, data) != runtime.login_country(
+            self.hass, self.config_entry.options
         )
 
     @callback
@@ -780,8 +825,10 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
         """
         stored = {str(key): key.default() for key in OPTIONS_SCHEMA.schema}
         stored.update(self.config_entry.options)
-        others_changed = any(
-            data[key] != stored.get(key) for key in data if key not in _LIVE_OPTIONS
+        others_changed = self._login_country_changed(data) or any(
+            data[key] != stored.get(key)
+            for key in data
+            if key not in _LIVE_OPTIONS and key != CONF_COUNTRY
         )
         if others_changed:
             return  # the reload builds the client with the new budget

@@ -6,11 +6,13 @@
         "description": "Sign in with the eufy account that can see your HomeBase. Home Assistant keeps the signed-in session in a private store, so a restart does not sign in again.",
         "data": {
           "email": "Email address",
-          "password": "Password"
+          "password": "Password",
+          "country": "Country"
         },
         "data_description": {
           "email": "The email address of the eufy account that owns the HomeBase, or of an account the home is shared with.",
-          "password": "Used for this sign-in. eufy limits how often an account may sign in, so Home Assistant reuses the stored session afterwards instead of signing in again."
+          "password": "Used for this sign-in. eufy limits how often an account may sign in, so Home Assistant reuses the stored session afterwards instead of signing in again.",
+          "country": "The country your eufy app signs in with (on the app's sign-in screen). eufy shows a device only to a sign-in with the country it was set up or shared under, so with another country the account can list no devices. Empty means Home Assistant's country."
         }
       },
       "reauth_confirm": {
@@ -76,6 +78,7 @@
           "live_snapshot": "Live snapshot for cameras without a detection image",
           "session_probe": "Check the eufy session every 6 hours",
           "cloud_push": "Cloud push for cameras without a HomeBase",
+          "country": "eufy sign-in country",
           "scan_regions": "Look for devices in every eufy region",
           "event_history_days": "Event history (days)",
           "event_videos": "Save event videos",
@@ -89,6 +92,7 @@
           "live_snapshot": "Off by default. A camera shows the still of its own latest detection. With this on, a camera that has no detection image yet shows one live picture instead, taken at most once every 5 minutes per camera. Taking it wakes a battery camera, which costs battery.",
           "session_probe": "On by default. A minute after the integration starts, and then every 6 hours, Home Assistant asks eufy once for the account's device list with the saved session. This is not a sign-in. If another app or device has signed in with the account and ended Home Assistant's session, the \"eufy ended Home Assistant's session\" repair shows within that time instead of at the next command that needs eufy. With this off, a kick-out is noticed only when a command next needs eufy or at the next restart.",
           "cloud_push": "Off by default. Needed for a camera without a HomeBase, such as the standalone battery camera T8170 (Battery SoloCam), to report its detections: such a camera sleeps between commands and sends them only through eufy's cloud. With this on, Home Assistant listens for eufy's push messages, like the eufy app on a phone does; the app keeps working. Detections from a HomeBase still arrive over your local network, and one detection that arrives both ways fires once. Push messages pass through eufy's and Google's servers, and arrive late or not at all while that connection is down. Saving a change reloads the integration.",
+          "country": "The country your eufy app signs in with (on the app's sign-in screen). eufy shows a device only to a sign-in with the country it was set up or shared under, so with another country the account can list no devices. Empty means Home Assistant's country. Saving a change reloads the integration and asks eufy once for the devices listed under the new country; that can cost a sign-in.",
           "scan_regions": "Off by default. eufy runs two clouds, eu and us, and each lists only the devices homed on it. Home Assistant asks both when the account is added; after that, a region that listed no devices is not asked again. With this on, every device list Home Assistant fetches asks both regions, so a device homed on the other region shows up after Refresh device list. That includes the session check and, while a camera without a HomeBase is set up, an hourly refresh. Asking a region whose eufy session has run out signs in to it, and eufy allows only a few sign-ins per account per day. Saving a change reloads the integration.",
           "event_history_days": "From 0 to 365 days, 7 by default. Every image a camera or preset shows, and every saved video, is also saved as a file under {history_path}, in a folder per camera, named with the date, time, camera name and what it shows (for example 2026-09-29_08-35-59_Front_door_person.jpg). Browse them under Media > My media. Days older than this are deleted; 0 saves nothing. In Home Assistant Container the media folder is only kept across container updates when a host directory is mounted at /media.",
           "event_videos": "Off by default. Also copies each recording a HomeBase makes for one of its cameras from the moment this is switched on into the event history as an MP4, after the recording has finished, named like the event's image so the two sit side by side. Older recordings stay on the HomeBase; play or save one from the camera card's Station list. The HomeBase plays it off its own storage: no camera is woken. Needs Event history above 0 days; the videos are kept and deleted with the images, and take far more space than them. Not for a camera without a HomeBase, which keeps no recordings there.",
@@ -190,7 +194,21 @@
     },
     "no_devices": {
       "title": "No eufy devices found for {account}",
-      "description": "The eufy account {account} lists no devices in any eufy region ({regions}), so Home Assistant has nothing to set up. Home Assistant does not ask those regions again by itself. Check in the eufy app that the account sees the HomeBase or camera; a shared account sees only what the owner shared with it. Then turn on Look for devices in every eufy region in the integration's options and press Refresh device list on the eufy account device. You can turn the option off again once the devices show."
+      "description": "The eufy account {account} lists no devices ({regions}), so Home Assistant has nothing to set up. Home Assistant does not ask again by itself. Check in the eufy app that the account sees the HomeBase or camera; a shared account sees only what the owner shared with it, and only after it accepted the invitation. Check that the integration's eufy sign-in country (in its options) is the country your eufy app signs in with: eufy lists a device only under the country it was set up or shared under. Then turn on Look for devices in every eufy region in the integration's options and press Refresh device list on the eufy account device. You can turn the option off again once the devices show."
+    },
+    "pending_invites": {
+      "title": "eufy invitation not accepted for {account}",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Look for the shared devices again",
+            "description": "The eufy account {account} has an invitation it has not accepted: {invites}. eufy shows a shared home or device only after the invitation is accepted. Accept it in the eufy app, signed in with this account, then confirm here: Home Assistant reloads the eufy account and asks eufy once for its devices. If an invitation is still open, this repair comes back."
+          }
+        },
+        "abort": {
+          "entry_not_loaded": "The eufy account is not loaded in Home Assistant right now. Wait until it has finished loading, then open this repair again."
+        }
+      }
     }
   },
   "exceptions": {

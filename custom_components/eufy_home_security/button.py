@@ -50,7 +50,7 @@ from eufy_home_security import (
     redact_serial,
 )
 
-from . import detections, errors, presets, ptz
+from . import detections, errors, presets, ptz, runtime
 from .const import (
     CAPTURE_LIVE_IMAGE_KEY,
     CAPTURE_PRESET_KEY,
@@ -345,8 +345,9 @@ class EufyRefreshDeviceListButton(ButtonEntity):
         not asked. Never retried. A changed paired-device list reaches the router as
         ``DevicesChanged`` during the fetch, and the router schedules the reload; a
         station added or removed is found here by comparing the served stations with
-        the client's. Nothing is awaited after the fetch, so the reload cannot unload
-        this entity mid-press.
+        the client's. Nothing is awaited after the fetch when a reload follows, so the
+        reload cannot unload this entity mid-press; with no station before or after,
+        the pending invitations are read for their repair.
         """
         runtime_data = self._entry.runtime_data
         router = runtime_data.router
@@ -378,3 +379,9 @@ class EufyRefreshDeviceListButton(ButtonEntity):
             router.async_reload_soon("station list changed")
         else:
             _LOGGER.debug("Device list refreshed: no station added")
+            if not after and not router.reload_pending:
+                # Still nothing: name any invitation the account has not accepted.
+                # No reload is pending, so this entity outlives the await.
+                errors.sync_pending_invites_issue(
+                    self.hass, self._entry, await runtime.async_pending_invites(runtime_data.eufy)
+                )
