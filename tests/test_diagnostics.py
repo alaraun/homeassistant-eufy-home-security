@@ -26,7 +26,19 @@ from eufy_home_security import (
     FrameCipher,
     redact_serial,
 )
-from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
+from eufy_home_security.diagnostics import (
+    CAMERA_INFO_PARAM,
+    SECURITY_DEVICES,
+    SECURITY_STATIONS,
+)
+from eufy_home_security.exceptions import CommunicationError
+from eufy_home_security.testing import (
+    SYNTHETIC,
+    FakeCloud,
+    FakeStation,
+    security_device,
+    security_station,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.storage import Store
@@ -50,8 +62,14 @@ _TOP_LEVEL_KEYS = frozenset(
         "deduplicator",
         "station_recordings",
         "options",
+        "account_report",
     }
 )
+# A HomeBase 2 and its camera that only the security realm lists: synthetic serials.
+_HB2_SN: Final = "T8010P2000054321"
+_HB2_CAMERA_SN: Final = "T8114P2000054321"
+_HB2_DID: Final = "EUPRAMA-654321-ABCDE"
+_ECC_KEY: Final = "ab" * 32
 # The owner account a mismatched station stamps on its records: synthetic, 40 hex
 # characters, and never the account id the library sends.
 _OTHER_ACCOUNT_ID: Final = "f" * 40
@@ -289,7 +307,7 @@ async def test_the_diagnostics_download_names_no_identifier_or_secret(
     await _unload(hass, entry)
 
 
-async def test_diagnostics_neither_contact_the_cloud_nor_load_the_account_store(
+async def test_diagnostics_spend_no_sign_in_and_never_load_the_account_store(
     hass: HomeAssistant,
     hass_client: ClientSessionGenerator,
     monkeypatch: pytest.MonkeyPatch,
@@ -298,7 +316,8 @@ async def test_diagnostics_neither_contact_the_cloud_nor_load_the_account_store(
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """A download spends no sign-in and never reads the password's document."""
+    """A download asks the account report's lists on the held sessions, never logs in,
+    and never reads the password's document."""
     entry = await set_up_warm(hass, seed_warm_cache)
     account_loads = 0
     original_load = Store.async_load
@@ -316,8 +335,103 @@ async def test_diagnostics_neither_contact_the_cloud_nor_load_the_account_store(
 
     assert isinstance(data, dict)
     assert "cache" in data
-    assert len(fake_cloud.calls) == cloud_calls
+    download_calls = fake_cloud.calls[cloud_calls:]
+    assert "security_stations" in download_calls, "the report asked the cloud"
+    assert not [call for call in download_calls if call.startswith("login")]
     assert account_loads == 0
+
+    await _unload(hass, entry)
+
+
+async def test_the_account_report_names_a_station_only_the_security_lists_name(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    fake_cloud: FakeCloud,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The library's account report, as it is: a station the house list leaves out is
+    there, unserved, with its cipher state; no serial, DID or key in the download."""
+    fake_cloud.security_stations = [
+        security_station(_HB2_SN, did=_HB2_DID, params={CAMERA_INFO_PARAM: "5"})
+    ]
+    fake_cloud.security_devices = [security_device(_HB2_CAMERA_SN, station_sn=_HB2_SN)]
+    fake_cloud.cipher_records = {98: {"ecc_private_key": _ECC_KEY}}
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    data = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+
+    assert isinstance(data, dict)
+    report = data["account_report"]
+    assert isinstance(report, dict)
+    assert report["stopped"] is None
+    devices = {device["device_sn"]: device for device in report["devices"]}
+    hb2 = devices[redact_serial(_HB2_SN)]
+    assert hb2["listed_by"] == [SECURITY_STATIONS]
+    assert hb2["served"] is False
+    assert hb2["camera_info"] == 5
+    assert devices[redact_serial(_HB2_CAMERA_SN)]["listed_by"] == [SECURITY_DEVICES]
+    assert devices[redact_serial(SYNTHETIC.station_sn)]["served"] is True
+    cipher_ids = [c["cipher_id"] for owner in report["ciphers"] for c in owner["ciphers"]]
+    assert 98 in cipher_ids
+    text = json.dumps(data)
+    for secret in (_HB2_SN, _HB2_CAMERA_SN, _HB2_DID, _ECC_KEY, SYNTHETIC.station_sn):
+        assert secret not in text
+
+    await _unload(hass, entry)
+
+
+async def test_a_failed_account_report_leaves_the_download_and_names_only_the_error_type(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A library error becomes the report's error type; its message is not copied."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    async def failing_report(*, ciphers: bool = True) -> Any:
+        del ciphers
+        raise CommunicationError("synthetic-message-text")
+
+    monkeypatch.setattr(entry.runtime_data.eufy, "async_account_report", failing_report)
+
+    data = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+
+    assert isinstance(data, dict)
+    assert data["account_report"] == {"error": "CommunicationError"}
+    assert "stations" in data
+    assert "synthetic-message-text" not in json.dumps(data)
+
+    await _unload(hass, entry)
+
+
+async def test_an_account_that_lists_no_device_still_downloads_its_account_report(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    fake_cloud: FakeCloud,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """An entry whose every region lists nothing loads, and its download carries the
+    report of the lists that do name the account's station."""
+    fake_cloud.devices = []
+    fake_cloud.security_stations = [security_station(_HB2_SN, did=_HB2_DID)]
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    data = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+
+    assert isinstance(data, dict)
+    assert data["stations"] == {}
+    report = data["account_report"]
+    assert isinstance(report, dict)
+    (device,) = report["devices"]
+    assert device["device_sn"] == redact_serial(_HB2_SN)
+    assert device["listed_by"] == [SECURITY_STATIONS]
 
     await _unload(hass, entry)
 

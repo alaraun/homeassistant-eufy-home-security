@@ -1,10 +1,11 @@
 """The config entry's diagnostics download: session health that identifies nobody.
 
 Built only from the library's redacted views and figures (cache summary,
-``as_redacted_dict()``, ``redact_serial``, ``SessionStats``); the account store, the
-entry's data and its title (the e-mail) are never read. Storage media serials and
-labels, format request ids and a ``LanPath`` other than its warnings are left out,
-and the payload goes through ``async_redact_data`` for device names.
+``as_redacted_dict()``, ``redact_serial``, ``SessionStats``, the account report); the
+account store, the entry's data and its title (the e-mail) are never read. Storage
+media serials and labels, format request ids and a ``LanPath`` other than its warnings
+are left out, and the payload goes through ``async_redact_data`` for device names.
+The account report sends a few cloud requests on the held sessions, never a login.
 """
 
 from __future__ import annotations
@@ -15,14 +16,14 @@ from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.components.diagnostics import async_redact_data
 
-from eufy_home_security import Station, StorageInfo, redact_serial
+from eufy_home_security import EufySecurityError, Station, StorageInfo, redact_serial
 
 from . import detections
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
-    from .runtime import EufyConfigEntry
+    from .runtime import EufyConfigEntry, EufyRuntimeData
 
 TO_REDACT: Final = frozenset({"name"})
 # What a storage record carries that identifies a disk or a request, never downloaded.
@@ -93,6 +94,18 @@ def _station_labels(cached: Iterable[str], served: Iterable[str]) -> dict[str, s
     return labels
 
 
+async def _account_report(data: EufyRuntimeData) -> dict[str, Any]:
+    """The library's account report, or the type of the error that stopped it.
+
+    The library's message text is never copied here.
+    """
+    try:
+        report = await data.eufy.async_account_report()
+    except EufySecurityError as err:
+        return {"error": type(err).__name__}
+    return report.as_dict()
+
+
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: EufyConfigEntry
 ) -> dict[str, Any]:
@@ -131,6 +144,8 @@ async def async_get_config_entry_diagnostics(
                 data.recordings.stats(station.serial) if data.recordings is not None else None
             ),
         }
+    # Asked after every station block, so the session figures above precede its requests.
+    account_report = await _account_report(data)
     return async_redact_data(
         {
             "cache": cache,
@@ -162,6 +177,7 @@ async def async_get_config_entry_diagnostics(
                 else None
             ),
             "options": dict(entry.options),
+            "account_report": account_report,
         },
         TO_REDACT,
     )

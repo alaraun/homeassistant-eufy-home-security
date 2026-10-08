@@ -23,7 +23,7 @@
     "firebase_messaging"
   ],
   "requirements": [
-    "eufy-home-security==0.2.4"
+    "eufy-home-security==0.2.5"
   ],
   "version": "0.1.6"
 }
