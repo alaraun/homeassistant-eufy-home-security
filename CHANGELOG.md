@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.1.8](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.7...v0.1.8) (2026-10-08)
+
+
+### Bug Fixes
+
+* a station that sends a non-printable session key connects ([#29](https://github.com/alaraun/homeassistant-eufy-home-security/issues/29)) ([2a4c7ba](https://github.com/alaraun/homeassistant-eufy-home-security/commit/2a4c7bafc5381a55a58658478f0583fe2b12f854))
+
 ## [0.1.7](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.6...v0.1.7) (2026-10-08)
 
 
