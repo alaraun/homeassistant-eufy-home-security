@@ -13,7 +13,7 @@ import asyncio
 import os
 import re
 import shlex
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
@@ -271,8 +271,8 @@ def stamp_product_codes(cloud: FakeCloud) -> None:
 
 
 @pytest.fixture
-def client_countries() -> list[str]:
-    """The login country each client of ``built_clients`` was built with, in order."""
+def client_countries() -> list[str | list[str]]:
+    """The ``country`` each client of ``built_clients`` was built with, in order."""
     return []
 
 
@@ -281,7 +281,7 @@ def built_clients(
     monkeypatch: pytest.MonkeyPatch,
     fake_cloud: FakeCloud,
     fake_station: FakeStation,
-    client_countries: list[str],
+    client_countries: list[str | list[str]],
 ) -> list[EufySecurity]:
     """Replace ``runtime.build_client``; returns every client built, in order.
 
@@ -300,7 +300,7 @@ def built_clients(
         claims: StationClaims | None = None,
         max_sessions: int = DEFAULT_STATION_SESSIONS,
         scan_regions: bool = False,
-        country: str = "",
+        country: str | Sequence[str] = "",
     ) -> EufySecurity:
         stamp_product_codes(fake_cloud)
         eufy = build_eufy_security(
@@ -316,7 +316,7 @@ def built_clients(
             timezone=hass.config.time_zone,
         )
         built.append(eufy)
-        client_countries.append(country)
+        client_countries.append(country if isinstance(country, str) else list(country))
         return eufy
 
     monkeypatch.setattr(runtime, "build_client", build)

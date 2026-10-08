@@ -169,7 +169,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         claims=runtime.station_claims(hass),
         max_sessions=runtime.session_budget(entry.options),
         scan_regions=entry.options.get(CONF_SCAN_REGIONS, False) is True,
-        country=runtime.login_country(hass, entry.options),
+        country=runtime.login_countries(hass, entry.options),
     )
     # The cloud push start, once setup has started it (below).
     push_start: list[asyncio.Task[None]] = []

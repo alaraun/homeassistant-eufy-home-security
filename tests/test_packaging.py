@@ -59,7 +59,7 @@ _REQUIRED_MANIFEST_KEYS = (
 # requirement. These tests hold the rule locally, including the PEP 440 shape.
 # An exact pin: Home Assistant installs a requirement only when the installed
 # version does not satisfy it, so a wildcard never upgrades an existing install.
-_LIBRARY_REQUIREMENT = "eufy-home-security==0.2.7"
+_LIBRARY_REQUIREMENT = "eufy-home-security==0.2.8"
 _SANCTIONED_REQUIREMENTS = [_LIBRARY_REQUIREMENT]
 
 
@@ -689,14 +689,15 @@ def _update_listener_uses(tree: ast.AST) -> list[int]:
     )
 
 
-def test_the_options_flow_offers_exactly_its_twelve_options() -> None:
-    """The entry's options are exactly these twelve; a new one needs a deliberate change here.
+def test_the_options_flow_offers_exactly_its_thirteen_options() -> None:
+    """The entry's options are exactly these thirteen; a new one needs a deliberate change here.
 
     The detection hold (seconds) and the alarm safety-net timeout (minutes) default
     to 10. The live snapshot is off by default: a live keyframe wakes a battery
     camera. The camera image defaults to hd, the library's suggested configuration.
     Cloud push is off by default: it uses eufy's cloud. The login country is empty by
-    default, which means Home Assistant's country. The event history keeps 7
+    default, which means Home Assistant's country, and there is no extra country (each
+    costs a sign-in). The event history keeps 7
     days by default: every shown still is also kept as a dated file in the media
     folder. Event videos are off by default (storage) and
     the recording length defaults to 30 s, HA's own camera.record default. The
@@ -720,6 +721,7 @@ def test_the_options_flow_offers_exactly_its_twelve_options() -> None:
         CONF_DETECTION_HOLD,
         CONF_EVENT_HISTORY_DAYS,
         CONF_EVENT_VIDEOS,
+        CONF_EXTRA_COUNTRIES,
         CONF_LIVE_SNAPSHOT,
         CONF_RECORD_LENGTH,
         CONF_SCAN_REGIONS,
@@ -747,6 +749,7 @@ def test_the_options_flow_offers_exactly_its_twelve_options() -> None:
         CONF_SESSION_PROBE,
         CONF_CLOUD_PUSH,
         CONF_COUNTRY,
+        CONF_EXTRA_COUNTRIES,
         CONF_SCAN_REGIONS,
         CONF_EVENT_HISTORY_DAYS,
         CONF_EVENT_VIDEOS,
@@ -755,7 +758,7 @@ def test_the_options_flow_offers_exactly_its_twelve_options() -> None:
     ]
     keys = [str(key) for key in OPTIONS_SCHEMA.schema]
     assert keys == expected, (
-        f"the options schema offers {keys}; this entry has exactly twelve options, and "
+        f"the options schema offers {keys}; this entry has exactly thirteen options, and "
         f"another one added here without a decision would ship unannounced"
     )
     (
@@ -766,6 +769,7 @@ def test_the_options_flow_offers_exactly_its_twelve_options() -> None:
         probe,
         push,
         country,
+        extra_countries,
         scan_regions,
         history_days,
         videos,
@@ -774,6 +778,7 @@ def test_the_options_flow_offers_exactly_its_twelve_options() -> None:
     ) = OPTIONS_SCHEMA.schema
     assert push.default() is False, "cloud push uses eufy's cloud: opt-in only"
     assert country.default() == "", "an empty login country means Home Assistant's"
+    assert extra_countries.default() == [], "each extra country costs a sign-in: none by default"
     assert scan_regions.default() is False, (
         "asking every region may cost a sign-in on each fetch: opt-in only"
     )

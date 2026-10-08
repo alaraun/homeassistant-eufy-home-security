@@ -18,6 +18,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import CONF_EMAIL, CONF_NAME, CONF_PASSWORD, UnitOfTime
 from homeassistant.core import callback
+from homeassistant.generated.countries import COUNTRIES
 from homeassistant.helpers.selector import (
     BooleanSelector,
     CountrySelector,
@@ -53,6 +54,7 @@ from .const import (
     CONF_DETECTION_HOLD,
     CONF_EVENT_HISTORY_DAYS,
     CONF_EVENT_VIDEOS,
+    CONF_EXTRA_COUNTRIES,
     CONF_LIVE_SNAPSHOT,
     CONF_RECORD_LENGTH,
     CONF_SCAN_REGIONS,
@@ -125,7 +127,8 @@ VERIFY_CODE_SCHEMA = vol.Schema(
 # battery camera); the session probe (one read with the saved session 60 s after start
 # and every 6 h, never a sign-in); eufy's cloud push (off by default: the detections
 # of a camera without a HomeBase, through eufy's cloud); the login country (empty:
-# Home Assistant's; a change asks every login scope once); every cloud region on each
+# Home Assistant's) and the extra countries (one sign-in each; a change of either asks
+# every login scope once); every cloud region on each
 # device-list fetch (off by default: a region that listed no devices may cost a
 # sign-in each time); the event-history days; event
 # videos (each HomeBase recording copied into the history, off by default); the record
@@ -163,6 +166,11 @@ OPTIONS_SCHEMA = vol.Schema(
         vol.Required(CONF_SESSION_PROBE, default=True): BooleanSelector(),
         vol.Required(CONF_CLOUD_PUSH, default=False): BooleanSelector(),
         vol.Optional(CONF_COUNTRY, default=""): CountrySelector(),
+        vol.Optional(CONF_EXTRA_COUNTRIES, default=list): SelectSelector(
+            SelectSelectorConfig(
+                options=sorted(COUNTRIES), multiple=True, mode=SelectSelectorMode.DROPDOWN
+            )
+        ),
         vol.Required(CONF_SCAN_REGIONS, default=False): BooleanSelector(),
         vol.Required(CONF_EVENT_HISTORY_DAYS, default=DEFAULT_EVENT_HISTORY_DAYS): NumberSelector(
             NumberSelectorConfig(
@@ -389,7 +397,7 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
                 entry.data[CONF_EMAIL],
                 password,
                 claims=None,
-                country=runtime.login_country(self.hass, entry.options),
+                country=runtime.login_countries(self.hass, entry.options),
             )
             held = False
             try:
@@ -741,7 +749,7 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
-    """The entry's twelve options, from the detection hold to sessions per HomeBase.
+    """The entry's thirteen options, from the detection hold to sessions per HomeBase.
 
     Three things worth knowing about this class:
 
@@ -760,10 +768,10 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
     """
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Show the options, and save exactly the twelve they offer: five bools, five ints, a
-        choice and a country.
+        """Show the options, and save exactly the thirteen they offer: five bools, five ints, a
+        choice, a country and a country list.
 
-        The saved mapping is rebuilt from those twelve keys rather than passing
+        The saved mapping is rebuilt from those thirteen keys rather than passing
         ``user_input`` through, so a submission carrying more than the schema asked
         for cannot persist anything else into the entry's options. The selectors
         have already refused a duration outside its range.
@@ -781,6 +789,9 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
                 CONF_SESSION_PROBE: bool(user_input[CONF_SESSION_PROBE]),
                 CONF_CLOUD_PUSH: bool(user_input[CONF_CLOUD_PUSH]),
                 CONF_COUNTRY: str(user_input.get(CONF_COUNTRY) or ""),
+                CONF_EXTRA_COUNTRIES: [
+                    str(code) for code in user_input.get(CONF_EXTRA_COUNTRIES) or []
+                ],
                 CONF_SCAN_REGIONS: bool(user_input[CONF_SCAN_REGIONS]),
                 CONF_EVENT_HISTORY_DAYS: int(user_input[CONF_EVENT_HISTORY_DAYS] + 0.5),
                 CONF_EVENT_VIDEOS: bool(user_input[CONF_EVENT_VIDEOS]),
@@ -806,12 +817,12 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
         )
 
     def _login_country_changed(self, data: Mapping[str, Any]) -> bool:
-        """Whether ``data`` logs in with another country than the stored options.
+        """Whether ``data`` logs in with other countries than the stored options.
 
-        Compared as :func:`runtime.login_country` resolves it, so saving Home
+        Compared as :func:`runtime.login_countries` resolves them, so saving Home
         Assistant's own country over an empty option is no change.
         """
-        return runtime.login_country(self.hass, data) != runtime.login_country(
+        return runtime.login_countries(self.hass, data) != runtime.login_countries(
             self.hass, self.config_entry.options
         )
 
@@ -828,7 +839,7 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
         others_changed = self._login_country_changed(data) or any(
             data[key] != stored.get(key)
             for key in data
-            if key not in _LIVE_OPTIONS and key != CONF_COUNTRY
+            if key not in _LIVE_OPTIONS and key not in (CONF_COUNTRY, CONF_EXTRA_COUNTRIES)
         )
         if others_changed:
             return  # the reload builds the client with the new budget

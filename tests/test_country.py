@@ -32,6 +32,7 @@ from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 from custom_components.eufy_home_security import errors, runtime
 from custom_components.eufy_home_security.const import (
     CONF_COUNTRY,
+    CONF_EXTRA_COUNTRIES,
     DOMAIN,
     OPTIONS_STEP_INIT,
     REFRESH_DEVICE_LIST_KEY,
@@ -76,7 +77,7 @@ def discover_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 async def test_setup_logs_in_with_home_assistants_country_by_default(
     hass: HomeAssistant,
     built_clients: list[EufySecurity],
-    client_countries: list[str],
+    client_countries: list[str | list[str]],
     seed_warm_cache: Callable[..., None],
 ) -> None:
     """No option: Home Assistant's country; the option, when set, wins."""
@@ -105,10 +106,55 @@ def test_the_login_country_falls_back_to_home_assistants_then_to_none(
     assert runtime.login_country(hass, {}) == ""
 
 
+def test_extra_countries_follow_the_login_country_without_duplicates(
+    hass: HomeAssistant,
+) -> None:
+    """One country is a string; the login country comes first; repeats are dropped."""
+    hass.config.country = "EE"
+    assert runtime.login_countries(hass, {}) == "EE"
+    assert runtime.login_countries(hass, {CONF_EXTRA_COUNTRIES: []}) == "EE"
+    assert runtime.login_countries(hass, {CONF_EXTRA_COUNTRIES: ["CH", "EE", "CH"]}) == [
+        "EE",
+        "CH",
+    ]
+    assert runtime.login_countries(hass, {CONF_COUNTRY: "DE", CONF_EXTRA_COUNTRIES: ["CH"]}) == [
+        "DE",
+        "CH",
+    ]
+    hass.config.country = None
+    assert runtime.login_countries(hass, {}) == ""
+    assert runtime.login_countries(hass, {CONF_EXTRA_COUNTRIES: ["CH"]}) == "CH"
+
+
+async def test_an_added_extra_country_signs_in_with_it_and_asks_every_scope_once(
+    hass: HomeAssistant,
+    built_clients: list[EufySecurity],
+    client_countries: list[str | list[str]],
+    seed_warm_cache: Callable[..., None],
+    discover_calls: list[dict[str, Any]],
+) -> None:
+    """The extra country reaches the library after the login country; the reload rescans."""
+    hass.config.country = "EE"
+    entry = await set_up_warm(hass, seed_warm_cache)
+    clients = len(built_clients)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_EXTRA_COUNTRIES: ["CH"]}
+    )
+    await hass.async_block_till_done()
+
+    assert entry.options[CONF_EXTRA_COUNTRIES] == ["CH"]
+    assert len(built_clients) == clients + 1, "the entry was not reloaded"
+    assert client_countries[-1] == ["EE", "CH"]
+    assert discover_calls[-1] == {"rescan_regions": True}
+    await _unload(hass, entry)
+
+
 async def test_the_user_step_signs_in_with_the_picked_country_and_keeps_it_as_an_option(
     hass: HomeAssistant,
     built_clients: list[EufySecurity],
-    client_countries: list[str],
+    client_countries: list[str | list[str]],
 ) -> None:
     """The form suggests Home Assistant's country; a picked one is the entry's option."""
     hass.config.country = "EE"
@@ -134,7 +180,7 @@ async def test_the_user_step_signs_in_with_the_picked_country_and_keeps_it_as_an
 async def test_a_changed_login_country_reloads_and_asks_every_login_scope_once(
     hass: HomeAssistant,
     built_clients: list[EufySecurity],
-    client_countries: list[str],
+    client_countries: list[str | list[str]],
     seed_warm_cache: Callable[..., None],
     discover_calls: list[dict[str, Any]],
 ) -> None:

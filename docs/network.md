@@ -90,24 +90,30 @@ location /api/hls/ {
 - Home Assistant signs in with the integration's **eufy sign-in country** option,
   Home Assistant's own country by default (**Settings → System → General**). Set it to
   the country your eufy app signs in with (its sign-in screen shows it).
-- Changing the option reloads the integration, signs in once more with the new
+- A home shared with this account from an account in another country is listed only
+  to a sign-in with that country: add it under **Extra eufy sign-in countries**. Each
+  extra country signs in once more, on that country's eufy region, and its sign-ins
+  count against eufy's daily limit.
+- Changing either option reloads the integration, signs in once more with each new
   country and asks eufy once for the devices.
 - Every request also carries Home Assistant's time zone, as the eufy app sends the
   phone's.
 
 ## eufy regions
 
-- eufy runs two clouds, `eu` and `us`. Both accept the account's sign-in, but each
-  lists only the devices homed on it.
-- Adding the account signs in to both and asks both for devices. Each device then
-  uses the region that listed it.
-- A region that listed no devices is not asked again, so it costs no sign-in. A
-  device homed on that region later stays hidden until the option **Look for devices
-  in every eufy region** is on and **Refresh device list** is pressed.
-- With the option on, every device list Home Assistant fetches asks both regions:
+- eufy runs two clouds, `eu` and `us`. Each sign-in country is served by one of them,
+  which eufy names; Home Assistant signs in there only. Diagnostics call each sign-in
+  a login scope: `eu` for the sign-in country, `eu:CH` for an extra country `CH`.
+  When no country is known at all, it signs in to both clouds.
+- Each device uses the scope that listed it.
+- A scope that listed no devices is not asked again, so it costs no sign-in. A device
+  added there later stays hidden until a country option changes, or the option **Look
+  for devices under every sign-in country on each refresh** is on and **Refresh device
+  list** is pressed.
+- With that option on, every device list Home Assistant fetches asks every scope:
   **Refresh device list**, the session check, and the hourly refresh while a camera
-  without a HomeBase is set up. A region whose session has run out costs a sign-in.
-- When no region lists any device, the repair issue **No eufy devices found** shows;
+  without a HomeBase is set up. A scope whose session has run out costs a sign-in.
+- When no scope lists any device, the repair issue **No eufy devices found** shows;
   see [troubleshooting.md](troubleshooting.md#repair-issues).
 
 ## HomeBase sessions
