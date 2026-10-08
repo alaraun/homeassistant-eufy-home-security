@@ -379,6 +379,47 @@ async def test_the_key_rejected_fix_releases_the_latch_and_reloads(
     await _unload(hass, entry)
 
 
+async def test_a_reload_with_an_accepted_cached_key_clears_the_issue_and_the_latch(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    rejected_key: None,
+) -> None:
+    """A station that rejected its key and then accepts the cached one (a library fix
+    for the station's key format) recovers by a reload: connected, the key issue gone,
+    the latch cleared, and no key fetched."""
+    seed_warm_cache()
+    entry = add_entry(hass)
+    await _load_with_rejected_key(hass, entry)
+    assert len(_key_rejected_issues(hass, entry)) == 1
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert len(_key_rejected_issues(hass, entry)) == 1, "an unload keeps the issue"
+    # The cached key is now one the station accepts, under a set latch.
+    fake_cloud.cipher_keys[fake_station.serial] = fake_station.ecc_private_key_hex
+    seed_warm_cache()
+    cache = _cache(hass)
+    await cache.async_load()
+    cache.note_key_refresh(SYNTHETIC.station_sn)
+    await cache.async_save()
+    cipher_calls = fake_cloud.calls.count(_CIPHER_CALL)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.eufy.stations[SYNTHETIC.station_sn].connected
+    assert _key_rejected_issues(hass, entry) == {}
+    assert fake_cloud.calls.count(_CIPHER_CALL) == cipher_calls
+    cache = _cache(hass)
+    await cache.async_load()
+    assert cache.key_refresh_outstanding(SYNTHETIC.station_sn) is None
+
+    await _unload(hass, entry)
+
+
 async def test_a_reconnect_clears_the_station_key_issue_but_keeps_the_notice(
     hass: HomeAssistant,
     fake_cloud: FakeCloud,
