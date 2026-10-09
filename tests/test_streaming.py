@@ -1296,12 +1296,19 @@ async def test_a_stream_that_ends_by_itself_is_a_clean_end_not_an_error(
     await _unload(hass, entry)
 
 
-def test_a_model_without_the_live_stream_capability_advertises_no_stream() -> None:
-    """The gate is the library's catalog, never a serial prefix."""
-    assert detections.has_live_stream(SYNTHETIC.camera_sn) is True
-    assert detections.has_live_stream("T8161P0000000001") is True  # eufyCam 3C, declared
-    assert detections.has_live_stream(SENSOR_SN) is False
-    assert detections.has_live_stream(SYNTHETIC.station_sn) is False
+async def test_only_a_device_the_library_can_open_live_advertises_a_stream(
+    hass: HomeAssistant, fake_cloud, seed_warm_cache, built_clients, fake_station
+) -> None:
+    """The gate is the library's live support on the device's station, never a prefix."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+
+    assert detections.has_live_stream(station, SYNTHETIC.camera_sn) is True
+    assert detections.has_live_stream(station, "T8161P0000000001") is True  # eufyCam 3C
+    assert detections.has_live_stream(station, SENSOR_SN) is False
+    assert detections.has_live_stream(station, SYNTHETIC.station_sn) is False
+
+    await _unload(hass, entry)
 
 
 # ── a picture-changing setting restarts the view ──────────────────────────────

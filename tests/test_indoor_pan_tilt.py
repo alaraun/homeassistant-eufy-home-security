@@ -74,11 +74,18 @@ def _unique_keys(hass: HomeAssistant) -> set[str]:
     }
 
 
-def test_the_t8410_has_live_video_and_pan_tilt_but_no_presets_or_zoom() -> None:
-    assert detections.has_live_stream(SN) is True
+async def test_the_t8410_has_live_video_and_pan_tilt_but_no_presets_or_zoom(
+    hass: HomeAssistant, fake_cloud, seed_warm_cache, built_clients, fake_station
+) -> None:
+    entry = await set_up_warm(hass, seed_warm_cache)
+    station = entry.runtime_data.coordinators[SN].station
+    assert detections.has_live_stream(station, SN) is True
     assert detections.has_pan_tilt_control(SN) is True
     assert detections.has_preset_entities(SN) is False
     assert detections.has_zoom(SN) is False
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
 
 
 async def test_a_t8410_gets_a_stream_and_step_buttons_and_no_preset_or_zoom_entities(
