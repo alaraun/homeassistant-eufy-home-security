@@ -4,7 +4,7 @@
 // `entity` is required; the settings rows are built from whatever settings the device has: the common ones
 // grouped, a setting that applies only in one state of another nested under it, the rest under More settings.
 
-const CARD_VERSION = '2026.10.09-2';
+const CARD_VERSION = '2026.10.09-3';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -752,8 +752,10 @@ class EufyCameraCard extends HTMLElement {
     this.render();
     Promise.resolve(h.callService(DOMAIN, 'record', { entity_id: this._config.entity }, undefined, false, true))
       .then((r) => {
+        // An entity action answers per entity: { <entity_id>: { complete, ... } }
         const res = r && r.response;
-        if (res && res.complete === false) this._toast('The clip ended early; the part recorded was saved');
+        const body = res && (res[this._config.entity] || res);
+        if (body && body.complete === false) this._toast('The clip ended early; the part recorded was saved');
         if (this._open === 'history') this._loadHistory();
       })
       .catch(e => this._toast((e && e.message) || 'Not recorded'))
