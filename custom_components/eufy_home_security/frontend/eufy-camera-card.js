@@ -4,7 +4,7 @@
 // `entity` is required; the settings rows are built from whatever settings the device has: the common ones
 // grouped, a setting that applies only in one state of another nested under it, the rest under More settings.
 
-const CARD_VERSION = '2026.10.07-2';
+const CARD_VERSION = '2026.10.09-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -26,8 +26,8 @@ const TOAST_MS = 4000;
 // Moves (pan/tilt steps, go-to) waiting behind the running one; the integration returns a step after ~1.5 s
 const MOVE_QUEUE = 3;
 const COMPACT_W = 400;
-// On a picture under 460 px wide (a phone) the live controls fade this long after the last touch while the live
-// picture shows; a tap brings them back (the width rule itself is CSS: @container max-width 459px)
+// While the live picture plays, the controls over it fade this long after the last touch, click or mouse move on
+// the picture (every width, full screen too); a tap or click on the picture brings them back
 const CTL_HIDE_MS = 4000;
 // Sections under the picture, as tabs: id, label, icon. One open at a time; pressing the open one closes it.
 const SECTIONS = [['history', 'History', 'mdi:history'], ['settings', 'Settings', 'mdi:cog-outline']];
@@ -941,8 +941,8 @@ class EufyCameraCard extends HTMLElement {
     }
   }
 
-  // The live controls over a narrow picture: shown now; with `run`, hidden again CTL_HIDE_MS later while the
-  // live picture shows. CSS hides them (class quiet) only below 460 px and never while focus or a mouse is inside.
+  // The controls over the live picture: shown now; with `run`, hidden again CTL_HIDE_MS later while the live
+  // picture shows. CSS hides them (class quiet) unless keyboard focus is inside or a mouse rests on a control.
   _awake(run) {
     clearTimeout(this._quietT);
     this._quietT = null;
@@ -950,7 +950,7 @@ class EufyCameraCard extends HTMLElement {
     if (run && this._live && this._live.video) this._quietT = setTimeout(() => this._hush(), CTL_HIDE_MS);
   }
 
-  // The live controls are faded out now (narrow picture, class quiet, no hover or keyboard focus keeping them)
+  // The live controls are faded out now (class quiet, no keyboard focus or hovered control keeping them)
   _isQuiet() {
     const bar = this._pic && this._pic.classList.contains('quiet') && this.content.querySelector('.lbar');
     return !!bar && getComputedStyle(bar).pointerEvents === 'none';
@@ -1756,14 +1756,15 @@ class EufyCameraCard extends HTMLElement {
       const lb = this._histLabel(vItem);
       tl = `<span class="chip tl hchip"><ha-icon icon="${lb.icon}"></ha-icon><span>${escapeHtml(`${lb.kind} · ${lb.when}`)}</span></span>
             <button type="button" class="hx" data-histclose data-focus="hist-close" aria-label="Back to the current still"><ha-icon icon="mdi:close"></ha-icon></button>`;
-    } else if (L && L.video) tl = chip('tl', 'rec', `<i class="dot"></i><span>LIVE</span><span class="tv" data-tick></span>`, L.continuous ? 'Live, continuous' : 'Live, time left');
+    // While the controls are faded only the chip's red dot shows
+    } else if (L && L.video) tl = `<span class="chip tl rec live" role="img" aria-label="${L.continuous ? 'Live, continuous' : 'Live'}"><i class="dot"></i><span>LIVE</span><span class="tv" data-tick></span></span>`;
     // The integration keeps no still until a detection or New still; it never wakes the camera for one
     else if (!L && avail && still.err) tl = chip('tl', '', '<ha-icon icon="mdi:image-off-outline"></ha-icon><span>No still yet</span>', 'No still yet');
     else if (!L && avail && still.src) {
       const t = srcKind === 'live' ? 'Snapshot' : `Event${isNaN(stillMs) ? '' : ` · ${this._ago(stillMs)}`}`;
       tl = chip('tl', '', `<ha-icon icon="${srcKind === 'live' ? 'mdi:camera-iris' : 'mdi:motion-sensor'}"></ha-icon><span>${escapeHtml(t)}</span>`, `Still: ${t}`);
     }
-    // Recording a clip: its own chip with the seconds so far; it stays while the phone's live controls fade
+    // Recording a clip: its own chip with the seconds so far; it stays while the live controls are faded
     const recChip = recording && !vItem ? chip('', 'rec recc', `<i class="dot"></i><span class="rw">REC</span><span class="tv" data-rect>${this._recSeconds()} s</span>`, 'Recording a clip') : '';
     const centre = vItem ? (vPic && vPic.src ? '' : '<div class="ctr wake" role="status"><i class="spin"></i></div>') : !avail
       ? '<div class="ctr off"><ha-icon icon="mdi:cctv-off"></ha-icon><span>Unavailable</span></div>'
@@ -2093,6 +2094,12 @@ class EufyCameraCard extends HTMLElement {
     this._pic.addEventListener('pointerdown', () => { this._wasQuiet = this._isQuiet(); this._awake(true); });
     // Keyboard focus only: a tapped button keeps focus on a phone and would hold the controls on screen
     this._pic.addEventListener('focusin', (ev) => { const t = ev.composedPath()[0]; if (t && t.matches && t.matches(':focus-visible')) this._awake(true); });
+    // A mouse moving over the picture keeps shown controls up (the timer restarts); faded ones need a click
+    this._pic.addEventListener('pointermove', (ev) => {
+      if (ev.pointerType !== 'mouse' || !this._live || !this._live.video || Date.now() - (this._movedAt || 0) < 250) return;
+      this._movedAt = Date.now();
+      if (!this._isQuiet()) this._awake(true);
+    });
     this._pic.addEventListener('click', (ev) => {
       const ctl = ev.composedPath().some(n => n.tagName && (/^(BUTTON|INPUT|VIDEO)$/.test(n.tagName)
         || (n.classList && ['lbar', 'ptzw', 'lpre', 'crow', 'toast'].some(c => n.classList.contains(c)))));
@@ -2373,18 +2380,22 @@ const CSS_TEXT = `
   @container (max-width: 389px) {
     .has-ptz .lbar .lb.opt2 { display: none; }
   }
-  /* Narrow pictures (phones): the pan/tilt pad only while the live picture shows (greyed otherwise), and the live
-     controls fade CTL_HIDE_MS after the last touch (class quiet); a tap, keyboard focus or a mouse over the picture
-     shows them again */
+  /* Narrow pictures (phones): the pan/tilt pad only while the live picture shows (greyed otherwise) */
   @container (max-width: 459px) {
     .ovl:not(.aim) .ptz { display: none; }
-    .lbar, .ptzw, .lpre { transition: opacity 0.25s; }
-    .quiet .lbar, .quiet .ptzw, .quiet .lpre { opacity: 0; pointer-events: none; }
-    .quiet:has(:focus-visible) .lbar, .quiet:has(:focus-visible) .ptzw, .quiet:has(:focus-visible) .lpre { opacity: 1; pointer-events: auto; }
   }
-  @media (hover: hover) {
-    @container (max-width: 459px) { .quiet:hover .lbar, .quiet:hover .ptzw, .quiet:hover .lpre { opacity: 1; pointer-events: auto; } }
-  }
+  /* Live picture, every width and full screen: CTL_HIDE_MS after the last touch or click (class quiet) the controls,
+     the battery chip and the scrim fade and the LIVE chip shrinks to its red dot; the REC chip and messages stay.
+     Keyboard focus inside or a mouse resting on a shown control keeps them. */
+  .lbar, .ptzw, .lpre, .crow > .chip, .ovl::before { transition: opacity 0.25s; }
+  .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover)) :is(.lbar, .ptzw, .lpre, .crow > .chip:not(.rec)),
+  .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover)) .ovl::before { opacity: 0; pointer-events: none; }
+  .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover)) .chip.live { padding: 0 9px; background: none; backdrop-filter: none; }
+  .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover)) .chip.live > span { display: none; }
+  .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover)) .chip.live .dot { box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35), 0 0 6px var(--cc-live); }
+  /* alone on the picture the dot pulses less deep, so it stays clearly red */
+  @media (prefers-reduced-motion: no-preference) { .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover)) .chip.live .dot { animation-name: dot-pulse; } }
+  @keyframes dot-pulse { 50% { opacity: 0.7; } }
 
   /* Section tabs, the first level: a segmented control with equal widths and fixed labels, so a tab stays under
      the pointer */
@@ -2669,7 +2680,7 @@ const CSS_TEXT = `
   .hx:hover { background: var(--cc-glass-hi); }
   .hx:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
   .compact .mi { min-height: 32px; }
-  @media (prefers-reduced-motion: reduce) { .still, .tg, .tg i, .lbar, .ptzw, .lpre { transition: none; } .chip.rec .dot, .busy, .spin, .hf.ld ha-icon { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .still, .tg, .tg i, .lbar, .ptzw, .lpre, .crow > .chip, .ovl::before { transition: none; } .chip.rec .dot, .busy, .spin, .hf.ld ha-icon { animation: none; } }
 `;
 
 // ================== EDITOR ==================

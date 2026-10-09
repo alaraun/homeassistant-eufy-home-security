@@ -79,7 +79,9 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   - Pan/tilt cameras: a pan/tilt pad with a home button (the default preset), usable once the live picture shows.
     Zoom cameras: a zoom pill (−, the value, +, and a reset to 1×), usable in every state.
   - Presets: the bar's preset button opens a row of the preset slots' pictures; a tap turns the camera there.
-  - On a phone the live controls fade 4 s after the last touch; a tap on the picture brings them back.
+  - While the live picture plays, its controls, the battery chip and the time fade 4 s after the last touch or click
+    (every width, full screen too) and a red dot at the top left stays; a tap or click on the picture brings them
+    back, another hides them. Keyboard focus shows them too; a recording's `● REC` chip stays.
 - **Record:** the live bar's record button, or `Record a clip` in the menu while idle, records a clip of the
   integration's Recording length into the history (Captures). While any client records, a `● REC 12 s` chip shows.
 - **History:** the camera's saved files, newest first, as a row of tiles in sub-tabs: **Events** (detections),
