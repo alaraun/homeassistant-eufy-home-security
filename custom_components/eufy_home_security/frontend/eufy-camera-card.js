@@ -4,7 +4,7 @@
 // `entity` is required; the settings rows are built from whatever settings the device has: the common ones
 // grouped, a setting that applies only in one state of another nested under it, the rest under More settings.
 
-const CARD_VERSION = '2026.10.09-1';
+const CARD_VERSION = '2026.10.09-2';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -612,7 +612,8 @@ class EufyCameraCard extends HTMLElement {
 
   // ---- the station's own recordings (sub-tab Station) ----
   // Lists them through the integration a page at a time, newest first: the first page when the sub-tab opens and on
-  // refresh (the previous first page stays while loading), the next one on Show more (from the cursor `next`)
+  // refresh (the previous first page stays while loading), the next one on Show more (from the cursor `next`). A page
+  // asks the station a few days only: one that adds nothing while older days remain is followed by the next at once.
   _loadStation(more) {
     const h = this._hass;
     if (!h || !h.callWS) return;
@@ -622,42 +623,48 @@ class EufyCameraCard extends HTMLElement {
     this._sseq = seq;
     const day = this._hday;
     const same = prev && prev.items && prev.day === day;
+    const base = more ? prev.items : [];
     this._srec = more ? { ...prev, moreLoading: true }
       : { items: same ? prev.items.slice(0, HISTORY_PAGE) : null, supported: prev ? prev.supported : true, loading: true,
         err: null, more: false, next: null, day };
     this.render();
-    const req = { type: STATION_WS, entity_id: id, limit: HISTORY_PAGE };
-    if (more) req.before = prev.next;
-    if (day) req.day = day;
-    h.callWS(req).then((r) => {
-      if (this._sseq !== seq) return;
-      const supported = !!(r && r.supported);
-      if (supported) STATION_SUPPORT.delete(id); else STATION_SUPPORT.set(id, false);
-      // Hidden at once unless it is the open sub-tab (then from the next opening: the tabs stay under the pointer)
-      if (!supported && this._htab !== 'station') this._stationTab = false;
-      const rows = supported ? (Array.isArray(r.recordings) ? r.recordings : []).map(x => this._parseRecording(x)).filter(Boolean) : [];
-      const had = more ? new Set(prev.items.map(x => x.rid)) : null;
-      const items = more ? [...prev.items, ...rows.filter(x => !had.has(x.rid))] : rows;
-      const next = supported && r.more && r.next ? String(r.next) : null;
-      // Show more kept focus: it moves to the first added row (Show more itself goes when the list is complete)
-      const a = this.shadowRoot.activeElement;
-      const fromMore = more && a && a.dataset && a.dataset.focus === 'smore';
-      this._srec = { items, supported, loading: false, err: null, more: !!next, next, day };
-      this.render();
-      if (fromMore) {
-        // The first enabled button of the first added row, else Show more
-        const first = items[prev.items.length];
-        const to = (k) => { this._focus(k); const f = this.shadowRoot.activeElement; return !!f && f.dataset.focus === k; };
-        if (!first || !(to(`hist-${first.id}`) || to(`rsave-${first.rid}`))) this._focus('smore');
-      }
-    }).catch((e) => {
-      if (this._sseq !== seq) return;
-      const msg = (e && e.message) || 'The station did not answer';
-      if (more) { this._srec = { ...prev, moreLoading: false }; this._toast(msg); this.render(); return; }
-      this._srec = { items: same ? prev.items : null, supported: true, loading: false, err: msg, more: false, next: null, day };
-      if (same) this._toast(msg);
-      this.render();
-    });
+    const ask = (before) => {
+      const req = { type: STATION_WS, entity_id: id, limit: HISTORY_PAGE };
+      if (before) req.before = before;
+      if (day) req.day = day;
+      h.callWS(req).then((r) => {
+        if (this._sseq !== seq) return;
+        const supported = !!(r && r.supported);
+        if (supported) STATION_SUPPORT.delete(id); else STATION_SUPPORT.set(id, false);
+        // Hidden at once unless it is the open sub-tab (then from the next opening: the tabs stay under the pointer)
+        if (!supported && this._htab !== 'station') this._stationTab = false;
+        const rows = supported ? (Array.isArray(r.recordings) ? r.recordings : []).map(x => this._parseRecording(x)).filter(Boolean) : [];
+        const had = new Set(base.map(x => x.rid));
+        const added = rows.filter(x => !had.has(x.rid));
+        const next = supported && r.more && r.next ? String(r.next) : null;
+        if (!added.length && next && next !== before) { ask(next); return; }
+        const items = [...base, ...added];
+        // Show more kept focus: it moves to the first added row (Show more itself goes when the list is complete)
+        const a = this.shadowRoot.activeElement;
+        const fromMore = more && a && a.dataset && a.dataset.focus === 'smore';
+        this._srec = { items, supported, loading: false, err: null, more: !!next, next, day };
+        this.render();
+        if (fromMore) {
+          // The first enabled button of the first added row, else Show more
+          const first = items[base.length];
+          const to = (k) => { this._focus(k); const f = this.shadowRoot.activeElement; return !!f && f.dataset.focus === k; };
+          if (!first || !(to(`hist-${first.id}`) || to(`rsave-${first.rid}`))) this._focus('smore');
+        }
+      }).catch((e) => {
+        if (this._sseq !== seq) return;
+        const msg = (e && e.message) || 'The station did not answer';
+        if (more) { this._srec = { ...prev, moreLoading: false }; this._toast(msg); this.render(); return; }
+        this._srec = { items: same ? prev.items : null, supported: true, loading: false, err: msg, more: false, next: null, day };
+        if (same) this._toast(msg);
+        this.render();
+      });
+    };
+    ask(more ? prev.next : null);
   }
 
   // One row of the station list, with its start as date and HH:MM in HA's time zone (like a history file name)
