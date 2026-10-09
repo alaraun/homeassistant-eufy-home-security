@@ -79,8 +79,18 @@ account:
    [network.md](network.md#eufy-regions).
 4. For a pan/tilt camera, press **Refresh presets** once.
 
-A device removed from the account goes after **Refresh device list** and a reload of
-the integration.
+## Removing a device
+
+- Every device of the account that eufy's device list no longer names is removed from
+  Home Assistant with its entities, at each start or reload of the integration and at
+  **Refresh device list**. A removed extra sign-in country takes its devices this way.
+- A paired device goes at the press; a HomeBase or standalone camera that left the
+  list goes at the next start or reload.
+- A device eufy still lists is kept, also one Home Assistant builds nothing for (a
+  camera whose HomeBase is not on the list). A list with no device at all removes
+  nothing.
+- A device the list no longer names can also be deleted on its device page; a listed
+  device cannot.
 
 ## Reporting a new device
 

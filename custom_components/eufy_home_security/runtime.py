@@ -132,6 +132,32 @@ def take_rescan_at_setup(hass: HomeAssistant, entry_id: str) -> bool:
     return True
 
 
+@dataclass(frozen=True, slots=True)
+class ListedDevices:
+    """The serials of the account's device list, as the client holds it.
+
+    ``serials``: each station the client built and each device paired to it, and each
+    station another account serves (``elsewhere``), whose paired devices the client
+    does not hold. ``skipped``: the redacted serials of listed devices the client
+    built nothing for (a camera whose station is not on the list, say).
+    """
+
+    serials: frozenset[str]
+    elsewhere: frozenset[str]
+    skipped: frozenset[str] = frozenset()
+
+
+def listed_devices(eufy: EufySecurity) -> ListedDevices:
+    """The serials ``eufy``'s last discovery listed (see :class:`ListedDevices`)."""
+    elsewhere = frozenset(device.device_sn for device in eufy.stations_served_elsewhere)
+    serials = set(elsewhere)
+    for serial, station in eufy.stations.items():
+        serials.add(serial)
+        serials.update(sub.device_sn for sub in station.sub_devices if sub.device_sn)
+    skipped = frozenset(device.device_sn_redacted for device in eufy.skipped_devices)
+    return ListedDevices(serials=frozenset(serials), elsewhere=elsewhere, skipped=skipped)
+
+
 async def async_pending_invites(eufy: EufySecurity) -> list[CloudInvite] | None:
     """The invitations the account has not accepted, or None when they cannot be read.
 
