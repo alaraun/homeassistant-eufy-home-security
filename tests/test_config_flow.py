@@ -189,11 +189,11 @@ async def test_a_failed_add_forgets_the_password_but_keeps_the_login_record(
     """
     real_answer = fake_cloud._answer
 
-    async def device_list_down(api: Any, path: str, payload: Any) -> Any:
+    async def device_list_down(path: str, payload: Any) -> Any:
         if path == cloud_const.DEVICES_PATH:
             fake_cloud.calls.append("devices")
             raise CommunicationError("the device list is unavailable")
-        return await real_answer(api, path, payload)
+        return await real_answer(path, payload)
 
     monkeypatch.setattr(fake_cloud, "_answer", device_list_down)
 

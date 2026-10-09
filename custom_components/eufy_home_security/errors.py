@@ -63,8 +63,10 @@ from eufy_home_security import (
     redact,
     redact_serial,
 )
+from eufy_home_security.cloud.const import LOGIN_BUDGET, LOGIN_BUDGET_WINDOW_SECONDS, scope_country
 
 from .const import (
+    CONF_COUNTRY,
     DOMAIN,
     ERROR_CANNOT_CONNECT,
     ERROR_INVALID_AUTH,
@@ -113,6 +115,7 @@ from .const import (
     ISSUE_CREDENTIALS_REFRESHED_LOGIN,
     ISSUE_KEY_REJECTED,
     ISSUE_KEY_UNUSABLE,
+    ISSUE_LOGIN_BUDGET,
     ISSUE_LOGIN_LIMITED,
     ISSUE_LOGIN_LIMITED_NO_WAIT,
     ISSUE_MEDIA_NOT_PERSISTENT,
@@ -506,8 +509,9 @@ def raise_cloud_issue(hass: HomeAssistant, entry: ConfigEntry[Any], err: CloudEr
       refreshes, not eufy refusing the account. Checked before its base class.
     - ``RateLimitedError``, ``LoginLimitedError`` included: a non-fixable issue
       naming the local time the next sign-in is allowed, when the error gives a
-      wait; it is withdrawn at that time (:func:`_expire_login_limited_issue`). A
-      plain request hold-off is shown like a login limit. Each setup decides afresh
+      wait; it is withdrawn at that time (:func:`_expire_login_limited_issue`). The
+      library's own login budget (``origin`` ``"budget"``) gets its own text naming
+      the sign-in country; a plain request hold-off is shown like a login limit. Each setup decides afresh
       (:func:`delete_reload_scoped_issues`).
     """
     if isinstance(err, SessionReplacedError):
@@ -515,7 +519,16 @@ def raise_cloud_issue(hass: HomeAssistant, entry: ConfigEntry[Any], err: CloudEr
     elif isinstance(err, RefreshCooldownError):
         return
     elif isinstance(err, RateLimitedError):
-        if err.retry_after is not None:
+        if err.retry_after is not None and err.origin == "budget":
+            translation_key = ISSUE_LOGIN_BUDGET
+            placeholders = {
+                "account": account_label(entry),
+                "time": _local_time_after(err.retry_after),
+                "country": _scope_country(entry, err.scope),
+                "budget": str(LOGIN_BUDGET),
+                "window_hours": f"{LOGIN_BUDGET_WINDOW_SECONDS / 3600:g}",
+            }
+        elif err.retry_after is not None:
             translation_key = ISSUE_LOGIN_LIMITED
             placeholders = {
                 "account": account_label(entry),
@@ -537,6 +550,15 @@ def raise_cloud_issue(hass: HomeAssistant, entry: ConfigEntry[Any], err: CloudEr
             _expire_login_limited_issue(hass, entry.entry_id, err.retry_after)
         else:
             cancel_login_limited_expiry(hass, entry.entry_id)
+
+
+def _scope_country(entry: ConfigEntry[Any], scope: str | None) -> str:
+    """The sign-in country a refused login was for: an extra country's own, else the
+    entry's login country option (``-`` when neither is known)."""
+    if scope is not None and (country := scope_country(scope)):
+        return country
+    option = entry.options.get(CONF_COUNTRY)
+    return option if isinstance(option, str) and option else "-"
 
 
 def _local_time_after(seconds: float) -> str:

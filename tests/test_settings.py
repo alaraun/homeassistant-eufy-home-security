@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Final
 
 import pytest
@@ -93,6 +94,40 @@ def test_mode_action_masks_become_one_switch_per_named_bit() -> None:
     for setting in delays:
         assert mode_action(setting) is None
         assert setting_platform(setting) is Platform.NUMBER
+
+
+def test_only_a_motion_sensor_gets_the_respond_switch() -> None:
+    """A sensor's bits follow its cloud device type; an unknown type keeps the full set."""
+    masks = [s for s in _MODE_TABLE if s.key.startswith(f"{Scope.SENSOR}_action_")]
+    assert masks
+    for setting in masks:
+        for device_type, respond in ((10, True), (127, True), (2, False), (None, True)):
+            action = mode_action(setting, device_type)
+            assert action is not None, setting.key
+            assert ("motion_sensor_respond" in action.flags) is respond, (setting.key, device_type)
+
+
+def test_setting_specs_give_each_paired_sensor_the_bits_of_its_device_type() -> None:
+    """The specs read each paired device's cloud type; 0 (not given) keeps the full set."""
+    sensor_settings = [s for s in _MODE_TABLE if s.key.startswith(f"{Scope.SENSOR}_action_")]
+    subs = [
+        SimpleNamespace(device_sn="T8900P0000000001", device_type=2),
+        SimpleNamespace(device_sn="T8910P0000000001", device_type=10),
+        SimpleNamespace(device_sn="T8900P0000000002", device_type=0),
+    ]
+    station = SimpleNamespace(
+        sub_devices=subs,
+        settings_for=lambda device_sn: sensor_settings if device_sn else [],
+    )
+
+    flags = {
+        sub.device_sn: {s.flag for s in setting_specs(station) if s.device_sn == sub.device_sn}  # type: ignore[arg-type]
+        for sub in subs
+    }
+
+    assert "motion_sensor_respond" not in flags["T8900P0000000001"]
+    assert "motion_sensor_respond" in flags["T8910P0000000001"]
+    assert "motion_sensor_respond" in flags["T8900P0000000002"]
 
 
 def test_unique_id_keys_do_not_collide_within_a_platform() -> None:

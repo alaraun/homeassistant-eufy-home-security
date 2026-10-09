@@ -14,7 +14,13 @@ from dataclasses import dataclass
 from homeassistant.const import Platform
 
 from eufy_home_security import GuardMode, Station
-from eufy_home_security.devices import MODE_ACTION_FLAGS, Setting, SettingControl, SettingKind
+from eufy_home_security.devices import (
+    MODE_ACTION_FLAGS,
+    Setting,
+    SettingControl,
+    SettingKind,
+    mode_action_flags,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,14 +31,19 @@ class ModeAction:
     flags: Mapping[str, int]
 
 
-def mode_action(setting: Setting) -> ModeAction | None:
-    """The mode and named bits of a per-mode action mask (``camera_action_away``), else None."""
-    for scope, flags in MODE_ACTION_FLAGS.items():
+def mode_action(setting: Setting, device_type: int | None = None) -> ModeAction | None:
+    """The mode and named bits of a per-mode action mask (``camera_action_away``), else None.
+
+    The bits are the library's for the device's cloud ``device_type`` (a sensor that is
+    no motion sensor has no respond bit); None means the scope's full set.
+    """
+    for scope in MODE_ACTION_FLAGS:
         prefix = f"{scope}_action_"
         if setting.key.startswith(prefix):
             try:
                 return ModeAction(
-                    mode=GuardMode.parse(setting.key.removeprefix(prefix)), flags=flags
+                    mode=GuardMode.parse(setting.key.removeprefix(prefix)),
+                    flags=mode_action_flags(scope, device_type),
                 )
             except ValueError:
                 return None
@@ -146,14 +157,17 @@ def setting_specs(station: Station) -> list[SettingEntitySpec]:
     entities, and a setting the station does not report shows as unknown.
     """
     specs: list[SettingEntitySpec] = []
-    targets: list[str | None] = [None]
-    targets.extend(sub.device_sn for sub in station.sub_devices if sub.device_sn)
-    for device_sn in targets:
+    targets: list[tuple[str | None, int | None]] = [(None, None)]
+    # device_type 0 is "not given" (CloudDevice.from_api)
+    targets.extend(
+        (sub.device_sn, sub.device_type or None) for sub in station.sub_devices if sub.device_sn
+    )
+    for device_sn, device_type in targets:
         for setting in station.settings_for(device_sn):
             platform = setting_platform(setting)
             if platform is None:
                 continue
-            if (action := mode_action(setting)) is not None:
+            if (action := mode_action(setting, device_type)) is not None:
                 specs.extend(
                     SettingEntitySpec(
                         platform=platform,

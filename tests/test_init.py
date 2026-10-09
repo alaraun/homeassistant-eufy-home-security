@@ -464,6 +464,30 @@ async def test_a_login_limit_at_setup_raises_the_limited_issue_and_local_control
     await hass.async_block_till_done()
 
 
+async def test_the_library_login_budget_names_the_sign_in_country_it_holds_back(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A login the library's own budget refused gets its own text, naming the extra
+    country of the scope, the budget and the time; eufy refused nothing."""
+    error = LoginLimitedError("budget", retry_after=3600, scope="eu:CH", origin="budget")
+    entry = await _set_up_with_login_error(hass, fake_cloud, seed_warm_cache, error)
+
+    issue = _login_limited_issue(hass, entry)
+    assert issue is not None
+    assert issue.translation_key == "login_budget"
+    assert issue.translation_placeholders is not None
+    assert issue.translation_placeholders["country"] == "CH"
+    assert issue.translation_placeholders["budget"] == "3"
+    assert issue.translation_placeholders["window_hours"] == "6"
+    assert _LOCAL_TIME.fullmatch(issue.translation_placeholders["time"])
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
 async def test_the_limited_issue_clears_on_the_next_successful_login(
     hass: HomeAssistant,
     fake_cloud: FakeCloud,

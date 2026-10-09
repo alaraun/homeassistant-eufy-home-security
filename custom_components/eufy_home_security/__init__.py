@@ -403,8 +403,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         manufacturer="eufy",
         name=ACCOUNT_DEVICE_NAME,
     )
-    # The library caches only a list every asked scope answered, so a cached list is whole.
-    stale_devices.async_remove_unlisted(hass, entry, runtime.listed_devices(eufy))
+    # Also from the cache: the library caches only a whole list and leaves out the
+    # devices of a scope no longer in use.
+    _LOGGER.debug("Device list from %s", eufy.device_list_source)
+    stale_devices.async_remove_unlisted(hass, entry, runtime.listed_serials(eufy))
 
     start_errors = await eufy.async_start(p2p=True, push=False)
 
@@ -544,7 +546,7 @@ async def async_remove_config_entry_device(
     if entry.state is not ConfigEntryState.LOADED:
         return False
     return stale_devices.unlisted(
-        dr.async_get(hass), entry.entry_id, device, runtime.listed_devices(entry.runtime_data.eufy)
+        entry.entry_id, device, runtime.listed_serials(entry.runtime_data.eufy)
     )
 
 

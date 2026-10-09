@@ -196,6 +196,10 @@
       "title": "eufy is refusing sign-ins for {account}",
       "description": "eufy is temporarily refusing sign-ins for the eufy account {account}. Local control of your HomeBase keeps working from the cached account. Wait before signing in again, in Home Assistant or elsewhere: each early attempt can restart the wait. This notice clears when Home Assistant next starts the integration without needing a sign-in."
     },
+    "login_budget": {
+      "title": "Home Assistant is holding back eufy sign-ins for {account}",
+      "description": "Home Assistant has used its own limit of {budget} sign-ins per {window_hours} hours on the eufy cluster that serves the sign-in country {country} of the eufy account {account}; eufy itself refused nothing. The next sign-in is allowed after {time}. Local control of your HomeBase keeps working from the cached account. Every sign-in country on that cluster, extra countries included, counts against this limit. This notice clears at that time, or when Home Assistant next starts the integration without needing a sign-in."
+    },
     "key_rejected": {
       "title": "{station} rejects its key",
       "fix_flow": {

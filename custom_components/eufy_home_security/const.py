@@ -310,6 +310,8 @@ ISSUE_SESSION_REPLACED: Final = "session_replaced"
 ISSUE_LOGIN_LIMITED: Final = "login_limited"
 # The same, when eufy gave no wait: no English is ever passed as a placeholder.
 ISSUE_LOGIN_LIMITED_NO_WAIT: Final = "login_limited_no_wait"
+# The library's own login budget on one cluster is spent; eufy refused nothing.
+ISSUE_LOGIN_BUDGET: Final = "login_budget"
 # A station rejects even its re-fetched key; fixable by releasing the latch.
 ISSUE_KEY_REJECTED: Final = "key_rejected"
 # A station's key or owner id was fetched again without a sign-in.

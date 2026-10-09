@@ -7,6 +7,7 @@ under ``(DOMAIN, entry_id)``, which is never one of them.
 from __future__ import annotations
 
 import logging
+from collections.abc import Set as AbstractSet
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
@@ -14,50 +15,44 @@ from homeassistant.helpers import device_registry as dr
 from eufy_home_security import redact_serial
 
 from .const import DOMAIN
-from .runtime import EufyConfigEntry, ListedDevices
+from .runtime import EufyConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _serials(device: dr.DeviceEntry | dr.ChildDeviceEntry) -> set[str]:
+def _serials(device: dr.DeviceEntry) -> set[str]:
     return {value for domain, value in device.identifiers if domain == DOMAIN}
 
 
 @callback
-def unlisted(
-    registry: dr.DeviceRegistry, entry_id: str, device: dr.DeviceEntry, listed: ListedDevices
-) -> bool:
+def unlisted(entry_id: str, device: dr.DeviceEntry, listed: AbstractSet[str]) -> bool:
     """Whether ``device`` is an eufy device of the entry that ``listed`` does not name.
 
-    Never the account device, a device without an identifier of this integration, a
-    device the list names but the client skipped (matched by redacted serial), or a
-    device under a station another account serves (its paired devices are unknown).
+    Never the account device, a device without an identifier of this integration, or
+    a device another config entry also holds (another account's list may name it).
     """
     serials = _serials(device)
-    if not serials or entry_id in serials or serials & listed.serials:
+    if not serials or entry_id in serials or serials & listed:
         return False
-    if any(redact_serial(serial) in listed.skipped for serial in serials):
-        return False
-    parent = registry.async_get(device.via_device_id) if device.via_device_id else None
-    return parent is None or not _serials(parent) & listed.elsewhere
+    return device.config_entries == {entry_id}
 
 
 @callback
 def async_remove_unlisted(
-    hass: HomeAssistant, entry: EufyConfigEntry, listed: ListedDevices
+    hass: HomeAssistant, entry: EufyConfigEntry, listed: AbstractSet[str]
 ) -> None:
     """Remove each device of the entry that ``listed`` does not name, with its entities.
 
     A list that names no device removes nothing: an account never loses every device
     at once by intent, and a wrong sign-in country lists none.
     """
-    if not listed.serials:
+    if not listed:
         return
     registry = dr.async_get(hass)
     stale = [
         device
         for device in dr.async_entries_for_config_entry(registry, entry.entry_id)
-        if unlisted(registry, entry.entry_id, device, listed)
+        if unlisted(entry.entry_id, device, listed)
     ]
     for device in stale:
         _LOGGER.info(

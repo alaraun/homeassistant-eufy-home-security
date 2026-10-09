@@ -33,11 +33,11 @@ class TwoStep:
         self.codes: list[str] = []
         self.answered_on: list[str] = []
 
-    async def answer(self, real: Callable[..., Any], api: Any, path: str, payload: Any) -> Any:
+    async def answer(self, real: Callable[..., Any], path: str, payload: Any) -> Any:
         if path == cloud_const.SEND_VERIFY_CODE_PATH:
             self.cloud.calls.append(SEND_CODE)
             return None
-        result = await real(api, path, payload)
+        result = await real(path, payload)
         given = str(payload.get("verify_code") or "") if path == cloud_const.LOGIN_PATH else ""
         if given:
             self.answered_on.append(self.cloud.calls[-1])
@@ -56,8 +56,8 @@ def two_step(
     fake = TwoStep(cloud, login_call)
     real = cloud._answer
 
-    async def answer(api: Any, path: str, payload: Any) -> Any:
-        return await fake.answer(real, api, path, payload)
+    async def answer(path: str, payload: Any) -> Any:
+        return await fake.answer(real, path, payload)
 
     monkeypatch.setattr(cloud, "_answer", answer)
     return fake

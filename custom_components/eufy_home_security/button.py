@@ -344,11 +344,11 @@ class EufyRefreshDeviceListButton(ButtonEntity):
         The fetch asks the cloud regions that listed devices before, or every region
         when the entry's region option is on; a region that listed none is otherwise
         not asked. Never retried. A changed paired-device list reaches the router as
-        ``DevicesChanged`` during the fetch, and the router schedules the reload; a
-        station added is found here by comparing the served stations with the
-        client's. Every device of the entry the list no longer names is removed; a
-        station that left it goes at the entry's next setup, as the client keeps the
-        stations it built. Only registries are touched after the
+        ``DevicesChanged`` during the fetch, a station built or no longer listed as
+        ``StationsChanged``, and the router schedules the reload; a station added is
+        also found here by comparing the served stations with the client's. Every
+        device of the entry the list no longer names is removed at once, the station
+        itself included. Only registries are touched after the
         fetch when a reload follows, so the reload cannot unload this entity mid-press;
         with no station before or after, the pending invitations are read for their
         repair.
@@ -374,7 +374,7 @@ class EufyRefreshDeviceListButton(ButtonEntity):
         finally:
             self._refreshing = False
         stale_devices.async_remove_unlisted(
-            self.hass, self._entry, runtime.listed_devices(runtime_data.eufy)
+            self.hass, self._entry, runtime.listed_serials(runtime_data.eufy)
         )
         after = set(runtime_data.eufy.stations)
         if after != before:
