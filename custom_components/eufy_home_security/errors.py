@@ -404,8 +404,10 @@ def flow_error_key(err: EufySecurityError) -> str:
     ``LoginChallengeError`` and ``SessionRejectedError`` are ``AuthenticationError``
     but the password was right, and ``LoginLimitedError`` and ``RefreshCooldownError``
     are both ``RateLimitedError``. Everything else, transport and station errors
-    included, means eufy could not be reached or could not finish. A two-step code
-    challenge gets its own step in the flow, not this key.
+    included, means eufy could not be reached or could not finish: that key is the
+    catch-all, so the error's type and message are logged at WARNING (the form text
+    cannot say which). A two-step code challenge gets its own step in the flow, not
+    this key.
     """
     if isinstance(err, LoginChallengeError):
         return ERROR_LOGIN_CHALLENGE
@@ -417,6 +419,7 @@ def flow_error_key(err: EufySecurityError) -> str:
         return ERROR_LOGIN_LIMITED
     if isinstance(err, SessionReplacedError):
         return ERROR_SESSION_REPLACED
+    _LOGGER.warning("eufy sign-in did not complete: %s: %s", type(err).__name__, err)
     return ERROR_CANNOT_CONNECT
 
 

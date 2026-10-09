@@ -17,6 +17,14 @@ Passwords, codes and captcha answers are logged as `***`. Serials are shortened 
 their model prefix and last 4 characters, account ids and tokens to their last 4.
 Read a log before sharing it.
 
+## Adding the account
+
+"Home Assistant could not reach eufy" covers every failure without its own message
+(network, eufy's answer, the device list after the sign-in). The log then has one
+warning `eufy sign-in did not complete: <error>` from `custom_components.eufy_home_security`
+naming the cause; attach it to an issue. No entry exists yet, so turn on debug logging
+in `configuration.yaml` (above) for the full request trail.
+
 ## Diagnostics
 
 **⋮ → Download diagnostics** on the integration entry: session health, LAN warnings,
