@@ -917,9 +917,9 @@ async def test_a_doorbell_press_on_a_doorbell_fires_ring(
 ) -> None:
     """A catalogued doorbell's press fires its ring event end to end.
 
-    No catalogued model is a doorbell and ``SYNTHETIC`` has no doorbell serial, so
-    the integration's own ``detections.device_kind`` lookup is replaced by one that
-    calls the synthetic camera a doorbell. The library itself is never replaced.
+    ``SYNTHETIC`` has no doorbell serial and the fake station pushes for its synthetic
+    camera, so the integration's own ``detections.device_kind`` lookup is replaced by
+    one that calls that camera a doorbell. The library itself is never replaced.
     """
     original = detections.device_kind
 

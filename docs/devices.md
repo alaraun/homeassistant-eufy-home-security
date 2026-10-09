@@ -29,7 +29,7 @@ Details: [usage.md](usage.md#device-settings).
 | T8030 | HomeBase 3 (S380) | guard mode, status, storage, detections, event history, stills, settings (clock format; entry and leaving delays of Home, Away and Custom 1) |
 | T8160 | eufyCam 3 (S330), on a HomeBase | detections, stills, live video and audio, settings (detection sensitivity, trigger interval, clip length, speaker volume, streaming quality, night vision, working mode) |
 | T8170 | Battery SoloCam, standalone | guard mode, status, live video, presets, pan/tilt, zoom, settings (detection sensitivity, motion detection, status LED, night vision, record audio, AI tracking, streaming quality, privacy zones, spotlight, lighting) |
-| T8910 | Outdoor motion sensor, on a HomeBase | battery and signal only |
+| T8910 | Motion sensor, on a HomeBase | battery and signal only |
 
 ## Models from eufy app code
 
@@ -45,8 +45,15 @@ Report what works and what does not ([below](#reporting-a-new-device)).
 
 ## Other models
 
-Any other eufy Security HomeBase, camera or sensor on the account is added too, with
-what the library knows from eufy's own model data:
+Every other model the eufy app names is added too, by its kind in the library's
+model list (declared from eufy's own model data):
+
+| Kind | Entities |
+|---|---|
+| Camera, doorbell | camera with stills, detection sensors and event, **Capture live image** and **Refresh event image** buttons; a doorbell also its ring event. No live video, presets or pan/tilt |
+| HomeBase, keypad, lock, sensor, other | none of a camera |
+
+Every device also gets:
 
 - status entities (battery, signal, firmware) where the device reports them;
 - its settings, as [above](#settings).

@@ -255,8 +255,7 @@ def has_live_stream(serial: str) -> bool:
 def has_doorbell_entity(kind: DeviceKind | None) -> bool:
     """Whether a device of ``kind`` gets the doorbell ring event.
 
-    Only the library catalog's DOORBELL, never a serial-prefix list. The catalog
-    has no doorbell model, so no device gets one.
+    Only the library catalog's DOORBELL, never a serial-prefix list.
     """
     return kind is DeviceKind.DOORBELL
 
