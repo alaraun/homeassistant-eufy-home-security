@@ -5,6 +5,20 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.2.1](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.2.0...v0.2.1) (2026-10-09)
+
+
+### Features
+
+* the camera card saves the current view as a preset, with the live picture ([#53](https://github.com/alaraun/homeassistant-eufy-home-security/issues/53)) ([6ed247a](https://github.com/alaraun/homeassistant-eufy-home-security/commit/6ed247ae3062ac3cff6dd3d25e8040f64603f220))
+
+
+### Bug Fixes
+
+* a sign-in that ends in "could not reach eufy" logs its cause ([#54](https://github.com/alaraun/homeassistant-eufy-home-security/issues/54)) ([aae4234](https://github.com/alaraun/homeassistant-eufy-home-security/commit/aae4234503c5150af66d5f447bdcdb572c7ba61b))
+* the camera card says when a recorded clip ended early ([#52](https://github.com/alaraun/homeassistant-eufy-home-security/issues/52)) ([68a2f63](https://github.com/alaraun/homeassistant-eufy-home-security/commit/68a2f639cd0e2b9eb06585388eb136d156ba2ea9))
+* the stale-device check reads the device's config entry, not the deprecated list ([#49](https://github.com/alaraun/homeassistant-eufy-home-security/issues/49)) ([e47aff6](https://github.com/alaraun/homeassistant-eufy-home-security/commit/e47aff6b2f08292d6110195eb24532bf6dc36b99))
+
 ## [0.2.0](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.10...v0.2.0) (2026-10-09)
 
 
