@@ -8,6 +8,7 @@ import copy
 import logging
 import re
 from collections.abc import Callable
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -53,9 +54,10 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
-from custom_components.eufy_home_security import async_unload_entry, runtime
+from custom_components.eufy_home_security import async_unload_entry, errors, runtime
 from custom_components.eufy_home_security.config_flow import EufyHomeSecurityConfigFlow
 from custom_components.eufy_home_security.const import (
     DOMAIN,
@@ -400,6 +402,10 @@ def _login_limited_issue(hass: HomeAssistant, entry: MockConfigEntry) -> ir.Issu
     return ir.async_get(hass).async_get_issue(DOMAIN, f"login_limited_{entry.entry_id}")
 
 
+# The login-limited issue's "time" placeholder: a local clock time, dated on another day.
+_LOCAL_TIME = re.compile(r"(\d{4}-\d{2}-\d{2} )?\d{2}:\d{2}")
+
+
 async def _set_up_with_login_error(
     hass: HomeAssistant,
     fake_cloud: FakeCloud,
@@ -434,7 +440,8 @@ async def test_a_login_limit_at_setup_raises_the_limited_issue_and_local_control
     seed_warm_cache: Callable[..., None],
     error: RateLimitedError,
 ) -> None:
-    """A throttled login shows the wait as a repair and the panel keeps working from the cache."""
+    """A throttled login shows when the next sign-in is allowed, as a local time, and is
+    withdrawn at that time; the panel keeps working from the cache."""
     entry = await _set_up_with_login_error(hass, fake_cloud, seed_warm_cache, error)
 
     assert entry.state is ConfigEntryState.LOADED
@@ -442,9 +449,16 @@ async def test_a_login_limit_at_setup_raises_the_limited_issue_and_local_control
     assert issue is not None
     assert not issue.is_fixable
     assert issue.translation_placeholders is not None
-    assert issue.translation_placeholders["minutes"] == "60"
+    assert _LOCAL_TIME.fullmatch(issue.translation_placeholders["time"])
     assert _panel_state(hass) == "armed_away"
     assert cloud_calls(fake_cloud) == ["login"]
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=3590))
+    await hass.async_block_till_done()
+    assert _login_limited_issue(hass, entry) is not None, "withdrawn before the wait is over"
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=3601))
+    await hass.async_block_till_done()
+    assert _login_limited_issue(hass, entry) is None
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
@@ -476,19 +490,38 @@ async def test_the_limited_issue_clears_on_the_next_successful_login(
     await hass.async_block_till_done()
 
 
+@pytest.mark.parametrize(
+    ("now", "seconds", "shown"),
+    [
+        ("2030-01-02 10:00:00", 60, "10:01"),  # hygiene: ok (synthetic clock)
+        ("2030-01-02 10:00:00", 61, "10:02"),  # hygiene: ok (synthetic clock)
+        ("2030-01-01 23:58:30", 3600, "2030-01-02 00:59"),  # hygiene: ok (synthetic clock)
+    ],
+    ids=["whole_minute", "rounded_up", "next_day_dated"],
+)
+async def test_the_next_sign_in_is_named_as_a_local_time_rounded_up(
+    hass: HomeAssistant, freezer: Any, now: str, seconds: float, shown: str
+) -> None:
+    """Never earlier than the library allows; the date only when it is another day."""
+    await hass.config.async_set_time_zone("Europe/Tallinn")
+    local = dt_util.parse_datetime(now)
+    assert local is not None
+    freezer.move_to(local.replace(tzinfo=dt_util.get_default_time_zone()))
+
+    assert errors._local_time_after(seconds) == shown
+
+
 @pytest.mark.parametrize("held_off", [True, False], ids=["hold_off_running", "hold_off_over"])
-async def test_a_cache_only_login_keeps_the_limited_issue_while_the_hold_off_runs(
+async def test_a_setup_that_needs_no_sign_in_withdraws_the_limited_issue(
     hass: HomeAssistant,
     fake_cloud: FakeCloud,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
     held_off: bool,
 ) -> None:
-    """A warm-cache setup signs nobody in, so it proves nothing about the limit.
-
-    The issue raised at runtime stays across a reload while the library still holds
-    logins off; once the library holds nothing against a login, the same cache-only
-    reload withdraws it. Neither setup reaches eufy.
+    """The issue matters only while a sign-in is needed: a warm-cache reload that needs
+    none withdraws it, whether or not the library still holds logins off, and its
+    timer with it. Neither setup reaches eufy.
     """
     seed_warm_cache()
     if held_off:
@@ -508,7 +541,7 @@ async def test_a_cache_only_login_keeps_the_limited_issue_while_the_hold_off_run
     await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.LOADED
-    assert (_login_limited_issue(hass, entry) is not None) is held_off
+    assert _login_limited_issue(hass, entry) is None
     assert cloud_calls(fake_cloud) == []
 
     assert await hass.config_entries.async_unload(entry.entry_id)
@@ -516,13 +549,13 @@ async def test_a_cache_only_login_keeps_the_limited_issue_while_the_hold_off_run
 
 
 @pytest.mark.parametrize(
-    ("error", "issue_key", "minutes"),
+    ("error", "issue_key", "timed"),
     [
-        (AuthenticationError("x"), None, None),
-        (SessionReplacedError(), "session_replaced", None),
-        (LoginLimitedError(retry_after=120), "login_limited", "2"),
-        (RateLimitedError("t", retry_after=120.0, code=26145), "login_limited", "2"),
-        (RefreshCooldownError("c", retry_after=60.0), None, None),
+        (AuthenticationError("x"), None, False),
+        (SessionReplacedError(), "session_replaced", False),
+        (LoginLimitedError(retry_after=120), "login_limited", True),
+        (RateLimitedError("t", retry_after=120.0, code=26145), "login_limited", True),
+        (RefreshCooldownError("c", retry_after=60.0), None, False),
     ],
     ids=["authentication", "session_replaced", "login_limited", "rate_limited", "cooldown"],
 )
@@ -534,7 +567,7 @@ async def test_background_cloud_problems_route_to_reauth_or_issues(
     seed_warm_cache: Callable[..., None],
     error: Exception,
     issue_key: str | None,
-    minutes: str | None,
+    timed: bool,
 ) -> None:
     """A CloudProblem lands in reauth or the right repair, and never reaches eufy.
 
@@ -585,9 +618,9 @@ async def test_background_cloud_problems_route_to_reauth_or_issues(
         assert list(issues) == [f"{issue_key}_{entry.entry_id}"]
         issue = issues[f"{issue_key}_{entry.entry_id}"]
         assert issue.is_fixable is (issue_key == "session_replaced")
-        if minutes is not None:
+        if timed:
             assert issue.translation_placeholders is not None
-            assert issue.translation_placeholders["minutes"] == minutes
+            assert _LOCAL_TIME.fullmatch(issue.translation_placeholders["time"])
     assert cloud_calls(fake_cloud) == []
 
     assert await hass.config_entries.async_unload(entry.entry_id)

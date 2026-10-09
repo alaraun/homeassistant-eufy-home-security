@@ -19,12 +19,12 @@ the two write paths cannot drift.
 from __future__ import annotations
 
 import logging
-import math
 from collections.abc import Iterable, Mapping, Sequence
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import CONF_EMAIL
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryNotReady,
@@ -33,7 +33,10 @@ from homeassistant.exceptions import (
 )
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import UpdateFailed
+from homeassistant.util import dt as dt_util
+from homeassistant.util.hass_dict import HassKey
 
 from eufy_home_security import (
     AuthenticationError,
@@ -43,7 +46,6 @@ from eufy_home_security import (
     CloudError,
     CloudInvite,
     CloudProblem,
-    CloudStatus,
     CommandError,
     ConnectionChanged,
     CredentialsRefreshed,
@@ -125,6 +127,9 @@ if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+
+# Per entry id: the timer that withdraws the login-limited issue when its wait is over.
+_LOGIN_LIMITED_EXPIRY: HassKey[dict[str, CALLBACK_TYPE]] = HassKey(f"{DOMAIN}_login_limited_expiry")
 
 
 def update_failed(err: EufySecurityError) -> UpdateFailed:
@@ -499,9 +504,11 @@ def raise_cloud_issue(hass: HomeAssistant, entry: ConfigEntry[Any], err: CloudEr
       other out into the login lock.
     - ``RefreshCooldownError``: nothing. It is the library's own spacing of key
       refreshes, not eufy refusing the account. Checked before its base class.
-    - ``RateLimitedError``, ``LoginLimitedError`` included: a non-fixable issue with
-      the wait in whole minutes when eufy gave one. A plain request hold-off is
-      shown like a login limit. The next successful login clears it.
+    - ``RateLimitedError``, ``LoginLimitedError`` included: a non-fixable issue
+      naming the local time the next sign-in is allowed, when the error gives a
+      wait; it is withdrawn at that time (:func:`_expire_login_limited_issue`). A
+      plain request hold-off is shown like a login limit. Each setup decides afresh
+      (:func:`delete_reload_scoped_issues`).
     """
     if isinstance(err, SessionReplacedError):
         raise_session_replaced_issue(hass, entry)
@@ -512,7 +519,7 @@ def raise_cloud_issue(hass: HomeAssistant, entry: ConfigEntry[Any], err: CloudEr
             translation_key = ISSUE_LOGIN_LIMITED
             placeholders = {
                 "account": account_label(entry),
-                "minutes": str(max(1, math.ceil(err.retry_after / 60))),
+                "time": _local_time_after(err.retry_after),
             }
         else:
             translation_key = ISSUE_LOGIN_LIMITED_NO_WAIT
@@ -526,45 +533,58 @@ def raise_cloud_issue(hass: HomeAssistant, entry: ConfigEntry[Any], err: CloudEr
             translation_key=translation_key,
             translation_placeholders=placeholders,
         )
+        if err.retry_after is not None:
+            _expire_login_limited_issue(hass, entry.entry_id, err.retry_after)
+        else:
+            cancel_login_limited_expiry(hass, entry.entry_id)
+
+
+def _local_time_after(seconds: float) -> str:
+    """Home Assistant's local time ``seconds`` from now, rounded up to the minute.
+
+    ``HH:MM`` on the same day, with the date in front on another.
+    """
+    now = dt_util.now()
+    at = now + timedelta(seconds=seconds)
+    if at.second or at.microsecond:
+        at = at.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    return at.strftime("%H:%M" if at.date() == now.date() else "%Y-%m-%d %H:%M")
+
+
+def _expire_login_limited_issue(hass: HomeAssistant, entry_id: str, seconds: float) -> None:
+    """Withdraw the entry's login-limited issue once ``seconds`` have passed.
+
+    The library allows a sign-in again then; a later refusal raises a new issue.
+    Replaces the entry's earlier timer.
+    """
+    cancel_login_limited_expiry(hass, entry_id)
+
+    @callback
+    def _expired(_now: object) -> None:
+        hass.data.get(_LOGIN_LIMITED_EXPIRY, {}).pop(entry_id, None)
+        ir.async_delete_issue(hass, DOMAIN, login_limited_issue_id(entry_id))
+
+    hass.data.setdefault(_LOGIN_LIMITED_EXPIRY, {})[entry_id] = async_call_later(
+        hass, seconds, _expired
+    )
+
+
+def cancel_login_limited_expiry(hass: HomeAssistant, entry_id: str) -> None:
+    """Stop the entry's login-limited timer, if one runs."""
+    cancel = hass.data.get(_LOGIN_LIMITED_EXPIRY, {}).pop(entry_id, None)
+    if cancel is not None:
+        cancel()
 
 
 def clear_session_replaced_issue(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:
     """A successful authenticated call proves eufy accepts the session: that issue goes.
 
-    Only the account's session-replaced issue, and nothing else. The login-limited
-    issue is left to :func:`clear_cloud_issues`, which alone can read whether a real
-    login happened; an authenticated read with the cached token proves nothing about
-    eufy's sign-in limit. Deleting an issue that does not exist is a no-op.
+    Only the account's session-replaced issue, and nothing else: an authenticated
+    read with the cached token proves nothing about eufy's sign-in limit. Setup calls
+    it after any login that returned, since the library checks its latch first.
+    Deleting an issue that does not exist is a no-op.
     """
     ir.async_delete_issue(hass, DOMAIN, session_replaced_issue_id(entry.entry_id))
-
-
-def clear_cloud_issues(
-    hass: HomeAssistant,
-    entry: ConfigEntry[Any],
-    *,
-    before: CloudStatus,
-    after: CloudStatus,
-) -> None:
-    """A login returned: withdraw what it proves is over, and only that.
-
-    ``before`` and ``after`` are the library's cloud status around the login;
-    reading it never contacts the cloud.
-
-    - The session-replaced issue always goes: the library checks its latch before
-      it returns from any login, the cache-only one included.
-    - The login-limited issue goes when the login really signed in, which
-      ``CloudStatus`` answers by ``logins_in_window`` rising across the call, or
-      when the library holds nothing against a login any more
-      (``next_login_allowed_in`` is 0: no request or login hold-off, no spent
-      budget). A warm-cache login returns without contacting eufy and without
-      checking any hold-off, so on its own it proves nothing about the limit, and
-      the user keeps the warning while eufy is still refusing sign-ins.
-    """
-    ir.async_delete_issue(hass, DOMAIN, session_replaced_issue_id(entry.entry_id))
-    signed_in = after.logins_in_window > before.logins_in_window
-    if signed_in or after.next_login_allowed_in == 0:
-        ir.async_delete_issue(hass, DOMAIN, login_limited_issue_id(entry.entry_id))
 
 
 def route_cloud_problem(
@@ -1017,7 +1037,7 @@ def raise_account_mismatch_issue(hass: HomeAssistant, entry: ConfigEntry[Any], s
 
 def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:
     """Delete the entry's account-id-mismatch, cipher-unavailable, key-unusable,
-    no-devices and pending-invitations issues.
+    no-devices, pending-invitations and login-limited issues.
 
     Unload, the start of every setup attempt and entry removal call it, so an issue
     raised by an attempt that then failed (and so was never unloaded) does not
@@ -1032,7 +1052,9 @@ def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) ->
         key_unusable_issue_id(entry.entry_id, ""),
         no_devices_issue_id(entry.entry_id),
         pending_invites_issue_id(entry.entry_id),
+        login_limited_issue_id(entry.entry_id),
     )
+    cancel_login_limited_expiry(hass, entry.entry_id)
     stale = [
         issue_id
         for domain, issue_id in ir.async_get(hass).issues
