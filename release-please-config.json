@@ -4,7 +4,6 @@
     ".": {
       "release-type": "simple",
       "package-name": "homeassistant-eufy-home-security",
-      "release-as": "0.2.0",
       "changelog-path": "CHANGELOG.md",
       "include-v-in-tag": true,
       "include-component-in-tag": false,
