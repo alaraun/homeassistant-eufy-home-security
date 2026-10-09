@@ -15,11 +15,17 @@ from typing import Final
 import pytest
 from conftest import PUSHED_THUMB_PATH, PUSHED_THUMBNAIL, set_guard_mode, set_up_warm
 from eufy_home_security import EufySecurity, entity_unique_id
-from eufy_home_security.devices import DeviceKind, model_for_serial
+from eufy_home_security.devices import (
+    Capability,
+    DeviceKind,
+    Support,
+    model_for_serial,
+    profile_for_serial,
+)
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation, camera_device
 from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
 from homeassistant.components.camera import CameraEntityFeature
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
@@ -52,6 +58,8 @@ ENTRY_SENSOR_SN: Final = "T8900P0000000001"
 DOORBELL_SN: Final = "T8210P0000000001"
 # A camera with the generic camera profile (eufyCam 2C).
 GENERIC_CAMERA_SN: Final = "T8113P0000000001"
+# An Indoor Cam 2K Pan & Tilt: a live open only as a standalone camera.
+INDOOR_PT_SN: Final = "T8410P0000000001"
 # A HomeBase 2 with the synthetic station's tail, so its key derivation is the fake's.
 HOMEBASE_2_SN: Final = "T8010" + SYNTHETIC.station_sn[5:]
 
@@ -169,18 +177,28 @@ async def test_a_doorbell_gets_the_camera_entities_and_the_ring_event(
     assert not {key for _, key in entities} & _PTZ_KEYS
 
 
+def _camera_state(hass: HomeAssistant, serial: str) -> State:
+    entity_id = er.async_get(hass).async_get_entity_id(
+        CAMERA_DOMAIN, DOMAIN, entity_unique_id(serial, CAMERA_KEY)
+    )
+    assert entity_id is not None
+    state = hass.states.get(entity_id)
+    assert state is not None
+    return state
+
+
 @pytest.mark.parametrize("fake_station", [HOMEBASE_2_SN], indirect=True)
-async def test_a_generic_camera_behind_a_homebase_2_gets_stills_but_no_live_stream(
+async def test_a_generic_camera_behind_a_homebase_2_gets_a_live_stream(
     hass: HomeAssistant,
     fake_station: FakeStation,
     fake_cloud: FakeCloud,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """A camera with the generic profile: camera entity and still buttons, no stream.
+    """A generic-profile camera whose live open the library sends behind its station.
 
-    The station's model gates nothing; the camera's unknown live-stream capability
-    keeps the stream feature, the broadcast and the pan/tilt entities off.
+    The stream feature and the broadcast follow ``Station.live_support``; pan/tilt
+    entities still follow the profile, which grades them unknown.
     """
     _pair(fake_station, fake_cloud, GENERIC_CAMERA_SN)
     entry = await set_up_warm(hass, seed_warm_cache)
@@ -188,15 +206,39 @@ async def test_a_generic_camera_behind_a_homebase_2_gets_stills_but_no_live_stre
     entities = _entities_of(hass, GENERIC_CAMERA_SN)
     assert _CAMERA_ENTITIES | _STATUS_ENTITIES <= entities
     assert not {key for _, key in entities} & _PTZ_KEYS
-    entity_id = er.async_get(hass).async_get_entity_id(
-        CAMERA_DOMAIN, DOMAIN, entity_unique_id(GENERIC_CAMERA_SN, CAMERA_KEY)
-    )
-    assert entity_id is not None
-    state = hass.states.get(entity_id)
-    assert state is not None
+    state = _camera_state(hass, GENERIC_CAMERA_SN)
+    assert state.attributes["supported_features"] & CameraEntityFeature.STREAM
+    streams = runtime.streaming(entry)
+    assert streams is not None
+    assert streams.has_camera(GENERIC_CAMERA_SN)
+    assert streams.has_camera(SYNTHETIC.camera_sn)
+
+
+async def test_a_camera_whose_open_the_library_lacks_behind_its_station_gets_no_stream(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The gate is the device on its station, not the model alone.
+
+    A T8410's profile grades live video declared (its standalone open), but the
+    library has no open for it behind a HomeBase: camera entity, no stream feature,
+    no broadcast.
+    """
+    model_profile = profile_for_serial(INDOOR_PT_SN)
+    assert model_profile is not None
+    assert model_profile.support(Capability.LIVE_STREAM) is not Support.UNKNOWN
+    _pair(fake_station, fake_cloud, INDOOR_PT_SN)
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    station = entry.runtime_data.coordinators[fake_station.serial].station
+    assert station.live_support(INDOOR_PT_SN).support is Support.UNKNOWN
+    assert _CAMERA_ENTITIES <= _entities_of(hass, INDOOR_PT_SN)
+    state = _camera_state(hass, INDOOR_PT_SN)
     assert not state.attributes["supported_features"] & CameraEntityFeature.STREAM
     streams = runtime.streaming(entry)
     assert streams is not None
-    assert not streams.has_camera(GENERIC_CAMERA_SN)
-    # The synthetic T8160 on the same station has a graded stream.
+    assert not streams.has_camera(INDOOR_PT_SN)
     assert streams.has_camera(SYNTHETIC.camera_sn)

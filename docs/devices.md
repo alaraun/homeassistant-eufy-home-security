@@ -50,8 +50,12 @@ model list (declared from eufy's own model data):
 
 | Kind | Entities |
 |---|---|
-| Camera, doorbell | camera with stills, detection sensors and event, **Capture live image** and **Refresh event image** buttons; a doorbell also its ring event. No live video, presets or pan/tilt |
+| Camera, doorbell | camera with stills, detection sensors and event, **Capture live image** and **Refresh event image** buttons; a doorbell also its ring event. Live video where the library sends the live open the eufy app uses for that model on its station (declared from the eufy app, not tested); no presets or pan/tilt |
 | HomeBase, keypad, lock, sensor, other | none of a camera |
+
+No live video yet: cameras behind a HomeBase 4, NVR or other recorder station, dual-lens
+cameras, cameras the eufy app streams only over WebRTC, and a camera the library opens
+only as a standalone camera (such as the T8410) when it is paired to a HomeBase. The card then shows `No live view for this model`.
 
 Every device also gets:
 

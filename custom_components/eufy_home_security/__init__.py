@@ -292,7 +292,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     # sessions die.
     for coordinator in coordinators.values():
         for device_sn, kind in detections.paired_device_kinds(coordinator.station).items():
-            if detections.has_detection_entities(kind) and detections.has_live_stream(device_sn):
+            if detections.has_detection_entities(kind) and detections.has_live_stream(
+                coordinator.station, device_sn
+            ):
                 stream_manager.async_add_camera(coordinator.station, device_sn)
     # Each camera's still, one media worker per station. Stopped at unload,
     # before the client closes (unload callbacks run last-in first-out). Both take the

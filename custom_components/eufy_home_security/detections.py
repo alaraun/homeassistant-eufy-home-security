@@ -241,15 +241,14 @@ def zoom_signal(entry_id: str, device_sn: str) -> SignalType[()]:
     return SignalType(f"{DOMAIN}_zoom_{entry_id}_{device_sn}")
 
 
-def has_live_stream(serial: str) -> bool:
-    """Whether the camera ``serial`` gets a live video stream.
+def has_live_stream(station: Station, serial: str) -> bool:
+    """Whether the camera ``serial`` on ``station`` gets a live video stream.
 
-    The model's profile supports ``Capability.LIVE_STREAM`` other than ``UNKNOWN``
-    (verified or declared). The library's live open does not check it, so this is
-    the only gate. Never a serial prefix.
+    ``Station.live_support`` grades it other than ``UNKNOWN`` (verified, or declared
+    where the library sends the open the model's eufy-app handler sends under this
+    station's kind). A pure lookup, safe on the event loop. Never a serial prefix.
     """
-    profile = profile_for_serial(serial)
-    return profile is not None and profile.support(Capability.LIVE_STREAM) is not Support.UNKNOWN
+    return station.live_support(serial).support is not Support.UNKNOWN
 
 
 def has_doorbell_entity(kind: DeviceKind | None) -> bool:

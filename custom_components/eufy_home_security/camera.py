@@ -6,12 +6,12 @@ live-snapshot option on and no detection image yet, one live keyframe per cooldo
 A view serves what is cached and never waits on the station; a view of a camera
 with no image may only schedule the live keyframe in the background.
 
-Live video: a camera whose model the library grades capable of
-``Capability.LIVE_STREAM`` carries ``CameraEntityFeature.STREAM`` and hands Home
+Live video: a camera the library can open live on its station
+(``Station.live_support`` not ``UNKNOWN``) carries ``CameraEntityFeature.STREAM`` and hands Home
 Assistant a stable loopback MPEG-TS URL (``streaming.py``). Building that URL opens
 nothing — the camera opens only when something actually connects to it — and
-snapshots stay on ``async_camera_image``, never taken from the stream. A model
-the library grades unknown advertises no stream at all. The entity has no name of its
+snapshots stay on ``async_camera_image``, never taken from the stream. A camera
+without live support advertises no stream at all. The entity has no name of its
 own, the camera is its device.
 
 The camera entity is also the target of the ``eufy_home_security.capture_preset``
@@ -234,10 +234,10 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
         self._serial = device_sn
         self._manager = manager
         self._presets = presets
-        # Per instance, never at class scope: only a model the library grades
-        # capable of Capability.LIVE_STREAM advertises a stream, so Home Assistant
-        # never offers a live view of a camera the library would refuse to open.
-        if detections.has_live_stream(device_sn):
+        # Per instance, never at class scope: only a camera the library can open live
+        # on its station advertises a stream, so Home Assistant never offers a live
+        # view the library would refuse to open.
+        if detections.has_live_stream(coordinator.station, device_sn):
             self._attr_supported_features = CameraEntityFeature.STREAM
 
     @override
