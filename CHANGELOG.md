@@ -5,6 +5,25 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.2.0](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.10...v0.2.0) (2026-10-09)
+
+
+### Features
+
+* a repair for the integration's own sign-in budget, and removed countries' devices go even when eufy refuses the list (library 0.3.1) ([#46](https://github.com/alaraun/homeassistant-eufy-home-security/issues/46)) ([6ee5aee](https://github.com/alaraun/homeassistant-eufy-home-security/commit/6ee5aee2481a68bb8a11d8f931b0bf67d25ad76b))
+* the camera card hides its controls during live video ([#42](https://github.com/alaraun/homeassistant-eufy-home-security/issues/42)) ([54cfc6b](https://github.com/alaraun/homeassistant-eufy-home-security/commit/54cfc6b7908fc94d473b9c1a79371c779371187b))
+
+
+### Bug Fixes
+
+* remove devices the eufy device list no longer names ([#41](https://github.com/alaraun/homeassistant-eufy-home-security/issues/41)) ([6696ec9](https://github.com/alaraun/homeassistant-eufy-home-security/commit/6696ec93fdf0182e1fc0f56fc995cf297810f4ca))
+* the station list asks a week of days per page, so a camera with few recordings answers at once ([#43](https://github.com/alaraun/homeassistant-eufy-home-security/issues/43)) ([56d6d24](https://github.com/alaraun/homeassistant-eufy-home-security/commit/56d6d24a3e87e52d29c20bd0e052bb16600f227a))
+
+
+### Miscellaneous Chores
+
+* release 0.2.0 ([#47](https://github.com/alaraun/homeassistant-eufy-home-security/issues/47)) ([185292e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/185292ef07fc311385c95ec39d200814a691f5c1))
+
 ## [0.1.10](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.9...v0.1.10) (2026-10-09)
 
 
