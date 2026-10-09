@@ -2,23 +2,24 @@
 
 ## Options
 
-**Settings → Devices & services → Anker eufy Home Security → Configure**
+**Settings → Devices & services → Anker eufy Home Security → Configure**. The options
+sit in six collapsible sections.
 
-| Option | Default | Description |
-|---|---|---|
-| Detection hold (seconds) | 10 | 5–300. How long a detection sensor stays on; the HomeBase never reports a detection's end |
-| Alarm safety-net timeout (minutes) | 10 | 1–60. Ends Triggered or Pending if the HomeBase never reports the alarm's end |
-| Event image | Thumbnail, then HD | What a detection and **Refresh event image** show; see [Camera images](#camera-images) |
-| Live snapshot for cameras without a detection image | Off | A camera without a detection image takes one live still, at most every 5 min. Wakes battery cameras |
-| Check the eufy session every 6 hours | On | One cloud read (not a sign-in) that notices when another client ended Home Assistant's session |
-| Cloud push for cameras without a HomeBase | Off | Receives eufy's push messages; needed for detections of a standalone camera. See [Cloud push](#cloud-push) |
-| eufy sign-in country | Home Assistant's country | The country your eufy app signs in with; eufy lists a device only under the country it was set up or shared under. A change asks eufy once more for the devices. See [network.md](network.md#eufy-sign-in-country) |
-| Extra eufy sign-in countries | None | The country of each account that shared a home with this one, when it differs; one more sign-in each. See [network.md](network.md#eufy-sign-in-country) |
-| Look for devices under every sign-in country on each refresh | Off | Every device list asks every sign-in country, also one that listed no devices; may cost a sign-in. See [network.md](network.md#eufy-regions) |
-| Event history (days) | 7 | 0–365. Days of camera images and videos kept in the media folder; 0 keeps none |
-| Save event videos | Off | Copies each HomeBase recording from then on into the event history; see [Event videos](#event-videos) |
-| Recording length (seconds) | 30 | 5–300. Length of a **Record clip** action that names no duration |
-| Sessions per HomeBase | 6 | 2–9. Connections Home Assistant holds to each HomeBase; each live view beyond the first needs one |
+| Section | Option | Default | Description |
+|---|---|---|---|
+| Detections and alarm | Detection hold (seconds) | 10 | 5–300. How long a detection sensor stays on; the HomeBase never reports a detection's end |
+| | Alarm safety-net timeout (minutes) | 10 | 1–60. Ends Triggered or Pending if the HomeBase never reports the alarm's end |
+| Camera images | Event image | Thumbnail, then HD | What a detection and **Refresh event image** show; see [Camera images](#camera-images) |
+| | Live snapshot for cameras without a detection image | Off | A camera without a detection image takes one live still, at most every 5 min. Wakes battery cameras |
+| Live view and recording | Sessions per HomeBase | 6 | 2–9. Connections Home Assistant holds to each HomeBase; each live view beyond the first needs one |
+| | Recording length (seconds) | 30 | 5–300. Length of a **Record clip** action that names no duration |
+| Event history | Event history (days) | 7 | 0–365. Days of camera images and videos kept in the media folder; 0 keeps none |
+| | Save event videos | Off | Copies each HomeBase recording from then on into the event history; see [Event videos](#event-videos) |
+| eufy account | eufy sign-in country | Home Assistant's country | The country your eufy app signs in with; eufy lists a device only under the country it was set up or shared under. A change asks eufy once more for the devices. See [network.md](network.md#eufy-sign-in-country) |
+| | Check the eufy session every 6 hours | On | One cloud read (not a sign-in) that notices when another client ended Home Assistant's session |
+| | Cloud push for cameras without a HomeBase | Off | Receives eufy's push messages; needed for detections of a standalone camera. See [Cloud push](#cloud-push) |
+| Extra countries (experimental) | Extra eufy sign-in countries | None | The country of each account that shared a home with this one, when it differs; one more sign-in each. Experimental: can end Home Assistant's or the eufy app's session. See [network.md](network.md#eufy-sign-in-country) |
+| | Look for devices under every sign-in country on each refresh | Off | Every device list asks every sign-in country, also one that listed no devices; may cost a sign-in. See [network.md](network.md#eufy-regions) |
 
 **Recording length** and **Sessions per HomeBase** apply at once. Any other change
 reloads the integration.

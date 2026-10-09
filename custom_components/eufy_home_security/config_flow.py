@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any
 
 import voluptuous as vol
@@ -18,6 +19,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import CONF_EMAIL, CONF_NAME, CONF_PASSWORD, UnitOfTime
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import section
 from homeassistant.generated.countries import COUNTRIES
 from homeassistant.helpers.selector import (
     BooleanSelector,
@@ -78,6 +80,12 @@ from .const import (
     MIN_ALARM_TIMEOUT_MINUTES,
     MIN_DETECTION_HOLD_SECONDS,
     MIN_RECORD_LENGTH_SECONDS,
+    OPTIONS_SECTION_CAMERA_IMAGES,
+    OPTIONS_SECTION_DETECTIONS,
+    OPTIONS_SECTION_EUFY_ACCOUNT,
+    OPTIONS_SECTION_HISTORY,
+    OPTIONS_SECTION_LIVE_VIEW,
+    OPTIONS_SECTION_MORE_COUNTRIES,
     OPTIONS_STEP_INIT,
     STEP_REAUTH_CONFIRM,
     STEP_REAUTH_TAKE_OVER,
@@ -121,39 +129,28 @@ VERIFY_CODE_SCHEMA = vol.Schema(
     {vol.Required(CONF_VERIFY_CODE): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT))}
 )
 
-# The entry's options, in this order: how long a detection sensor stays on after the
-# detection's own time; the alarm panel's safety-net timeout; the camera image a
-# detection shows; a live keyframe for a camera with no detection image (wakes a
-# battery camera); the session probe (one read with the saved session 60 s after start
-# and every 6 h, never a sign-in); eufy's cloud push (off by default: the detections
-# of a camera without a HomeBase, through eufy's cloud); the login country (empty:
-# Home Assistant's) and the extra countries (one sign-in each; a change of either asks
-# every login scope once); every cloud region on each
-# device-list fetch (off by default: a region that listed no devices may cost a
-# sign-in each time); the event-history days; event
-# videos (each HomeBase recording copied into the history, off by default); the record
-# action's default length; the P2P sessions held to each HomeBase (range and default
-# are the library's). Read once at setup, so a change applies on the reload, except the
-# recording length and the sessions per HomeBase.
+
+def _whole(unit: UnitOfTime, low: int, high: int) -> NumberSelector:
+    """A whole-number box from ``low`` to ``high`` in ``unit``."""
+    return NumberSelector(
+        NumberSelectorConfig(
+            min=low, max=high, step=1, mode=NumberSelectorMode.BOX, unit_of_measurement=unit
+        )
+    )
+
+
+# The entry's thirteen options, flat, in form order. Read once at setup, so a change
+# applies on the reload, except the recording length and the sessions per HomeBase.
+# Ranges and defaults of the sessions are the library's; an empty country means Home
+# Assistant's; each extra country is one more sign-in (a change of either country
+# option asks every login scope once).
 OPTIONS_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_DETECTION_HOLD, default=DEFAULT_DETECTION_HOLD_SECONDS): NumberSelector(
-            NumberSelectorConfig(
-                min=MIN_DETECTION_HOLD_SECONDS,
-                max=MAX_DETECTION_HOLD_SECONDS,
-                step=1,
-                mode=NumberSelectorMode.BOX,
-                unit_of_measurement=UnitOfTime.SECONDS,
-            )
+        vol.Required(CONF_DETECTION_HOLD, default=DEFAULT_DETECTION_HOLD_SECONDS): _whole(
+            UnitOfTime.SECONDS, MIN_DETECTION_HOLD_SECONDS, MAX_DETECTION_HOLD_SECONDS
         ),
-        vol.Required(CONF_ALARM_TIMEOUT, default=DEFAULT_ALARM_TIMEOUT_MINUTES): NumberSelector(
-            NumberSelectorConfig(
-                min=MIN_ALARM_TIMEOUT_MINUTES,
-                max=MAX_ALARM_TIMEOUT_MINUTES,
-                step=1,
-                mode=NumberSelectorMode.BOX,
-                unit_of_measurement=UnitOfTime.MINUTES,
-            )
+        vol.Required(CONF_ALARM_TIMEOUT, default=DEFAULT_ALARM_TIMEOUT_MINUTES): _whole(
+            UnitOfTime.MINUTES, MIN_ALARM_TIMEOUT_MINUTES, MAX_ALARM_TIMEOUT_MINUTES
         ),
         vol.Required(CONF_CAMERA_IMAGE, default=DEFAULT_CAMERA_IMAGE.value): SelectSelector(
             SelectSelectorConfig(
@@ -163,34 +160,6 @@ OPTIONS_SCHEMA = vol.Schema(
             )
         ),
         vol.Required(CONF_LIVE_SNAPSHOT, default=False): BooleanSelector(),
-        vol.Required(CONF_SESSION_PROBE, default=True): BooleanSelector(),
-        vol.Required(CONF_CLOUD_PUSH, default=False): BooleanSelector(),
-        vol.Optional(CONF_COUNTRY, default=""): CountrySelector(),
-        vol.Optional(CONF_EXTRA_COUNTRIES, default=list): SelectSelector(
-            SelectSelectorConfig(
-                options=sorted(COUNTRIES), multiple=True, mode=SelectSelectorMode.DROPDOWN
-            )
-        ),
-        vol.Required(CONF_SCAN_REGIONS, default=False): BooleanSelector(),
-        vol.Required(CONF_EVENT_HISTORY_DAYS, default=DEFAULT_EVENT_HISTORY_DAYS): NumberSelector(
-            NumberSelectorConfig(
-                min=0,
-                max=MAX_EVENT_HISTORY_DAYS,
-                step=1,
-                mode=NumberSelectorMode.BOX,
-                unit_of_measurement=UnitOfTime.DAYS,
-            )
-        ),
-        vol.Required(CONF_EVENT_VIDEOS, default=False): BooleanSelector(),
-        vol.Required(CONF_RECORD_LENGTH, default=DEFAULT_RECORD_LENGTH_SECONDS): NumberSelector(
-            NumberSelectorConfig(
-                min=MIN_RECORD_LENGTH_SECONDS,
-                max=MAX_RECORD_LENGTH_SECONDS,
-                step=1,
-                mode=NumberSelectorMode.BOX,
-                unit_of_measurement=UnitOfTime.SECONDS,
-            )
-        ),
         vol.Required(CONF_STATION_SESSIONS, default=DEFAULT_STATION_SESSIONS): NumberSelector(
             NumberSelectorConfig(
                 min=MIN_STATION_SESSIONS,
@@ -199,8 +168,52 @@ OPTIONS_SCHEMA = vol.Schema(
                 mode=NumberSelectorMode.BOX,
             )
         ),
+        vol.Required(CONF_RECORD_LENGTH, default=DEFAULT_RECORD_LENGTH_SECONDS): _whole(
+            UnitOfTime.SECONDS, MIN_RECORD_LENGTH_SECONDS, MAX_RECORD_LENGTH_SECONDS
+        ),
+        vol.Required(CONF_EVENT_HISTORY_DAYS, default=DEFAULT_EVENT_HISTORY_DAYS): _whole(
+            UnitOfTime.DAYS, 0, MAX_EVENT_HISTORY_DAYS
+        ),
+        vol.Required(CONF_EVENT_VIDEOS, default=False): BooleanSelector(),
+        vol.Optional(CONF_COUNTRY, default=""): CountrySelector(),
+        vol.Required(CONF_SESSION_PROBE, default=True): BooleanSelector(),
+        vol.Required(CONF_CLOUD_PUSH, default=False): BooleanSelector(),
+        vol.Optional(CONF_EXTRA_COUNTRIES, default=list): SelectSelector(
+            SelectSelectorConfig(
+                options=sorted(COUNTRIES), multiple=True, mode=SelectSelectorMode.DROPDOWN
+            )
+        ),
+        vol.Required(CONF_SCAN_REGIONS, default=False): BooleanSelector(),
     }
 )
+# The form's collapsible sections, in form order: each option of OPTIONS_SCHEMA in
+# exactly one, in schema order. All start collapsed.
+OPTIONS_SECTIONS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        OPTIONS_SECTION_DETECTIONS: (CONF_DETECTION_HOLD, CONF_ALARM_TIMEOUT),
+        OPTIONS_SECTION_CAMERA_IMAGES: (CONF_CAMERA_IMAGE, CONF_LIVE_SNAPSHOT),
+        OPTIONS_SECTION_LIVE_VIEW: (CONF_STATION_SESSIONS, CONF_RECORD_LENGTH),
+        OPTIONS_SECTION_HISTORY: (CONF_EVENT_HISTORY_DAYS, CONF_EVENT_VIDEOS),
+        OPTIONS_SECTION_EUFY_ACCOUNT: (CONF_COUNTRY, CONF_SESSION_PROBE, CONF_CLOUD_PUSH),
+        OPTIONS_SECTION_MORE_COUNTRIES: (CONF_EXTRA_COUNTRIES, CONF_SCAN_REGIONS),
+    }
+)
+
+
+def _options_form_schema() -> vol.Schema:
+    """OPTIONS_SCHEMA grouped into OPTIONS_SECTIONS; a section left out takes its defaults."""
+    fields = {str(marker): (marker, selector) for marker, selector in OPTIONS_SCHEMA.schema.items()}
+    return vol.Schema(
+        {
+            vol.Required(name, default=dict): section(
+                vol.Schema(dict(fields[key] for key in keys)), {"collapsed": True}
+            )
+            for name, keys in OPTIONS_SECTIONS.items()
+        }
+    )
+
+
+OPTIONS_FORM_SCHEMA = _options_form_schema()
 # Options applied to the running entry without a reload: the recording length is read
 # at each record action.
 _LIVE_OPTIONS = frozenset({CONF_STATION_SESSIONS, CONF_RECORD_LENGTH})
@@ -749,7 +762,7 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
-    """The entry's thirteen options, from the detection hold to sessions per HomeBase.
+    """The entry's thirteen options, in six collapsible sections, stored flat.
 
     Three things worth knowing about this class:
 
@@ -768,8 +781,8 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
     """
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Show the options, and save exactly the thirteen they offer: five bools, five ints, a
-        choice, a country and a country list.
+        """Show the options in their sections, and save exactly the thirteen they offer
+        flat: five bools, five ints, a choice, a country and a country list.
 
         The saved mapping is rebuilt from those thirteen keys rather than passing
         ``user_input`` through, so a submission carrying more than the schema asked
@@ -777,37 +790,44 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
         have already refused a duration outside its range.
         """
         if user_input is not None:
+            flat: dict[str, Any] = {
+                key: user_input[name][key]
+                for name, keys in OPTIONS_SECTIONS.items()
+                for key in keys
+            }
             data: dict[str, Any] = {
                 # Rounded, not cut: the selector does not enforce its step, so 9.7 s
                 # saves as 10, not 9. Half rounds up. The range was checked on the
                 # float and every range has whole-number bounds, so the rounded
                 # value stays inside it.
-                CONF_DETECTION_HOLD: int(user_input[CONF_DETECTION_HOLD] + 0.5),
-                CONF_ALARM_TIMEOUT: int(user_input[CONF_ALARM_TIMEOUT] + 0.5),
-                CONF_CAMERA_IMAGE: CameraImageMode(user_input[CONF_CAMERA_IMAGE]).value,
-                CONF_LIVE_SNAPSHOT: bool(user_input[CONF_LIVE_SNAPSHOT]),
-                CONF_SESSION_PROBE: bool(user_input[CONF_SESSION_PROBE]),
-                CONF_CLOUD_PUSH: bool(user_input[CONF_CLOUD_PUSH]),
-                CONF_COUNTRY: str(user_input.get(CONF_COUNTRY) or ""),
-                CONF_EXTRA_COUNTRIES: [
-                    str(code) for code in user_input.get(CONF_EXTRA_COUNTRIES) or []
-                ],
-                CONF_SCAN_REGIONS: bool(user_input[CONF_SCAN_REGIONS]),
-                CONF_EVENT_HISTORY_DAYS: int(user_input[CONF_EVENT_HISTORY_DAYS] + 0.5),
-                CONF_EVENT_VIDEOS: bool(user_input[CONF_EVENT_VIDEOS]),
-                CONF_RECORD_LENGTH: int(user_input[CONF_RECORD_LENGTH] + 0.5),
-                CONF_STATION_SESSIONS: int(user_input[CONF_STATION_SESSIONS] + 0.5),
+                CONF_DETECTION_HOLD: int(flat[CONF_DETECTION_HOLD] + 0.5),
+                CONF_ALARM_TIMEOUT: int(flat[CONF_ALARM_TIMEOUT] + 0.5),
+                CONF_CAMERA_IMAGE: CameraImageMode(flat[CONF_CAMERA_IMAGE]).value,
+                CONF_LIVE_SNAPSHOT: bool(flat[CONF_LIVE_SNAPSHOT]),
+                CONF_STATION_SESSIONS: int(flat[CONF_STATION_SESSIONS] + 0.5),
+                CONF_RECORD_LENGTH: int(flat[CONF_RECORD_LENGTH] + 0.5),
+                CONF_EVENT_HISTORY_DAYS: int(flat[CONF_EVENT_HISTORY_DAYS] + 0.5),
+                CONF_EVENT_VIDEOS: bool(flat[CONF_EVENT_VIDEOS]),
+                CONF_COUNTRY: str(flat.get(CONF_COUNTRY) or ""),
+                CONF_SESSION_PROBE: bool(flat[CONF_SESSION_PROBE]),
+                CONF_CLOUD_PUSH: bool(flat[CONF_CLOUD_PUSH]),
+                CONF_EXTRA_COUNTRIES: [str(code) for code in flat.get(CONF_EXTRA_COUNTRIES) or []],
+                CONF_SCAN_REGIONS: bool(flat[CONF_SCAN_REGIONS]),
             }
             if self._login_country_changed(data):
                 # The reload below logs in with the new country and lists every scope.
                 runtime.request_rescan_at_setup(self.hass, self.config_entry.entry_id)
             self._async_apply_live_options(data)
             return self.async_create_entry(data=data)
+        stored = {CONF_COUNTRY: self.hass.config.country, **self.config_entry.options}
         return self.async_show_form(
             step_id=OPTIONS_STEP_INIT,
             data_schema=self.add_suggested_values_to_schema(
-                OPTIONS_SCHEMA,
-                {CONF_COUNTRY: self.hass.config.country, **self.config_entry.options},
+                OPTIONS_FORM_SCHEMA,
+                {
+                    name: {key: stored[key] for key in keys if key in stored}
+                    for name, keys in OPTIONS_SECTIONS.items()
+                },
             ),
             description_placeholders={
                 **_camera_image_placeholders(),

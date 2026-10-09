@@ -12,7 +12,7 @@
         "data_description": {
           "email": "The email address of the eufy account that owns the HomeBase, or of an account the home is shared with.",
           "password": "Used for this sign-in. eufy limits how often an account may sign in, so Home Assistant reuses the stored session afterwards instead of signing in again.",
-          "country": "The country your eufy app signs in with (on the app's sign-in screen). eufy shows a device only to a sign-in with the country it was set up or shared under, so with another country the account can list no devices. Empty means Home Assistant's country."
+          "country": "The country your eufy app signs in with (shown on its sign-in screen). eufy lists a device only under the country it was set up or shared under. Empty means Home Assistant's country."
         }
       },
       "reauth_confirm": {
@@ -69,37 +69,82 @@
   "options": {
     "step": {
       "init": {
-        "title": "Detections, alarm, cameras and sessions",
-        "description": "The HomeBase announces a detection but never its end, and normally ends an alarm itself; the first two settings below cover both.",
-        "data": {
-          "detection_hold": "Detection hold (seconds)",
-          "alarm_timeout": "Alarm safety-net timeout (minutes)",
-          "camera_image": "Event image",
-          "live_snapshot": "Live snapshot for cameras without a detection image",
-          "session_probe": "Check the eufy session every 6 hours",
-          "cloud_push": "Cloud push for cameras without a HomeBase",
-          "country": "eufy sign-in country",
-          "extra_countries": "Extra eufy sign-in countries",
-          "scan_regions": "Look for devices under every sign-in country on each refresh",
-          "event_history_days": "Event history (days)",
-          "event_videos": "Save event videos",
-          "record_length": "Recording length (seconds)",
-          "station_sessions": "Sessions per HomeBase"
-        },
-        "data_description": {
-          "detection_hold": "From 5 to 300 seconds, 10 by default. The HomeBase announces a detection but never its end, so a detection sensor turns itself off this long after the detection's own time. A detection that reaches Home Assistant after its hold has run out still fires its event but leaves the sensor off.",
-          "alarm_timeout": "From 1 to 60 minutes, 10 by default. A safety net only: the HomeBase normally ends an alarm itself and says so. If that never arrives, the alarm panel stops showing Triggered or Pending after this long, shows the guard mode the HomeBase last reported, and reads it again.",
-          "camera_image": "Chooses the image a camera shows for a detection. Thumbnail, then HD is the default: after a detection a camera first shows the event's 640×360 thumbnail, in about {thumbnail_seconds} s, then the first frame of the event's recording at the recording's resolution, in about {hd_seconds} s plus decoding. Thumbnail only shows just the thumbnail and never reads the recording. HD only shows just the recording's frame with nothing lower in between, so a detection without a stored recording shows no image. Each camera's Refresh event image button follows this choice for the newest recording: the thumbnail with Thumbnail only, otherwise the recording's frame. None of the three wakes a camera, and none changes Capture live image, which always wakes the camera for a live picture. Saving a change reloads the integration, and every camera then shows no image until its next detection or button press.",
-          "live_snapshot": "Off by default. A camera shows the still of its own latest detection. With this on, a camera that has no detection image yet shows one live picture instead, taken at most once every 5 minutes per camera. Taking it wakes a battery camera, which costs battery.",
-          "session_probe": "On by default. A minute after the integration starts, and then every 6 hours, Home Assistant asks eufy once for the account's device list with the saved session. This is not a sign-in. If another app or device has signed in with the account and ended Home Assistant's session, the \"eufy ended Home Assistant's session\" repair shows within that time instead of at the next command that needs eufy. With this off, a kick-out is noticed only when a command next needs eufy or at the next restart.",
-          "cloud_push": "Off by default. Needed for a camera without a HomeBase, such as the standalone battery camera T8170 (Battery SoloCam), to report its detections: such a camera sleeps between commands and sends them only through eufy's cloud. With this on, Home Assistant listens for eufy's push messages, like the eufy app on a phone does; the app keeps working. Detections from a HomeBase still arrive over your local network, and one detection that arrives both ways fires once. Push messages pass through eufy's and Google's servers, and arrive late or not at all while that connection is down. Saving a change reloads the integration.",
-          "country": "The country your eufy app signs in with (on the app's sign-in screen). eufy shows a device only to a sign-in with the country it was set up or shared under, so with another country the account can list no devices. Empty means Home Assistant's country. Saving a change reloads the integration and asks eufy once for the devices listed under the new country; that can cost a sign-in.",
-          "extra_countries": "Empty by default. eufy lists a home shared with this account only to a sign-in with the country of the account that shared it. Add that country here when it differs from the sign-in country. Each extra country costs one more sign-in, on that country's eufy region, and eufy allows only a few sign-ins per account per day. Saving a change reloads the integration and asks eufy once for the devices under every country.",
-          "scan_regions": "Off by default. Home Assistant asks for devices under the sign-in country and each extra country when the account is added or a country is changed; after that, one that listed no devices is not asked again. With this on, every device list Home Assistant fetches asks each of them, so a device added under one that listed none shows up after Refresh device list. That includes the session check and, while a camera without a HomeBase is set up, an hourly refresh. Asking one whose eufy session has run out signs in to it, and eufy allows only a few sign-ins per account per day. Saving a change reloads the integration.",
-          "event_history_days": "From 0 to 365 days, 7 by default. Every image a camera or preset shows, and every saved video, is also saved as a file under {history_path}, in a folder per camera, named with the date, time, camera name and what it shows (for example 2026-09-29_08-35-59_Front_door_person.jpg). Browse them under Media > My media. Days older than this are deleted; 0 saves nothing. In Home Assistant Container the media folder is only kept across container updates when a host directory is mounted at /media.",
-          "event_videos": "Off by default. Also copies each recording a HomeBase makes for one of its cameras from the moment this is switched on into the event history as an MP4, after the recording has finished, named like the event's image so the two sit side by side. Older recordings stay on the HomeBase; play or save one from the camera card's Station list. The HomeBase plays it off its own storage: no camera is woken. Needs Event history above 0 days; the videos are kept and deleted with the images, and take far more space than them. Not for a camera without a HomeBase, which keeps no recordings there.",
-          "record_length": "From 5 to 300 seconds, 30 by default. How long a clip of the Record action is when the action names no duration. Recording wakes a battery camera for that long. A change applies at once, without a reload.",
-          "station_sessions": "From {min_sessions} to {max_sessions}, {default_sessions} by default. How many connections Home Assistant holds to each HomeBase. One carries detections and the first live view, one fetches event images, and each live view beyond the first uses one extra session, so the default allows {default_live} cameras of one HomeBase to be watched at once. A HomeBase holds about {max_sessions} sessions in total across all apps and Home Assistant instances; past that it disconnects one of them, the eufy app included. Two Home Assistant instances on one HomeBase must share: give a test instance a small value, such as 2 (one live view at a time). A live view past the limit waits briefly for another live view of that HomeBase to close, and is refused with no picture if none does. A change applies at once, without a reload, and ends no running live view."
+        "title": "eufy Home Security options",
+        "description": "A change reloads the integration, except Sessions per HomeBase and Recording length, which apply at once.",
+        "sections": {
+          "detections": {
+            "name": "Detections and alarm",
+            "description": "The HomeBase announces a detection but never its end, and normally ends an alarm itself.",
+            "data": {
+              "detection_hold": "Detection hold (seconds)",
+              "alarm_timeout": "Alarm safety-net timeout (minutes)"
+            },
+            "data_description": {
+              "detection_hold": "5–300 s, 10 by default. A detection sensor turns off this long after the detection's own time. A detection that arrives after its hold has run out still fires its event.",
+              "alarm_timeout": "1–60 min, 10 by default. A safety net for an alarm whose end the HomeBase never reports: the panel then leaves Triggered or Pending, shows the guard mode last reported and reads it again."
+            }
+          },
+          "camera_images": {
+            "name": "Camera images",
+            "description": "What a camera shows for a detection.",
+            "data": {
+              "camera_image": "Event image",
+              "live_snapshot": "Live snapshot for cameras without a detection image"
+            },
+            "data_description": {
+              "camera_image": "Thumbnail, then HD (default): the event's 640×360 thumbnail in about {thumbnail_seconds} s, then the first frame of its recording in about {hd_seconds} s plus decoding. Thumbnail only: never reads the recording. HD only: the recording's frame alone, so an event without a recording shows no image. Refresh event image follows this choice. None of them wakes a camera; Capture live image always does. After a change, cameras show no image until their next detection or button press.",
+              "live_snapshot": "Off by default. A camera with no detection image yet shows one live picture instead, at most every 5 minutes. Wakes a battery camera, which costs battery."
+            }
+          },
+          "live_view": {
+            "name": "Live view and recording",
+            "data": {
+              "station_sessions": "Sessions per HomeBase",
+              "record_length": "Recording length (seconds)"
+            },
+            "data_description": {
+              "station_sessions": "{min_sessions}–{max_sessions}, {default_sessions} by default. Connections held to each HomeBase: one for detections and the first live view, one for event images, one more per further live view, so {default_live} cameras at once by default. A HomeBase holds about {max_sessions} across all apps and Home Assistant instances and drops one past that, the eufy app's included; give a second instance a small value such as 2. A live view past the limit waits briefly, then is refused. Ends no running live view.",
+              "record_length": "5–300 s, 30 by default. Length of a Record clip when the action names none. Wakes a battery camera for that long."
+            }
+          },
+          "history": {
+            "name": "Event history",
+            "description": "Images and videos are saved as files under {history_path}, a folder per camera; browse them under Media > My media.",
+            "data": {
+              "event_history_days": "Event history (days)",
+              "event_videos": "Save event videos"
+            },
+            "data_description": {
+              "event_history_days": "0–365, 7 by default. Saves every image a camera or preset shows, named with date, time, camera and what it shows. Older days are deleted; 0 saves nothing. In Home Assistant Container, mount a host directory at /media to keep them across updates.",
+              "event_videos": "Off by default. Copies each recording a HomeBase makes from now on into the event history as an MP4, next to its image. Played from the HomeBase's storage, so no camera wakes. Needs Event history above 0 days; videos take far more space than images. Not for a camera without a HomeBase."
+            }
+          },
+          "eufy_account": {
+            "name": "eufy account",
+            "description": "Home Assistant reuses its saved eufy session; eufy allows only a few sign-ins per account per day.",
+            "data": {
+              "country": "eufy sign-in country",
+              "session_probe": "Check the eufy session every 6 hours",
+              "cloud_push": "Cloud push for cameras without a HomeBase"
+            },
+            "data_description": {
+              "country": "The country your eufy app signs in with (shown on its sign-in screen). eufy lists a device only under the country it was set up or shared under. Empty means Home Assistant's country. A change asks eufy once for the devices, which can cost a sign-in.",
+              "session_probe": "On by default. A minute after start and every 6 hours, one device-list read with the saved session, never a sign-in. When another app or device has ended Home Assistant's session, the repair then shows within that time. Off: noticed at the next command that needs eufy or the next restart.",
+              "cloud_push": "Off by default. Needed for the detections of a camera without a HomeBase, such as the T8170 Battery SoloCam, which sends them only through eufy's cloud. Home Assistant listens for eufy's push messages like the phone app, which keeps working. HomeBase detections still arrive locally, and one that arrives both ways fires once. The messages pass through eufy's and Google's servers and can arrive late or not at all."
+            }
+          },
+          "more_countries": {
+            "name": "Extra countries (experimental)",
+            "description": "Experimental and little tested. Each extra country is one more sign-in to the account, on that country's eufy region: it can end Home Assistant's eufy session or the eufy app's, and it spends sign-ins from eufy's small daily limit. Use it only for a shared home that is otherwise missing, and remove it if the account keeps being signed out.",
+            "data": {
+              "extra_countries": "Extra eufy sign-in countries",
+              "scan_regions": "Look for devices under every sign-in country on each refresh"
+            },
+            "data_description": {
+              "extra_countries": "Empty by default. eufy lists a home shared with this account only to a sign-in with the country of the account that shared it. Add that country when it differs from the sign-in country. A change asks eufy once for the devices under every country.",
+              "scan_regions": "Off by default. A sign-in country that listed no devices is not asked again. On: every device list asks each of them (Refresh device list, the session check, the hourly refresh for a camera without a HomeBase), so a device added later shows up; asking one whose session has run out signs in to it."
+            }
+          }
         }
       }
     }
