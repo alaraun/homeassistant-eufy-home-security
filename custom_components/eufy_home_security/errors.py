@@ -86,6 +86,7 @@ from .const import (
     EXC_ON_DEMAND_UNREACHABLE,
     EXC_PAN_TILT_NOT_APPLIED,
     EXC_PAN_TILT_UNSUPPORTED,
+    EXC_PRESET_IMAGE_INVALID,
     EXC_PRESET_NOT_DELETED,
     EXC_PRESET_NOT_SAVED,
     EXC_PRESET_NOT_SET,
@@ -782,6 +783,15 @@ def preset_slot_unknown(index: int) -> ServiceValidationError:
         translation_domain=DOMAIN,
         translation_key=EXC_PRESET_SLOT_UNKNOWN,
         translation_placeholders={"index": str(index)},
+    )
+
+
+def preset_image_invalid(max_mb: int) -> ServiceValidationError:
+    """A preset picture that is no JPEG or larger than ``max_mb`` MB; nothing stored."""
+    return ServiceValidationError(
+        translation_domain=DOMAIN,
+        translation_key=EXC_PRESET_IMAGE_INVALID,
+        translation_placeholders={"max_mb": str(max_mb)},
     )
 
 

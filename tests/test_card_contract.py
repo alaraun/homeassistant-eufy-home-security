@@ -9,6 +9,7 @@ leave a card row or button silently empty fails this module.
 from __future__ import annotations
 
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -17,6 +18,7 @@ from typing import Final
 
 import pytest
 import yaml
+from eufy_home_security import MAX_PRESET_SLOTS
 from eufy_home_security.devices import Scope, SettingControl
 from eufy_home_security.devices.model_settings import (
     bundled_codes,
@@ -24,7 +26,7 @@ from eufy_home_security.devices.model_settings import (
     settings_of,
 )
 
-from custom_components.eufy_home_security import card, const
+from custom_components.eufy_home_security import card, const, preset_upload
 
 _ROOT: Final = Path(__file__).resolve().parent.parent / "custom_components" / "eufy_home_security"
 _SOURCE: Final = card.CARD_FILE.read_text(encoding="utf-8")
@@ -192,6 +194,26 @@ def test_the_station_list_fields_the_card_sends_are_accepted() -> None:
     accepted = {name or "entity_id" for name in accepted}
     missing = sorted(sent - accepted)
     assert not missing, f"the card sends fields the list command refuses: {missing}"
+
+
+def test_the_preset_picture_the_card_sends_fits_the_command() -> None:
+    """Save view sends ``PRESET_IMAGE_WS`` with fields its schema takes, at most the size
+    it keeps, and counts the library's preset slots."""
+    assert _names_ws("PRESET_IMAGE_WS") == preset_upload.WS_PRESET_IMAGE
+    literal = re.search(r"\{ type: PRESET_IMAGE_WS, ([^}]*) \}", _SOURCE)
+    assert literal, "the card's preset picture request"
+    sent = set(re.findall(r"(\w+):", literal.group(1)))
+    schema = getattr(preset_upload._ws_preset_image, "_ws_schema")  # noqa: B009
+    accepted = {str(key) for key in schema.schema} - {"type", "id"}
+    assert sent == accepted
+    size = re.search(r"const PRESET_PIC_MAX = ([\d *]+);", _SOURCE)
+    assert size, "PRESET_PIC_MAX"
+    assert (
+        math.prod(int(f) for f in size.group(1).split("*")) == preset_upload.PRESET_IMAGE_MAX_BYTES
+    )
+    slots = re.search(r"const PRESET_SLOTS = (\d+);", _SOURCE)
+    assert slots, "PRESET_SLOTS"
+    assert int(slots.group(1)) == MAX_PRESET_SLOTS
 
 
 def _names_ws(name: str) -> str:
