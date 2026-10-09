@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.2.2](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.2.1...v0.2.2) (2026-10-09)
+
+
+### Features
+
+* live video for every camera the library can open on its station (library 0.3.4) ([#57](https://github.com/alaraun/homeassistant-eufy-home-security/issues/57)) ([9dfbf06](https://github.com/alaraun/homeassistant-eufy-home-security/commit/9dfbf06f3bb1d9d1ed58523a41b171a8ad80342e))
+
 ## [0.2.1](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.2.0...v0.2.1) (2026-10-09)
 
 
