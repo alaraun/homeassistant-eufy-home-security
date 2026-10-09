@@ -9,14 +9,16 @@ Two websocket commands and one view, registered once per Home Assistant instance
   back from today (default the entry's history days, 1-30). With ``limit`` or
   ``before`` the answer is one page of ``Station.async_list_recordings``: up to
   ``limit`` rows (default 10) older than the cursor ``before``, the library asking the
-  days from today (or the cursor's day) backwards only until the page is full. A full
-  page says ``more`` (the next one may be empty) and ``next``, an opaque text cursor
-  for it; a short page ends the window. ``day`` (``YYYY-MM-DD``) pages only that day's
-  recordings: the window reaches back to it (up to ``MAX_LIST_DAYS``; an older day lists
-  nothing). Without ``limit``, ``before`` or ``day``, the whole window in one answer
-  (``more`` False). A listing or page is reused for ``LIST_CACHE_SECONDS`` per
-  camera and arguments, and identical queries in flight share one. A standalone
-  camera keeps no recordings on a station: ``supported`` False, nothing is queried.
+  days from today (or the cursor's day) backwards until the page is full, ``PAGE_DAYS``
+  days at most. A full page says ``more`` (the next one may be empty) and ``next``, an
+  opaque text cursor for it; so does a short page with days of the window left (``next``
+  then names the day before the ones it asked); any other short page ends the window.
+  ``day`` (``YYYY-MM-DD``) pages only that day's recordings: the window reaches back to
+  it (up to ``MAX_LIST_DAYS``; an older day lists nothing). Without ``limit``,
+  ``before`` or ``day``, the whole window in one answer (``more`` False). A listing or
+  page is reused for ``LIST_CACHE_SECONDS`` per camera and arguments, and identical
+  queries in flight share one. A standalone camera keeps no recordings on a station:
+  ``supported`` False, nothing is queried.
 - ``eufy_home_security/recordings/fetch`` ``{entity_id, record_id}`` stores one
   recording in the event history exactly as the event-videos sync does
   (``recordings.StoredRecordings``: same name, same Store, so the sync never fetches
@@ -102,6 +104,13 @@ MAX_LIST_DAYS: Final = 30
 PAGE_LIMIT: Final = 10
 MIN_PAGE_LIMIT: Final = 1
 MAX_PAGE_LIMIT: Final = 50
+# The days one page asks at most (one station query each).
+PAGE_DAYS: Final = 7
+# A page cursor naming a day: ``YYYYMMDD``; a record id is that day times
+# ``_RECORD_DAY_FACTOR`` plus a sequence.
+_DAY_CURSOR_FORMAT: Final = "%Y%m%d"
+_DAY_CURSOR_LEN: Final = 8
+_RECORD_DAY_FACTOR: Final = 100_000
 # How long a thumbnail's signed path is valid.
 THUMB_SIGN_SECONDS: Final = 3600
 # The thumbnail LRU: at most this many stills, and none larger than this.
@@ -124,25 +133,57 @@ def _clock() -> float:
     return time.monotonic()
 
 
-def _cursor(value: Any) -> int:
-    """A page cursor as ``next`` gave it: the previous page's last record id, as text."""
+def _cursor(value: Any) -> int | date:
+    """A page cursor as ``next`` gave it: a record id, or a day as ``YYYYMMDD``."""
     text = str(value)
     if not (text.isascii() and text.isdigit()):
         raise vol.Invalid("expected the cursor a page's next named")
-    return int(text)
+    if len(text) != _DAY_CURSOR_LEN:
+        return int(text)
+    try:
+        return _day_of(text)
+    except ValueError as err:
+        raise vol.Invalid("expected the cursor a page's next named") from err
+
+
+def _day_of(text: str) -> date:
+    """The day ``YYYYMMDD`` names; ValueError for none."""
+    if len(text) != _DAY_CURSOR_LEN:
+        raise ValueError(text)
+    return date(int(text[:4]), int(text[4:6]), int(text[6:]))
+
+
+def _cursor_text(cursor: int | date) -> str:
+    return cursor.strftime(_DAY_CURSOR_FORMAT) if isinstance(cursor, date) else str(cursor)
+
+
+def _page_days(days: int, before: int | date | None, day: date | None) -> tuple[date, date, date]:
+    """A page's first day of the window, the day it starts at and the oldest day it asks."""
+    today = datetime.now().astimezone().date()
+    window_first = today - timedelta(days=days - 1)
+    if isinstance(before, int):
+        try:
+            start = _day_of(str(before // _RECORD_DAY_FACTOR))
+        except ValueError:
+            start = today  # the library refuses the cursor
+    else:
+        start = before or day or today
+    start = min(start, today)
+    return window_first, start, max(window_first, start - timedelta(days=PAGE_DAYS - 1))
 
 
 # A listing's arguments: camera serial, days, limit, before, day (all None: the whole window).
-type _ListKey = tuple[str, int, int | None, int | None, date | None]
+type _ListKey = tuple[str, int, int | None, int | date | None, date | None]
 
 
 @dataclass(frozen=True, slots=True)
 class Page:
-    """One page of a camera's recordings, newest first; ``next`` is its last record id."""
+    """One page of a camera's recordings, newest first; ``next`` is its last record id,
+    or the day before the ones it asked."""
 
     rows: list[HistoryRecord]
     more: bool
-    next: int | None
+    next: int | date | None
 
 
 class RecordingError(Exception):
@@ -208,20 +249,25 @@ class StationRecordings:
         *,
         days: int,
         limit: int,
-        before: int | None,
+        before: int | date | None,
         day: date | None = None,
     ) -> Page:
-        """Up to ``limit`` of the camera's recordings older than record ``before``.
+        """Up to ``limit`` of the camera's recordings older than ``before``.
 
-        One ``Station.async_list_recordings`` call within the window of ``days``; with
-        ``day`` only that day's recordings (the host's local day, as the station keeps).
-        A full page may hold more after it (the library cannot tell before asking); a
-        short one ends the window.
+        ``before`` is a record id or a day (its recordings and older ones). One
+        ``Station.async_list_recordings`` call within the window of ``days``, asking
+        ``PAGE_DAYS`` days at most; with ``day`` only that day's recordings (the host's
+        local day, as the station keeps). A full page may hold more after it (the
+        library cannot tell before asking); a short one ends the window unless days of
+        it are left.
         """
         rows = await self._async_listing((camera.device_sn, days, limit, before, day), camera)
-        if len(rows) < limit:
-            return Page(rows, False, None)
-        return Page(rows, True, rows[-1].record_id)
+        if len(rows) >= limit:
+            return Page(rows, True, rows[-1].record_id)
+        window_first, _start, oldest = _page_days(days, before, day)
+        if oldest > window_first:
+            return Page(rows, True, oldest - timedelta(days=1))
+        return Page(rows, False, None)
 
     async def _async_listing(self, key: _ListKey, camera: _Camera) -> list[HistoryRecord]:
         """The listing ``key`` names; cached and coalesced."""
@@ -239,8 +285,15 @@ class StationRecordings:
 
     async def _async_query(self, key: _ListKey, camera: _Camera) -> list[HistoryRecord]:
         _sn, days, limit, before, day = key
-        # One day: the walk starts at it and stops before the day before it
-        since = None if day is None else datetime.combine(day, dt_time.min).astimezone()
+        since: datetime | None = None
+        until = day
+        cursor = before if isinstance(before, int) else None
+        if limit is not None:
+            # A page: the walk starts at its day and stops before the day before its oldest
+            _first, start, oldest = _page_days(days, before, day)
+            since = datetime.combine(oldest, dt_time.min).astimezone()
+            if isinstance(before, date):
+                until = start
         station = camera.station
         if not station.connected:
             raise RecordingError(ERR_UNAVAILABLE, "The HomeBase is not connected")
@@ -248,7 +301,12 @@ class StationRecordings:
         try:
             async with asyncio.timeout(LIST_TIMEOUT_SECONDS):
                 rows = await station.async_list_recordings(
-                    camera.device_sn, days=days, limit=limit, before=before, until=day, since=since
+                    camera.device_sn,
+                    days=days,
+                    limit=limit,
+                    before=cursor,
+                    until=until,
+                    since=since,
                 )
         except ValueError as err:
             # Raised before anything is sent: a cursor that names no recording's day.
@@ -514,7 +572,7 @@ async def _ws_list(
             "supported": True,
             "recordings": result,
             "more": page.more,
-            "next": str(page.next) if page.next is not None else None,
+            "next": _cursor_text(page.next) if page.next is not None else None,
         },
     )
 

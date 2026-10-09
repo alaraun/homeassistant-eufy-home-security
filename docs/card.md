@@ -91,6 +91,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   - The calendar button beside the filter goes to a day (HA's date picker): only that day's files show, newest
     first, on every sub-tab (Station lists that day's recordings from the HomeBase, up to 30 days back); ✕ or the
     picker's Clear goes back to the newest.
+  - Station asks the HomeBase a week of days per page, back as far as **Event history** reaches (30 days at
+    most); `Show more` goes on from where the page stopped.
   - Station rows have **Play** and **Save**: both copy the recording from the HomeBase into the history folder
     (5–10 s each, one at a time); Play then plays it. A standalone camera has no Station sub-tab.
   - Files come from the integration's history in HA's media folder (`Media › eufy_home_security › <camera name>`).

@@ -319,8 +319,8 @@ async def test_a_page_asks_only_the_days_it_needs_and_names_where_the_next_start
     seed_warm_cache: Callable[..., None],
 ) -> None:
     """``limit`` rows newest first from today backwards: no day after the page filled is
-    asked; ``next`` continues below the page's last row, in its day; the last page
-    reaches the window's first day, no day before it, and says ``more`` False."""
+    asked; ``next`` continues below the page's last row, in its day; a short page asks
+    ``PAGE_DAYS`` days and no more."""
     today, day_before, two_back = _day_rows(0, 3), _day_rows(1, 4), _day_rows(2, 5)
     old = _day_rows(5, 2)
     fake_station.rows = [*today, *day_before, *two_back, *old, *_day_rows(1, 2, device_sn=OTHER_SN)]
@@ -346,9 +346,10 @@ async def test_a_page_asks_only_the_days_it_needs_and_names_where_the_next_start
     fake_station.history_queries.clear()
     rest = await _list(client, entity_id, days=30, limit=50, before=second["next"])
 
+    page_days = station_recordings.PAGE_DAYS
     assert [r["record_id"] for r in rest["recordings"]] == ids[10:]
-    assert (rest["more"], rest["next"]) == (False, None)
-    assert _queried_days(fake_station) == [_day(back) for back in range(2, 30)]
+    assert (rest["more"], rest["next"]) == (True, _day(2 + page_days).strftime("%Y%m%d"))
+    assert _queried_days(fake_station) == [_day(back) for back in range(2, 2 + page_days)]
     assert _manager(entry).stats.list_queries == 3
     await _unload(hass, entry)
 
@@ -409,6 +410,46 @@ async def test_a_page_stays_inside_the_days_window(
 
     assert (after["recordings"], after["more"], after["next"]) == ([], False, None)
     assert _queried_days(fake_station) == [_day(1)]
+    await _unload(hass, entry)
+
+
+async def test_a_page_asks_at_most_page_days_and_names_the_day_before_them(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A camera with few recordings: a page asks ``PAGE_DAYS`` days at most; a short page
+    with older days left in the window says ``more`` and ``next`` names the day before the
+    days it asked, the page from it asks the next ones, the page reaching the window's
+    first day ends the list."""
+    page_days = station_recordings.PAGE_DAYS
+    rare = _day_rows(page_days + 2, 1)
+    fake_station.rows = [*_day_rows(1, 3, device_sn=OTHER_SN), *rare]
+    entry = await _set_up(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    entity_id = _camera(hass)
+    days = 2 * page_days + 3
+
+    first = await _list(client, entity_id, days=days, limit=10)
+
+    assert first["recordings"] == []
+    assert (first["more"], first["next"]) == (True, _day(page_days).strftime("%Y%m%d"))
+    assert _queried_days(fake_station) == [_day(back) for back in range(page_days)]
+
+    fake_station.history_queries.clear()
+    second = await _list(client, entity_id, days=days, limit=10, before=first["next"])
+
+    assert [r["record_id"] for r in second["recordings"]] == [rare[0]["record_id"]]
+    assert (second["more"], second["next"]) == (True, _day(2 * page_days).strftime("%Y%m%d"))
+    assert _queried_days(fake_station) == [_day(back) for back in range(page_days, 2 * page_days)]
+
+    fake_station.history_queries.clear()
+    last = await _list(client, entity_id, days=days, limit=10, before=second["next"])
+
+    assert (last["recordings"], last["more"], last["next"]) == ([], False, None)
+    assert _queried_days(fake_station) == [_day(back) for back in range(2 * page_days, days)]
     await _unload(hass, entry)
 
 
@@ -488,6 +529,7 @@ async def test_a_page_request_out_of_bounds_is_refused(
         {"before": "last-week"},
         {"before": "2000-01-02/12"},  # hygiene: ok
         {"before": "12345"},
+        {"before": "20261399"},
         {"day": "yesterday"},  # hygiene: ok
     ):
         reply = await _ws(client, station_recordings.WS_LIST, entity_id=entity_id, **fields)
