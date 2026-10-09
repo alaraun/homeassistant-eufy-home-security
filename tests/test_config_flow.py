@@ -173,6 +173,93 @@ def test_flow_error_key_maps_every_library_error(error: EufySecurityError, key: 
     assert errors.flow_error_key(error) == key
 
 
+_INTEGRATION_LOGGER = "custom_components.eufy_home_security"
+
+
+def _integration_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        r
+        for r in caplog.records
+        if r.name.startswith(_INTEGRATION_LOGGER) and r.levelno >= logging.WARNING
+    ]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        CommunicationError("sentinel-down"),
+        EufySecurityError("sentinel-other"),
+    ],
+)
+async def test_a_sign_in_that_cannot_reach_eufy_logs_the_library_error(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    caplog: pytest.LogCaptureFixture,
+    error: EufySecurityError,
+) -> None:
+    """The catch-all form error names its cause in the log: error type and message."""
+    fake_cloud.login_error = error
+
+    with caplog.at_level(logging.WARNING):
+        result = await _submit(hass, SYNTHETIC.email)
+
+    assert result["errors"] == {"base": "cannot_connect"}
+    warnings = _integration_warnings(caplog)
+    assert len(warnings) == 1
+    assert type(error).__name__ in warnings[0].getMessage()
+    assert str(error) in warnings[0].getMessage()
+    assert SYNTHETIC.password not in caplog.text
+
+
+async def test_a_device_list_failure_after_sign_in_is_logged(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failure after a successful sign-in shows the same form error and is logged too."""
+    real_answer = fake_cloud._answer
+
+    async def device_list_down(path: str, payload: Any) -> Any:
+        if path == cloud_const.DEVICES_PATH:
+            raise CommunicationError("sentinel-device-list")
+        return await real_answer(path, payload)
+
+    monkeypatch.setattr(fake_cloud, "_answer", device_list_down)
+
+    with caplog.at_level(logging.WARNING):
+        result = await _submit(hass, SYNTHETIC.email)
+
+    assert result["errors"] == {"base": "cannot_connect"}
+    assert any("sentinel-device-list" in r.getMessage() for r in _integration_warnings(caplog))
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        AuthenticationError("rejected"),
+        LoginLimitedError(retry_after=60),
+        SessionReplacedError(),
+    ],
+)
+async def test_a_sign_in_error_with_its_own_form_text_logs_no_warning(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    caplog: pytest.LogCaptureFixture,
+    error: EufySecurityError,
+) -> None:
+    """A wrong password or a limit is explained by the form; the log stays quiet."""
+    fake_cloud.login_error = error
+
+    with caplog.at_level(logging.WARNING):
+        await _submit(hass, SYNTHETIC.email)
+
+    assert _integration_warnings(caplog) == []
+
+
 async def test_a_failed_add_forgets_the_password_but_keeps_the_login_record(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
