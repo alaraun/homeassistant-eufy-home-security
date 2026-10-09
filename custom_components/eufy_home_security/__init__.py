@@ -8,7 +8,7 @@ import logging
 from collections.abc import Iterable
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_EMAIL, EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
@@ -38,6 +38,7 @@ from . import (
     runtime,
     session_probe,
     small_images,
+    stale_devices,
     station_recordings,
     still_cache,
     streaming,
@@ -402,6 +403,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         manufacturer="eufy",
         name=ACCOUNT_DEVICE_NAME,
     )
+    # The library caches only a list every asked scope answered, so a cached list is whole.
+    stale_devices.async_remove_unlisted(hass, entry, runtime.listed_devices(eufy))
 
     start_errors = await eufy.async_start(p2p=True, push=False)
 
@@ -529,6 +532,20 @@ async def async_unload_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> boo
         # later push would go to the fallback bus event until a restart.
         router.async_start_consuming()
     return unloaded
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, entry: EufyConfigEntry, device: dr.DeviceEntry
+) -> bool:
+    """Let the user delete a device the account's device list no longer names.
+
+    Refused while the entry is not loaded: without a device list nothing is known gone.
+    """
+    if entry.state is not ConfigEntryState.LOADED:
+        return False
+    return stale_devices.unlisted(
+        dr.async_get(hass), entry.entry_id, device, runtime.listed_devices(entry.runtime_data.eufy)
+    )
 
 
 # Every platform a setting entity can be built on (settings.setting_platform).

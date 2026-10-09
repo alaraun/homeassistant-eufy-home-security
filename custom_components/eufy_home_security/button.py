@@ -25,8 +25,9 @@ in the lowest free slot; a full camera refuses it).
 **Refresh device list** sits on the account's service device and fetches eufy's
 device list once per press (a warm start never does: eufy locks the account after
 repeated sign-ins). A press during a refresh or a pending reload makes no call. A
-changed station or paired-device list reloads the entry once; a failure raises a
-translated error and goes to reauth or the account's repair issue.
+changed station or paired-device list reloads the entry once; the devices the list no
+longer names are removed. A failure raises a translated error and
+goes to reauth or the account's repair issue.
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ from eufy_home_security import (
     redact_serial,
 )
 
-from . import detections, errors, presets, ptz, runtime
+from . import detections, errors, presets, ptz, runtime, stale_devices
 from .const import (
     CAPTURE_LIVE_IMAGE_KEY,
     CAPTURE_PRESET_KEY,
@@ -344,10 +345,13 @@ class EufyRefreshDeviceListButton(ButtonEntity):
         when the entry's region option is on; a region that listed none is otherwise
         not asked. Never retried. A changed paired-device list reaches the router as
         ``DevicesChanged`` during the fetch, and the router schedules the reload; a
-        station added or removed is found here by comparing the served stations with
-        the client's. Nothing is awaited after the fetch when a reload follows, so the
-        reload cannot unload this entity mid-press; with no station before or after,
-        the pending invitations are read for their repair.
+        station added is found here by comparing the served stations with the
+        client's. Every device of the entry the list no longer names is removed; a
+        station that left it goes at the entry's next setup, as the client keeps the
+        stations it built. Only registries are touched after the
+        fetch when a reload follows, so the reload cannot unload this entity mid-press;
+        with no station before or after, the pending invitations are read for their
+        repair.
         """
         runtime_data = self._entry.runtime_data
         router = runtime_data.router
@@ -369,6 +373,9 @@ class EufyRefreshDeviceListButton(ButtonEntity):
             raise errors.device_list_refresh_failed(self.hass, self._entry, err) from err
         finally:
             self._refreshing = False
+        stale_devices.async_remove_unlisted(
+            self.hass, self._entry, runtime.listed_devices(runtime_data.eufy)
+        )
         after = set(runtime_data.eufy.stations)
         if after != before:
             _LOGGER.debug(
