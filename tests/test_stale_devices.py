@@ -2,7 +2,7 @@
 
 At every setup and at each Refresh device list press, also from the cached list (the
 library caches only a whole list and leaves out removed scopes). A device eufy lists
-but the client skips stays, so does one another entry holds, and a list naming no
+but the client skips stays, so does another entry's, and a list naming no
 device removes nothing. The user may delete a device by hand only once
 the list no longer names it.
 """
@@ -247,23 +247,29 @@ async def test_only_a_device_the_list_no_longer_names_can_be_deleted(
     assert not await async_remove_config_entry_device(hass, entry, stale)
 
 
-def test_a_device_another_entry_also_holds_is_kept(hass: HomeAssistant) -> None:
-    """Another account's entry may still list it, so this entry never deletes it."""
+def test_a_device_of_another_entry_is_never_removed(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A device belongs to one config entry; another account's device is not this
+    entry's to delete. The check never reads ``DeviceEntry.config_entries``, which
+    newer Home Assistant releases report as deprecated."""
+
+    def deprecated(_device: dr.DeviceEntry) -> set[str]:
+        pytest.fail("DeviceEntry.config_entries is deprecated: read config_entry_id")
+
+    monkeypatch.setattr(dr.DeviceEntry, "config_entries", property(deprecated))
     entry = add_entry(hass)
     other = MockConfigEntry(domain=DOMAIN, unique_id="other")
     other.add_to_hass(hass)
     registry = dr.async_get(hass)
-    shared = registry.async_get_or_create(
-        config_entry_id=entry.entry_id, identifiers={(DOMAIN, CH_CAMERA_SN)}
-    )
-    shared = registry.async_get_or_create(
+    foreign = registry.async_get_or_create(
         config_entry_id=other.entry_id, identifiers={(DOMAIN, CH_CAMERA_SN)}
     )
     listed = frozenset({SYNTHETIC.station_sn})
 
-    assert not stale_devices.unlisted(entry.entry_id, shared, listed)
+    assert not stale_devices.unlisted(entry.entry_id, foreign, listed)
     stale_devices.async_remove_unlisted(hass, entry, listed)
-    assert registry.async_get(shared.id) is not None
+    assert registry.async_get(foreign.id) is not None
 
 
 def test_a_listed_device_is_kept_and_an_unlisted_one_is_not(hass: HomeAssistant) -> None:

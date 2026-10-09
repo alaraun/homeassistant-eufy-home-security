@@ -29,12 +29,12 @@ def unlisted(entry_id: str, device: dr.DeviceEntry, listed: AbstractSet[str]) ->
     """Whether ``device`` is an eufy device of the entry that ``listed`` does not name.
 
     Never the account device, a device without an identifier of this integration, or
-    a device another config entry also holds (another account's list may name it).
+    a device of another config entry (a device belongs to one entry).
     """
     serials = _serials(device)
     if not serials or entry_id in serials or serials & listed:
         return False
-    return device.config_entries == {entry_id}
+    return device.config_entry_id == entry_id
 
 
 @callback
