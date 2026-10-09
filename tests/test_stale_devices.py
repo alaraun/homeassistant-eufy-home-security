@@ -1,8 +1,9 @@
 """Devices the account's device list no longer names leave the registries.
 
 At every setup and at each Refresh device list press, also from the cached list (the
-library caches only a whole list). A device eufy lists but the client skips stays, and
-a list naming no device removes nothing. The user may delete a device by hand only once
+library caches only a whole list and leaves out removed scopes). A device eufy lists
+but the client skips stays, so does one another entry holds, and a list naming no
+device removes nothing. The user may delete a device by hand only once
 the list no longer names it.
 """
 
@@ -13,12 +14,13 @@ from typing import Any, Final
 
 import pytest
 from conftest import add_entry, configure_options, entity_id_for, set_up_warm, setup_entry
-from eufy_home_security import CommunicationError, EufySecurity, entity_unique_id, redact_serial
+from eufy_home_security import CommunicationError, EufySecurity, entity_unique_id
 from eufy_home_security.testing import SYNTHETIC, FakeCloud
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.eufy_home_security import (
     async_remove_config_entry_device,
@@ -125,6 +127,30 @@ async def test_a_removed_sign_in_country_takes_its_devices_and_entities(
     await _unload(hass, entry)
 
 
+@pytest.mark.usefixtures("ch_listed")
+async def test_a_removed_country_goes_also_when_eufy_refuses_the_new_list(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The reload's rescan fails, the cached list without the removed scope's devices
+    stands in, and their devices go."""
+    entry = await _set_up_with_ch(hass, seed_warm_cache)
+    assert _device(hass, entry, CH_CAMERA_SN) is not None
+    fake_cloud.call_errors = [CommunicationError("unreachable")]
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    await configure_options(hass, result["flow_id"], {CONF_EXTRA_COUNTRIES: []})
+    await hass.async_block_till_done()
+
+    assert not fake_cloud.call_errors, "the rescan never met the cloud failure"
+    assert built_clients[-1].device_list_source == "fallback"
+    assert _device(hass, entry, CH_CAMERA_SN) is None
+    assert _device(hass, entry, SYNTHETIC.station_sn) is not None
+    await _unload(hass, entry)
+
+
 @pytest.mark.parametrize("when", ["warm start", "failed rescan at start", "failed press"])
 async def test_a_cached_device_list_also_removes_an_unlisted_device(
     hass: HomeAssistant,
@@ -176,21 +202,24 @@ async def test_a_press_removes_a_device_the_list_no_longer_names(
 
 
 @pytest.mark.usefixtures("ch_listed")
-async def test_a_station_that_left_the_list_goes_at_the_setup_after_a_press(
+async def test_a_station_that_left_the_list_goes_at_the_reload_its_press_starts(
     hass: HomeAssistant,
     fake_cloud: FakeCloud,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """The client keeps the stations it built, so a station a press no longer finds goes
-    at the next setup, which builds from the list that press cached."""
+    """The press's StationsChanged reloads the entry, whose setup builds from the list
+    that press cached and removes the station."""
     entry = await _set_up_with_ch(hass, seed_warm_cache)
     fake_cloud.region_devices["eu:CH"] = []
+    clients = len(built_clients)
 
     await _press_refresh(hass, entry)
-    assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
 
+    assert len(built_clients) == clients + 1, "the press did not reload the entry"
+    assert SYNTHETIC.station_sn in entry.runtime_data.coordinators
+    assert CH_CAMERA_SN not in entry.runtime_data.coordinators
     assert _device(hass, entry, CH_CAMERA_SN) is None
     assert _device(hass, entry, SYNTHETIC.station_sn) is not None
     await _unload(hass, entry)
@@ -218,43 +247,38 @@ async def test_only_a_device_the_list_no_longer_names_can_be_deleted(
     assert not await async_remove_config_entry_device(hass, entry, stale)
 
 
-def test_a_device_under_a_station_served_elsewhere_is_kept(hass: HomeAssistant) -> None:
-    """Another account serves the station, so the devices paired to it are unknown here."""
+def test_a_device_another_entry_also_holds_is_kept(hass: HomeAssistant) -> None:
+    """Another account's entry may still list it, so this entry never deletes it."""
     entry = add_entry(hass)
+    other = MockConfigEntry(domain=DOMAIN, unique_id="other")
+    other.add_to_hass(hass)
     registry = dr.async_get(hass)
-    station = registry.async_get_or_create(
-        config_entry_id=entry.entry_id, identifiers={(DOMAIN, SYNTHETIC.station_sn)}
+    shared = registry.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, CH_CAMERA_SN)}
     )
-    camera = registry.async_get_or_create(
-        config_entry_id=entry.entry_id,
-        identifiers={(DOMAIN, SYNTHETIC.camera_sn)},
-        via_device_id=station.id,
+    shared = registry.async_get_or_create(
+        config_entry_id=other.entry_id, identifiers={(DOMAIN, CH_CAMERA_SN)}
     )
-    station_only = frozenset({SYNTHETIC.station_sn})
+    listed = frozenset({SYNTHETIC.station_sn})
 
-    elsewhere = runtime.ListedDevices(serials=station_only, elsewhere=station_only)
-    assert not stale_devices.unlisted(registry, entry.entry_id, camera, elsewhere)
-    served_here = runtime.ListedDevices(serials=station_only, elsewhere=frozenset())
-    assert stale_devices.unlisted(registry, entry.entry_id, camera, served_here)
+    assert not stale_devices.unlisted(entry.entry_id, shared, listed)
+    stale_devices.async_remove_unlisted(hass, entry, listed)
+    assert registry.async_get(shared.id) is not None
 
 
-def test_a_device_the_list_names_but_the_client_skips_is_kept(hass: HomeAssistant) -> None:
-    """A camera whose station is not on the list is still on eufy's list: kept."""
+def test_a_listed_device_is_kept_and_an_unlisted_one_is_not(hass: HomeAssistant) -> None:
+    """Listed means on the library's list, built or skipped (a camera of a station that
+    is not on the list is still listed)."""
     entry = add_entry(hass)
     registry = dr.async_get(hass)
     camera = registry.async_get_or_create(
         config_entry_id=entry.entry_id, identifiers={(DOMAIN, CH_CAMERA_SN)}
     )
-    station_only = frozenset({SYNTHETIC.station_sn})
 
-    skipped = runtime.ListedDevices(
-        serials=station_only,
-        elsewhere=frozenset(),
-        skipped=frozenset({redact_serial(CH_CAMERA_SN)}),
+    assert not stale_devices.unlisted(
+        entry.entry_id, camera, frozenset({SYNTHETIC.station_sn, CH_CAMERA_SN})
     )
-    assert not stale_devices.unlisted(registry, entry.entry_id, camera, skipped)
-    not_listed = runtime.ListedDevices(serials=station_only, elsewhere=frozenset())
-    assert stale_devices.unlisted(registry, entry.entry_id, camera, not_listed)
+    assert stale_devices.unlisted(entry.entry_id, camera, frozenset({SYNTHETIC.station_sn}))
 
 
 def test_a_list_naming_no_device_removes_nothing(hass: HomeAssistant) -> None:
@@ -262,9 +286,7 @@ def test_a_list_naming_no_device_removes_nothing(hass: HomeAssistant) -> None:
     entry = add_entry(hass)
     device_id, entity_id = _add_stale_device(hass, entry)
 
-    stale_devices.async_remove_unlisted(
-        hass, entry, runtime.ListedDevices(serials=frozenset(), elsewhere=frozenset())
-    )
+    stale_devices.async_remove_unlisted(hass, entry, frozenset())
 
     assert dr.async_get(hass).async_get(device_id) is not None
     assert er.async_get(hass).async_get(entity_id) is not None

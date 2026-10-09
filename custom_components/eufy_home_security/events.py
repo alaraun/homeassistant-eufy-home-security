@@ -38,7 +38,7 @@ shows or what the user must be told:
 - ``AccountMismatch`` raises the station's account-id-mismatch issue. A reconnect
   never clears it; unloading the entry deletes it, so a reload re-evaluates. The
   event carries no account id, and neither does the issue.
-- ``DevicesChanged`` schedules one reload of the entry on a later loop turn
+- ``DevicesChanged`` and ``StationsChanged`` schedule one reload of the entry on a later loop turn
   (``async_reload_soon``): every device and entity is keyed by serial, so the entry
   is built again from the new list. The event is emitted inside the library's
   discover, and a reload started there would close the client under it. Nothing here
@@ -107,6 +107,7 @@ from eufy_home_security import (
     PresetsChanged,
     PushChanged,
     SecurityEvent,
+    StationsChanged,
     StationStateChanged,
     StorageChanged,
     ZoomChanged,
@@ -302,6 +303,16 @@ class EventRouter:
                 len(event.moved),
             )
             self.async_reload_soon("paired devices changed")
+        elif isinstance(event, StationsChanged):
+            # A station built or no longer listed: the setup builds from the new list
+            # and removes the devices it no longer names.
+            _LOGGER.debug(
+                "Stations changed (%s list): %d added, %d removed",
+                event.source,
+                len(event.added),
+                len(event.removed),
+            )
+            self.async_reload_soon("station list changed")
         elif isinstance(event, ConnectionChanged):
             self._handle_connection(event)
         elif isinstance(event, CloudProblem):
