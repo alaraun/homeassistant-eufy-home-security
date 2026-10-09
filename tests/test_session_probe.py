@@ -3,6 +3,7 @@ The session probe, on the real library and FakeCloud; every scenario proves no l
 """
 
 import logging
+import re
 from collections.abc import Callable
 
 import pytest
@@ -239,7 +240,7 @@ async def test_a_request_hold_off_from_the_probe_is_the_login_limited_issue_and_
     assert issue is not None
     placeholders = issue.translation_placeholders
     assert placeholders is not None
-    assert placeholders["minutes"] == "2"
+    assert re.fullmatch(r"(\d{4}-\d{2}-\d{2} )?\d{2}:\d{2}", placeholders["time"])
     assert SYNTHETIC.email not in str(issue.translation_placeholders)
 
     assert fake_cloud.calls.count("devices") == 1

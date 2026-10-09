@@ -34,7 +34,7 @@ an account where no device was found too.
 | Issue | Meaning | Fix |
 |---|---|---|
 | eufy ended Home Assistant's session | another client signed in with the same account | **Fix**, which signs the other client out; see [network.md](network.md#eufy-account) |
-| eufy is refusing sign-ins | eufy's sign-in limit | wait; each early attempt can restart the wait |
+| eufy is refusing sign-ins | a sign-in was needed and refused: by eufy, or held back by the integration itself (3 sign-ins per 6 hours on each eufy region) | wait until the time it names; each early attempt can restart the wait. It clears at that time, or at the next start of the integration that needs no sign-in |
 | A station rejects its key | the station refused its key after one refetch | **Fix** allows one more key fetch |
 | Fetched the key again | the key was refreshed; information only | dismiss |
 | HomeBase stamps its events with another eufy account | commands may be ignored | check that the account is the owner or the owner shared the HomeBase with it |

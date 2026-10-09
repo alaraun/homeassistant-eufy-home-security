@@ -20,6 +20,7 @@ from homeassistant.helpers.typing import ConfigType
 from eufy_home_security import (
     AuthenticationError,
     EufySecurityError,
+    LoginNeed,
     RateLimitedError,
     SessionReplacedError,
     Station,
@@ -210,8 +211,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
 
     entry.async_on_unload(_remove_stop_listener)
 
-    # Read from the cache, never the cloud: whether the login below really signs in.
-    status_before_login = await eufy.async_cloud_status()
     try:
         await eufy.async_login()
     except AuthenticationError as err:
@@ -231,18 +230,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
             type(err).__name__,
         )
     else:
-        errors.clear_cloud_issues(
-            hass, entry, before=status_before_login, after=await eufy.async_cloud_status()
-        )
+        # The login-limited issue went with the setup's start and is raised again
+        # only by a sign-in the library cannot send (the branch above).
+        errors.clear_session_replaced_issue(hass, entry)
     # The library's session-replaced latch is persisted in the account store, while a
     # repair issue is not (issue_registry: is_persistent defaults to False). So
     # whichever path the login block took, the SessionReplacedError branch above or
     # a login that neither raised nor cleared the latch, a latched store shows its
     # fixable issue after every setup. A successful login cannot
     # leave the latch set (the library raises on it or, with force, clears it), so
-    # this never fights clear_cloud_issues in the else branch. Nothing here logs
+    # this never fights clear_session_replaced_issue in the else branch. Nothing here logs
     # in: the issue's fix and Reconfigure are the user's two deliberate paths.
-    if eufy.session_replaced:
+    # Read through the cloud status, which loads the account store first.
+    if (await eufy.async_cloud_status()).login_need is LoginNeed.REPLACED:
         errors.raise_session_replaced_issue(hass, entry)
     try:
         # Every login scope once after the login country changed (options) or the
