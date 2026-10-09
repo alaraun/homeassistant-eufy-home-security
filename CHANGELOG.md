@@ -5,6 +5,20 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.1.10](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.9...v0.1.10) (2026-10-09)
+
+
+### Features
+
+* options in collapsible sections; extra countries marked experimental ([#38](https://github.com/alaraun/homeassistant-eufy-home-security/issues/38)) ([a953beb](https://github.com/alaraun/homeassistant-eufy-home-security/commit/a953bebe6ad01ae9aa45f97c8f3695931b2118aa))
+
+
+### Bug Fixes
+
+* cameras and doorbells of every model the eufy app names get their entities (library 0.3.0) ([#37](https://github.com/alaraun/homeassistant-eufy-home-security/issues/37)) ([4dc359c](https://github.com/alaraun/homeassistant-eufy-home-security/commit/4dc359c95ff19391d0e1147159f6c2ce01bb2535))
+* the options sections show the saved values ([#40](https://github.com/alaraun/homeassistant-eufy-home-security/issues/40)) ([fcdcc00](https://github.com/alaraun/homeassistant-eufy-home-security/commit/fcdcc0002d19c117f6c3c48e3b1c64f145905350))
+* the sign-in limit repair names a clock time and goes when it passes ([#36](https://github.com/alaraun/homeassistant-eufy-home-security/issues/36)) ([90d59ca](https://github.com/alaraun/homeassistant-eufy-home-security/commit/90d59ca2363a314991b17856c159210a3de13daa))
+
 ## [0.1.9](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.1.8...v0.1.9) (2026-10-08)
 
 
