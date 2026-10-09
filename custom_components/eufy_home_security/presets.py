@@ -38,6 +38,9 @@ differ. This module only decides what Home Assistant shows, and when it asks:
   and its image entity shows no image (state unknown) until the next "Capture preset
   n" or "Refresh presets". A deleted slot's image goes the same way. Nothing is
   captured by itself: a capture would turn the camera and end a running live view.
+- **A picture from the card.** The card's "Save view" sends the frame of the live
+  view it saved (``preset_upload.py``); it is kept exactly as a capture's image, with
+  no camera I/O and no video decode on this host.
 - **Entities are never deleted.** A slot the latest read shows disabled makes its
   entities unavailable while they stay in the registry; a slot that appears gains
   its entities. Unique ids are keyed by the slot index the library reports, never
@@ -383,6 +386,40 @@ class PresetManager:
                 _elapsed(start),
             )
             return
+        previous = await self._async_show(device_sn, index, jpeg)
+        _LOGGER.debug(
+            "Preset %d of %s now shows %d bytes (was %s), decoded in %.1f s",
+            index,
+            serial,
+            len(jpeg),
+            len(previous[0]) if previous is not None else None,
+            _elapsed(start),
+        )
+
+    async def async_store_image(self, device_sn: str, index: int, jpeg: bytes) -> bool:
+        """Show ``jpeg`` as slot ``index``'s image, stored as a capture's; False once stopped.
+
+        No camera I/O and no decode beyond the small copy: the picture is a frame the
+        card took from the live view. A capture of the slot running now replaces it
+        when it ends.
+        """
+        if self._stopped:
+            return False
+        previous = await self._async_show(device_sn, index, jpeg)
+        _LOGGER.debug(
+            "Preset %d of %s now shows %d bytes from the card (was %s)",
+            index,
+            redact_serial(device_sn),
+            len(jpeg),
+            len(previous[0]) if previous is not None else None,
+        )
+        return True
+
+    async def _async_show(
+        self, device_sn: str, index: int, jpeg: bytes
+    ) -> tuple[bytes, datetime] | None:
+        """Keep ``jpeg`` as the slot's image (memory, still cache, small copy, history) and
+        tell its image entity; returns the image it replaced."""
         previous = self._images.get((device_sn, index))
         taken = dt_util.utcnow()
         self._images[(device_sn, index)] = (jpeg, taken)
@@ -394,17 +431,10 @@ class PresetManager:
             await self._cache.async_small(key, jpeg)
         if self._history is not None:
             self._history.async_save(device_sn, jpeg, taken, preset_still_name(index))
-        _LOGGER.debug(
-            "Preset %d of %s now shows %d bytes (was %s), decoded in %.1f s",
-            index,
-            serial,
-            len(jpeg),
-            len(previous[0]) if previous is not None else None,
-            _elapsed(start),
-        )
         async_dispatcher_send(
             self._hass, preset_image_signal(self._entry.entry_id, device_sn, index)
         )
+        return previous
 
     @callback
     def async_request_refresh_presets(self, station: Station, device_sn: str) -> None:

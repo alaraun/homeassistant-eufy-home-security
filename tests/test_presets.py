@@ -1,5 +1,6 @@
 """Tests for pan/tilt presets on a standalone T8170."""
 
+import base64
 import json
 import logging
 import time
@@ -36,7 +37,14 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from PIL import Image
 
-from custom_components.eufy_home_security import history, presets, snapshots, still_cache
+from custom_components.eufy_home_security import (
+    detections,
+    history,
+    preset_upload,
+    presets,
+    snapshots,
+    still_cache,
+)
 from custom_components.eufy_home_security.const import DOMAIN
 
 SN = "T8170P0000000001"
@@ -2324,3 +2332,281 @@ async def test_a_save_stored_but_not_made_default_still_drops_the_slots_image(
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+# ── a picture from the card ──────────────────────────────────────────────────
+
+
+def _card_jpeg(colour: tuple[int, int, int] = (10, 200, 30)) -> bytes:
+    """A 640x360 JPEG as the card draws it from the live video."""
+    out = BytesIO()
+    Image.new("RGB", (640, 360), colour).save(out, "JPEG", quality=85)
+    return out.getvalue()
+
+
+async def _send_picture(
+    hass: HomeAssistant, hass_ws_client, preset: int, image: str, entity_id: str | None = None
+) -> dict:
+    """Send the card's preset picture over the websocket; returns the reply."""
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": preset_upload.WS_PRESET_IMAGE,
+            "entity_id": entity_id or entity_id_for(hass, "camera", SN, "camera"),
+            "preset": preset,
+            "image": image,
+        }
+    )
+    reply: dict = await client.receive_json()
+    await client.close()
+    return reply
+
+
+def _history_files(hass: HomeAssistant, index: int) -> list[Path]:
+    root = history.history_dir(hass)
+    return list(root.rglob(f"*_preset_{index}.jpg")) if root.is_dir() else []
+
+
+async def test_the_cards_picture_becomes_a_set_slots_preset_image(
+    hass: HomeAssistant, hass_ws_client, fake_cloud, seed_warm_cache, built_clients, fake_station
+):
+    """Kept as a capture's: memory, cached file and small copy, history file, image
+    entity; nothing is sent to the camera."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    await _read_slots(hass)
+    image_1 = entity_id_for(hass, "image", SN, "preset_1_image")
+    jpeg = _card_jpeg()
+    sent = len(fake_station.doorbell_payloads)
+    conn_inits = fake_station.conn_inits
+
+    reply = await _send_picture(hass, hass_ws_client, 1, base64.b64encode(jpeg).decode())
+
+    assert reply["success"], reply
+    assert reply["result"] == {"preset": 1}
+    stored = entry.runtime_data.presets.image_for(SN, 1)
+    assert stored is not None and stored[0] == jpeg
+    await hass.async_block_till_done()
+    assert state_of(hass, image_1) == stored[1].isoformat()
+    assert (await async_get_image(hass, image_1)).content == jpeg
+    assert _state(hass, image_1).attributes.get("entity_picture")
+    cached = still_cache.cache_dir(hass, entry.entry_id) / f"{SN}.preset_1.jpg"
+    small = still_cache.small_path(cached.parent, f"{SN}.preset_1")
+    await wait_until(lambda: cached.exists() and small.exists())
+    assert cached.read_bytes() == jpeg
+    await wait_until(lambda: bool(_history_files(hass, 1)))
+    assert [path.read_bytes() for path in _history_files(hass, 1)] == [jpeg]
+    assert len(fake_station.doorbell_payloads) == sent
+    assert fake_station.conn_inits == conn_inits
+    assert fake_station.preset_gotos == []
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_a_view_saved_to_a_free_slot_then_its_picture_shows_on_the_new_slot(
+    hass: HomeAssistant, hass_ws_client, fake_cloud, seed_warm_cache, built_clients, fake_station
+):
+    """save_preset (lowest free slot, read back) adds slot 3's entities; the picture
+    sent after it is the slot's image, not dropped by the save."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    await _read_slots(hass)
+    jpeg = _card_jpeg((200, 10, 10))
+
+    assert await _save(hass) == {"preset": 3}
+    reply = await _send_picture(hass, hass_ws_client, 3, base64.b64encode(jpeg).decode())
+
+    assert reply["success"], reply
+    registry = er.async_get(hass)
+    await wait_until(
+        lambda: registry.async_get_entity_id("image", DOMAIN, f"{SN}_preset_3_image") is not None
+    )
+    await hass.async_block_till_done()
+    image_3 = entity_id_for(hass, "image", SN, "preset_3_image")
+    assert (await async_get_image(hass, image_3)).content == jpeg
+    assert _state(hass, image_3).attributes.get("preset_index") == 3
+    stored = entry.runtime_data.presets.image_for(SN, 3)
+    assert stored is not None and stored[0] == jpeg
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_a_view_saved_over_a_slot_then_its_picture_replaces_the_old_image(
+    hass: HomeAssistant,
+    hass_ws_client,
+    fake_cloud,
+    seed_warm_cache,
+    built_clients,
+    fake_station,
+    fast_settle,
+    real_jpegs,
+):
+    """The save drops the slot's captured image; the picture sent after it is kept, in
+    memory and in the cached file the save's forget queued before it."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    await _read_slots(hass)
+    image_1 = entity_id_for(hass, "image", SN, "preset_1_image")
+    await hass.services.async_call(
+        "button",
+        "press",
+        {"entity_id": entity_id_for(hass, "button", SN, "preset_1_capture")},
+        blocking=True,
+    )
+    await wait_until(lambda: state_of(hass, image_1) != "unknown", timeout=15)
+    jpeg = _card_jpeg((10, 10, 200))
+
+    assert await _save(hass, preset=1) == {"preset": 1}
+    reply = await _send_picture(hass, hass_ws_client, 1, base64.b64encode(jpeg).decode())
+
+    assert reply["success"], reply
+    await hass.async_block_till_done()
+    assert (await async_get_image(hass, image_1)).content == jpeg
+    cached = still_cache.cache_dir(hass, entry.entry_id) / f"{SN}.preset_1.jpg"
+    await wait_until(lambda: cached.exists() and cached.read_bytes() == jpeg)
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_a_picture_is_stored_while_a_capture_holds_the_camera(
+    hass: HomeAssistant,
+    hass_ws_client,
+    fake_cloud,
+    seed_warm_cache,
+    built_clients,
+    fake_station,
+    fast_settle,
+):
+    """Storing needs no camera I/O, so a running capture does not refuse it."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    await _read_slots(hass)
+    await hass.services.async_call(
+        "button",
+        "press",
+        {"entity_id": entity_id_for(hass, "button", SN, "preset_1_capture")},
+        blocking=True,
+    )
+    await wait_until(lambda: fake_station.preset_gotos == [1])
+    jpeg = _card_jpeg()
+
+    reply = await _send_picture(hass, hass_ws_client, 2, base64.b64encode(jpeg).decode())
+
+    assert reply["success"], reply
+    stored = entry.runtime_data.presets.image_for(SN, 2)
+    assert stored is not None and stored[0] == jpeg
+    image_1 = entity_id_for(hass, "image", SN, "preset_1_image")
+    await wait_until(lambda: state_of(hass, image_1) != "unknown", timeout=15)
+    await hass.async_block_till_done()
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+_JPEG_B64 = base64.b64encode(_card_jpeg()).decode()
+
+
+@pytest.mark.parametrize(
+    ("preset", "image", "code", "translation_key"),
+    [
+        (7, _JPEG_B64, "home_assistant_error", "preset_not_set"),
+        (
+            1,
+            base64.b64encode(b"\x89PNG\r\n\x1a\n" + bytes(64)).decode(),
+            "home_assistant_error",
+            "preset_image_invalid",
+        ),
+        (1, "not base64!", "home_assistant_error", "preset_image_invalid"),
+        (
+            1,
+            base64.b64encode(
+                b"\xff\xd8" + bytes(preset_upload.PRESET_IMAGE_MAX_BYTES - 1)
+            ).decode(),
+            "home_assistant_error",
+            "preset_image_invalid",
+        ),
+        (1, "", "home_assistant_error", "preset_image_invalid"),
+    ],
+    ids=["slot_not_set", "not_jpeg", "not_base64", "oversized", "empty"],
+)
+async def test_a_refused_picture_stores_nothing_and_says_why(
+    hass: HomeAssistant,
+    hass_ws_client,
+    fake_cloud,
+    seed_warm_cache,
+    built_clients,
+    fake_station,
+    caplog,
+    preset,
+    image,
+    code,
+    translation_key,
+):
+    entry = await set_up_warm(hass, seed_warm_cache)
+    await _read_slots(hass)
+    caplog.set_level(logging.DEBUG)
+
+    reply = await _send_picture(hass, hass_ws_client, preset, image)
+
+    assert not reply["success"]
+    assert reply["error"]["code"] == code
+    assert reply["error"]["translation_key"] == translation_key
+    assert reply["error"]["message"]
+    assert entry.runtime_data.presets.image_for(SN, preset) is None
+    await hass.async_block_till_done()
+    assert _history_files(hass, preset) == []
+    assert not (still_cache.cache_dir(hass, entry.entry_id) / f"{SN}.preset_{preset}.jpg").exists()
+    ours = [r.getMessage() for r in caplog.records if r.name.startswith("custom_components.")]
+    assert ours
+    if len(image) > 16:
+        assert not [line for line in ours if image[:64] in line]
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_a_picture_at_the_size_limit_is_kept(
+    hass: HomeAssistant, hass_ws_client, fake_cloud, seed_warm_cache, built_clients, fake_station
+):
+    """PRESET_IMAGE_MAX_BYTES itself is accepted, and its message fits the websocket."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    await _read_slots(hass)
+    jpeg = _card_jpeg()
+    jpeg += bytes(preset_upload.PRESET_IMAGE_MAX_BYTES - len(jpeg))
+
+    reply = await _send_picture(hass, hass_ws_client, 0, base64.b64encode(jpeg).decode())
+
+    assert reply["success"], reply
+    stored = entry.runtime_data.presets.image_for(SN, 0)
+    assert stored is not None and stored[0] == jpeg
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_a_picture_for_another_entity_or_a_camera_without_presets_is_refused(
+    hass: HomeAssistant,
+    hass_ws_client,
+    fake_cloud,
+    seed_warm_cache,
+    built_clients,
+    fake_station,
+    monkeypatch,
+):
+    entry = await set_up_warm(hass, seed_warm_cache)
+    await _read_slots(hass)
+    image_1 = entity_id_for(hass, "image", SN, "preset_1_image")
+
+    reply = await _send_picture(hass, hass_ws_client, 1, _JPEG_B64, entity_id=image_1)
+    assert reply["error"]["code"] == "not_found"
+    reply = await _send_picture(hass, hass_ws_client, 1, _JPEG_B64, entity_id="camera.elsewhere")
+    assert reply["error"]["code"] == "not_found"
+
+    monkeypatch.setattr(detections, "has_preset_entities", lambda sn: False)
+    reply = await _send_picture(hass, hass_ws_client, 1, _JPEG_B64)
+    assert reply["error"]["translation_key"] == "presets_unsupported"
+    assert entry.runtime_data.presets.image_for(SN, 1) is None
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    reply = await _send_picture(hass, hass_ws_client, 1, _JPEG_B64)
+    assert reply["error"]["code"] in {"not_found", "unavailable"}

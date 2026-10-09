@@ -79,6 +79,15 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   - Pan/tilt cameras: a pan/tilt pad with a home button (the default preset), usable once the live picture shows.
     Zoom cameras: a zoom pill (−, the value, +, and a reset to 1×), usable in every state.
   - Presets: the bar's preset button opens a row of the preset slots' pictures; a tap turns the camera there.
+    - `Save view`, the row's last tile, stores the current view in the lowest free slot and makes the live
+      picture at the press its picture (taken in the browser, at most 1920 px wide). The new tile joins the row
+      once the integration has read the slots back. With all 5 slots set the tile reads `Slots full`; delete a
+      preset first. Without a picture (video not playing, a browser that refuses the frame) the preset is saved
+      without one, and the message says so.
+    - Holding a preset tile (about 0.6 s), a right click, or the context-menu key or Shift+F10 on it asks
+      `Replace Pn`; confirming stores the current view over that preset, with its picture; ✕ or Esc keeps it.
+    - While a save runs the pan/tilt pad and the other tiles wait; a camera with presets but none set shows the
+      tile alone.
   - While the live picture plays, its controls, the battery chip and the time fade 4 s after the last touch or click
     (every width, full screen too) and a red dot at the top left stays; a tap or click on the picture brings them
     back, another hides them. Keyboard focus shows them too; a recording's `● REC` chip stays.
@@ -117,7 +126,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
 ## Writes
 
 - **Immediate:** pan/tilt, zoom and go-to-preset (`eufy_home_security.pan_tilt`, `.zoom`, `.goto_preset`), Record
-  (`eufy_home_security.record`) and the Station Play/Save. Pan/tilt steps run one at a time; up to 3 presses wait
+  (`eufy_home_security.record`), Save view and Replace (`eufy_home_security.save_preset`, then the picture over
+  the websocket command `eufy_home_security/preset_image`) and the Station Play/Save. Pan/tilt steps run one at a time; up to 3 presses wait
   their turn.
 - **Staged:** settings, `New still` and `Refresh event image`. ✕ / Set appear in the header; Set sends one write
   at a time. A row reads `sending` until the entity reports the value, `Not applied` after 30 s or on a refused

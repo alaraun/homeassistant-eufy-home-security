@@ -216,8 +216,11 @@ Browser support: [network.md](network.md#browsers). Adding devices:
 | `eufy_home_security.zoom` | `direction`: `in`, `out` |
 | `eufy_home_security.save_preset` | optional `preset` (overwrite a slot) and `make_default`; returns `{"preset": n}` |
 | `eufy_home_security.delete_preset` | clear slot `preset` |
+| `eufy_home_security/preset_image` (websocket) | `entity_id`, `preset`, `image` (base64 JPEG, at most 2 MB): keeps the picture as that set slot's **Preset n image**, as a capture does; no camera I/O. The camera card's **Save view** sends its frame of the live video here |
 
 - Every press and action wakes the camera.
+- A saved view's slot shows no image until it is captured, unless the camera card
+  saved it: the card sends the frame of the live view it saved.
 - A preset deleted in the eufy app makes its entities unavailable after **Refresh
   presets**.
 - While a capture runs, other captures and preset edits are refused and nothing is

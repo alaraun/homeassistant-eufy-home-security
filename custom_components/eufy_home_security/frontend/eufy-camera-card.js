@@ -4,7 +4,7 @@
 // `entity` is required; the settings rows are built from whatever settings the device has: the common ones
 // grouped, a setting that applies only in one state of another nested under it, the rest under More settings.
 
-const CARD_VERSION = '2026.10.09-3';
+const CARD_VERSION = '2026.10.09-4';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -29,6 +29,17 @@ const COMPACT_W = 400;
 // While the live picture plays, the controls over it fade this long after the last touch, click or mouse move on
 // the picture (every width, full screen too); a tap or click on the picture brings them back
 const CTL_HIDE_MS = 4000;
+// Save view: the integration's command that keeps a frame as a preset's picture (preset_upload.py), and the frame:
+// the live video drawn at most PRESET_PIC_W wide (aspect kept) as a JPEG, at the first quality whose size stays
+// within PRESET_PIC_MAX (the integration's limit, under the websocket's message size)
+const PRESET_IMAGE_WS = 'eufy_home_security/preset_image';
+const PRESET_PIC_W = 1920;
+const PRESET_PIC_Q = [0.85, 0.7, 0.5];
+const PRESET_PIC_MAX = 2 * 1024 * 1024;
+// The most preset slots a camera stores (the library's MAX_PRESET_SLOTS)
+const PRESET_SLOTS = 5;
+// A press held this long on a preset tile asks to replace that preset with the current view
+const HOLD_MS = 600;
 // Sections under the picture, as tabs: id, label, icon. One open at a time; pressing the open one closes it.
 const SECTIONS = [['history', 'History', 'mdi:history'], ['settings', 'Settings', 'mdi:cog-outline']];
 const IMG_CACHE = 40;
@@ -90,6 +101,7 @@ const ROLES = {
   live_zoom: 'zoom', default_preset: 'defaultPreset',
   pan_left: 'panLeft', pan_right: 'panRight', tilt_up: 'tiltUp', tilt_down: 'tiltDown',
   capture_live_image: 'capture', refresh_image: 'refresh', detection: 'detection',
+  save_view: 'saveView', refresh_presets: 'refreshPresets',
   motion_detected: 'motion', person_detected: 'person', pet_detected: 'pet', vehicle_detected: 'vehicle',
 };
 // Detection sensors in badge priority
@@ -261,6 +273,8 @@ class EufyCameraCard extends HTMLElement {
     this._stationTab = undefined;
     this._hn = HISTORY_PAGE;
     this._hday = null;
+    this._pfull = undefined;
+    this._pconfirm = null;
     this.render();
   }
 
@@ -271,7 +285,10 @@ class EufyCameraCard extends HTMLElement {
     // An entity coming back from a restored state, or going to one, changes the rows
     else if (this._ents && prev.states !== hass.states) {
       const E0 = this._ents, rest = id => { const x = hass.states[id]; return !!x && !!x.attributes.restored; };
-      if (E0.restored.some(id => !rest(id)) || E0.rows.some(r => rest(r.id))) this._ents = null;
+      // ... and so does a preset slot that is set or cleared (its entities turn available or unavailable)
+      const na = (s, id) => { const x = s[id]; return !x ? 2 : (x.state === 'unavailable' ? 1 : 0); };
+      if (E0.restored.some(id => !rest(id)) || E0.rows.some(r => rest(r.id))
+        || E0.presetAll.some(id => na(prev.states, id) !== na(hass.states, id))) this._ents = null;
     }
     if (this._stream && this._stream.tagName === 'HA-CAMERA-STREAM') {  // the single players take entityid only
       const st = hass.states[this._config.entity];
@@ -393,7 +410,7 @@ class EufyCameraCard extends HTMLElement {
   _entities() {
     if (this._ents) return this._ents;
     const h = this._hass, c = this._config;
-    const out = { camera: c.entity, presetImages: {}, presetButtons: {}, rows: [], byKey: {}, rowIds: {}, restored: [] };
+    const out = { camera: c.entity, presetImages: {}, presetButtons: {}, presetAll: [], rows: [], byKey: {}, rowIds: {}, restored: [] };
     const reg = (h && h.entities) || {};
     const me = reg[c.entity];
     const dev = me && me.device_id;
@@ -410,8 +427,8 @@ class EufyCameraCard extends HTMLElement {
       // A state HA only restored: the integration does not provide the entity (or has not loaded yet). An orphan
       // may share its key with the entity that replaced it, so it is skipped everywhere.
       if (st && st.attributes.restored) { out.restored.push(id); return; }
-      if (tk === 'preset_image') { const i = st && st.attributes.preset_index; if (i !== undefined) out.presetImages[i] = id; return; }
-      if (tk === 'capture_preset') { const m = id.match(/_(\d+)$/); if (m) out.presetButtons[m[1]] = id; return; }
+      if (tk === 'preset_image') { out.presetAll.push(id); const i = st && st.attributes.preset_index; if (i !== undefined) out.presetImages[i] = id; return; }
+      if (tk === 'capture_preset') { out.presetAll.push(id); const m = id.match(/_(\d+)$/); if (m) out.presetButtons[m[1]] = id; return; }
       const role = ROLES[tk];
       // Settings mirrored as read-only sensors reuse the control's translation_key: take the writable domain only
       if (role && (!out[role] || dom !== 'sensor')) out[role] = id;
@@ -473,7 +490,7 @@ class EufyCameraCard extends HTMLElement {
     const ids = [E.camera, E.battery, E.charging, E.solarCharging, E.detected, E.recorded, ...POWER_STATS.map(x => E[x[0]])];
     Object.keys(ROLES).forEach(k => ids.push(E[ROLES[k]]));
     E.rows.forEach(r => ids.push(r.id));
-    Object.values(E.presetImages).forEach(id => ids.push(id));
+    E.presetAll.forEach(id => ids.push(id));
     return ids.filter(Boolean);
   }
 
@@ -904,6 +921,8 @@ class EufyCameraCard extends HTMLElement {
     this._moves = this._moves.slice(0, 1);
     this._atPreset = null;
     this._preOpen = false;
+    this._pconfirm = null;
+    clearTimeout(this._holdT);
     this._awake(false);
     if (reason) this._toast(reason);
     if (this.content) this.render();
@@ -971,8 +990,10 @@ class EufyCameraCard extends HTMLElement {
     if (this._pic && this._live && this._live.video && !this._preOpen) this._pic.classList.add('quiet');
   }
 
-  _toast(text) {
+  // ok: a confirmation (neutral, check icon) rather than a failure
+  _toast(text, ok) {
     this._toastText = text;
+    this._toastOk = !!ok;
     clearTimeout(this._toastT);
     this._toastT = setTimeout(() => { this._toastText = ''; this.render(); }, TOAST_MS);
     if (this.content) this.render();
@@ -983,7 +1004,7 @@ class EufyCameraCard extends HTMLElement {
   // only after the move settled (~1.5 s): a step sent into a moving camera is cut short. Presses while one runs
   // wait in order, up to MOVE_QUEUE.
   _move(key, service, data) {
-    if (!this._hass || this._moves.length > MOVE_QUEUE) return;
+    if (!this._hass || this._moves.length > MOVE_QUEUE || this._psave) return;
     this._moves.push({ key, service, data });
     if (this._moves.length === 1) this._runMove(); else this.render();
   }
@@ -1034,6 +1055,93 @@ class EufyCameraCard extends HTMLElement {
     this._ptzCall(key, h.callService(DOMAIN, service, { entity_id: this._config.entity, ...data }));
   }
 
+  // ================== SAVE VIEW ==================
+  // The set preset slots by index: an image entity that names its slot (available ones do), or an available
+  // Capture preset button. A slot the camera no longer holds keeps its entities, unavailable, and is left out.
+  _presetIdx(E) {
+    const btn = Object.keys(E.presetButtons).filter((i) => { const b = this._st(E.presetButtons[i]); return !!b && b.state !== 'unavailable'; });
+    return [...new Set([...Object.keys(E.presetImages), ...btn].map(Number))].sort((x, y) => x - y);
+  }
+
+  // The playing live <video>: the single player's own, or the one inside HA's combined player
+  _liveVideo() {
+    const walk = (el, depth) => {
+      if (!el || depth > 3) return null;
+      if (el.tagName === 'VIDEO') return el;
+      const root = el.shadowRoot || el;
+      const v = [...root.querySelectorAll('video')].find(x => x.videoWidth > 0);
+      if (v) return v;
+      for (const p of root.querySelectorAll('ha-web-rtc-player, ha-hls-player')) { const r = walk(p, depth + 1); if (r) return r; }
+      return null;
+    };
+    return walk(this._stream, 0);
+  }
+
+  // The live picture now as a base64 JPEG for PRESET_IMAGE_WS; null when no frame can be taken (no picture,
+  // a canvas the browser taints)
+  _grabFrame() {
+    const v = this._liveVideo();
+    if (!v || !v.videoWidth || !v.videoHeight || v.readyState < 2) return null;
+    const w = Math.min(PRESET_PIC_W, v.videoWidth), h = Math.round((v.videoHeight * w) / v.videoWidth);
+    try {
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      c.getContext('2d').drawImage(v, 0, 0, w, h);
+      for (const q of PRESET_PIC_Q) {
+        const url = c.toDataURL('image/jpeg', q);
+        const b64 = url.slice(url.indexOf(',') + 1);
+        if (url.startsWith('data:image/jpeg') && Math.floor((b64.length * 3) / 4) <= PRESET_PIC_MAX) return b64;
+      }
+    } catch (e) { /* SecurityError: a tainted canvas gives no pixels */ }
+    return null;
+  }
+
+  // Saves what the camera shows now as a preset (save_preset): `slot` overwrites that slot, null takes the lowest
+  // free one, which the action answers. The frame is taken at the press, before the save, so the picture shows the
+  // view saved; it then becomes the slot's picture. Without a frame the preset is saved with no picture.
+  _savePreset(slot) {
+    const h = this._hass;
+    if (!h || this._psave || this._moves.length || !this._live || !this._live.video) return;
+    const frame = this._grabFrame();
+    const P = { slot };
+    this._psave = P;
+    this._pconfirm = null;
+    this.render();
+    const data = { entity_id: this._config.entity, ...(slot === null ? {} : { preset: slot }) };
+    Promise.resolve(h.callService(DOMAIN, 'save_preset', data, undefined, false, true))
+      .then((r) => {
+        // An entity action answers per entity: { <entity_id>: { preset } }
+        const res = r && r.response;
+        const body = res && (res[this._config.entity] || res);
+        const n = body && Number.isInteger(body.preset) ? body.preset : slot;
+        if (n === null) { this._toast('Saved as a preset', true); return null; }
+        if (!frame) { this._toast(`Saved as preset P${n + 1}; the picture could not be taken`); return null; }
+        return Promise.resolve(h.callWS({ type: PRESET_IMAGE_WS, entity_id: this._config.entity, preset: n, image: frame }))
+          .then(() => this._toast(`Saved as preset P${n + 1}`, true))
+          .catch(e => this._toast(`Saved as preset P${n + 1}; picture not stored: ${(e && e.message) || 'failed'}`));
+      })
+      .catch((e) => {
+        // The integration knows the camera is full where the card does not (slots it never listed): say so on the tile
+        if (e && e.translation_key === 'presets_full') this._pfull = this._presetIdx(this._entities()).length;
+        this._toast((e && e.message) || 'Not saved');
+      })
+      .finally(() => {
+        if (this._psave === P) this._psave = null;
+        this.render();
+      });
+  }
+
+  // Asks to replace preset `i` with the current view (a held press, the context-menu key, Shift+F10, right click)
+  _askReplace(i) {
+    clearTimeout(this._holdT);
+    if (this._psave || !this._live || !this._live.video || !this._preOpen) return;
+    this._pconfirm = i;
+    this._awake(true);
+    this.render();
+    this._focus('lpc-no');
+  }
+
   // ================== PENDING ==================
   _settle(key, live, confirmed) {
     const p = this._pending[key];
@@ -1065,6 +1173,15 @@ class EufyCameraCard extends HTMLElement {
   _onClick(ev) {
     const path = ev.composedPath();
     const has = (k) => path.find(n => n.dataset && n.dataset[k] !== undefined);
+    if (this._held) { this._held = false; ev.preventDefault(); return; }
+    if (has('psave')) { this._savePreset(null); this._focus('lp-save'); return; }
+    const pr = has('preplace');
+    if (pr) {
+      const i = this._pconfirm;
+      if (pr.dataset.preplace === 'no') { this._pconfirm = null; this.render(); } else if (i !== null && i !== undefined) this._savePreset(i);
+      if (i !== null && i !== undefined) this._focus(`lp-${i}`);
+      return;
+    }
     if (has('menu')) {
       this._setMenu(!this._menuOpen);
       this._focus(this._menuOpen ? 'mi-0' : 'menu');
@@ -1275,6 +1392,14 @@ class EufyCameraCard extends HTMLElement {
       if (nx) { ev.preventDefault(); nx.focus(); }
       return;
     }
+    if (this._pconfirm !== null && this._pconfirm !== undefined && ev.key === 'Escape') {
+      ev.preventDefault();
+      const i = this._pconfirm;
+      this._pconfirm = null;
+      this.render();
+      this._focus(`lp-${i}`);
+      return;
+    }
     if (this._preOpen && ev.key === 'Escape' && !this._isFull()) { ev.preventDefault(); this._preOpen = false; this.render(); this._focus('live-presets'); return; }
     if (this._menuOpen && (ev.key === 'ArrowDown' || ev.key === 'ArrowUp')) {
       const items = [...this.content.querySelectorAll('.menu .mi:not(:disabled)')];
@@ -1297,7 +1422,8 @@ class EufyCameraCard extends HTMLElement {
 
   _firstPreset() {
     const E = this._entities();
-    return [...Object.keys(E.presetImages), ...Object.keys(E.presetButtons)].map(Number).sort((a, b) => a - b)[0];
+    const i = this._presetIdx(E)[0];
+    return i === undefined ? 'save' : i;
   }
 
   _fullscreen() {
@@ -1688,7 +1814,9 @@ class EufyCameraCard extends HTMLElement {
     if (this._dd && !rows.some(r => r.dd && r.dd.open)) { this._dd = null; this._watchOutside(!!this._menuOpen); }
 
     // ---- presets (go to: immediate) ----
-    const presetIdx = [...new Set([...Object.keys(E.presetImages), ...Object.keys(E.presetButtons)].map(Number))].sort((x, y) => x - y);
+    const presetIdx = this._presetIdx(E);
+    // A camera that stores presets: its preset entities, or the Save current view / Refresh presets buttons
+    const hasPresets = presetIdx.length > 0 || E.presetAll.length > 0 || !!E.saveView || !!E.refreshPresets;
     const zoomSt = this._st(E.zoom);
     const zoom = num(zoomSt);
     const zMin = zoomSt ? parseFloat(zoomSt.attributes.min) || 1 : 1;
@@ -1785,8 +1913,12 @@ class EufyCameraCard extends HTMLElement {
           </div>`
         : (!L.video ? '<div class="ctr wake" role="status"><i class="spin"></i><span class="wt">Waking camera…</span><span class="ws" data-wake></span></div>' : ''));
     const aimOK = avail && !!L && L.video;
-    const canPre = aimOK && E.hasPan && presetIdx.length > 0;
+    const canPre = aimOK && E.hasPan && hasPresets;
     if (!canPre) this._preOpen = false;
+    if (!this._preOpen || !presetIdx.includes(this._pconfirm)) this._pconfirm = null;
+    const sv = this._psave;
+    const nSet = presetIdx.length;
+    const pFull = nSet >= PRESET_SLOTS || this._pfull === nSet;
     const bar = L ? `<div class="lbar" role="group" aria-label="Live view">
             <button type="button" class="lb" data-live="stop" data-focus="live-stop" aria-label="Stop live view"><ha-icon icon="mdi:stop"></ha-icon></button>
             <button type="button" class="lb opt2${L.continuous ? ' on' : ''}" data-live="pin" data-focus="live-pin" aria-pressed="${L.continuous}" aria-label="Continuous live view"><ha-icon icon="mdi:all-inclusive"></ha-icon></button>
@@ -1796,21 +1928,40 @@ class EufyCameraCard extends HTMLElement {
             <button type="button" class="lb opt2" data-live="full" data-focus="live-full" aria-label="${this._isFull() ? 'Exit full screen' : 'Full screen'}"><ha-icon icon="${this._isFull() ? 'mdi:fullscreen-exit' : 'mdi:fullscreen'}"></ha-icon></button>
           </div>` : '';
     // Presets over the live picture, above the bar: the camera turns there at once (the move lane)
-    const lpre = canPre && this._preOpen ? `<div class="lpre" role="group" aria-label="Go to preset">${presetIdx.map((i) => {
+    // The last tile saves the current view into the lowest free slot; a held tile (or its context-menu key) asks
+    // to replace that preset with the current view, in place of the row
+    const saveTile = () => {
+      const busy = !!sv && sv.slot === null;
+      const lbl = pFull ? `Save the current view as a preset: all ${PRESET_SLOTS} preset slots are in use; delete one first`
+        : (busy ? 'Saving the current view as a preset' : (sv ? 'Save the current view as a preset: wait for the save running'
+          : (this._moves.length ? 'Save the current view as a preset: wait until the camera has turned' : 'Save the current view as a preset')));
+      // Not available while a save or a move runs: aria-disabled, so keyboard focus stays on the tile
+      return `<button type="button" class="lp add${busy ? ' busy' : ''}" data-psave data-focus="lp-save" aria-label="${escapeHtml(lbl)}"${busy ? ' aria-busy="true"' : ''}${pFull ? ' disabled' : (sv || this._moves.length ? ' aria-disabled="true"' : '')}>
+              ${busy ? '<i class="spin" aria-hidden="true"></i>' : `<ha-icon icon="${pFull ? 'mdi:cancel' : 'mdi:plus'}"></ha-icon>`}<span class="pl">${busy ? 'Saving…' : (pFull ? 'Slots full' : 'Save view')}</span>
+            </button>`;
+    };
+    const asking = this._pconfirm !== null && this._pconfirm !== undefined;
+    const lpre = !canPre || !this._preOpen ? '' : (asking
+      ? `<div class="lpre ask" role="group" aria-label="${escapeHtml(`Replace preset P${this._pconfirm + 1} with the current view?`)}">
+            <button type="button" class="lpb pri" data-preplace="yes" data-focus="lpc-yes" aria-label="${escapeHtml(`Replace preset P${this._pconfirm + 1} with the current view`)}"><ha-icon icon="mdi:content-save-outline"></ha-icon><span>Replace P${this._pconfirm + 1}</span></button>
+            <button type="button" class="lpb" data-preplace="no" data-focus="lpc-no" aria-label="Keep the preset"><ha-icon icon="mdi:close"></ha-icon></button>
+          </div>`
+      : `<div class="lpre" role="group" aria-label="Go to preset">${presetIdx.map((i) => {
       const imSt = this._st(E.presetImages[i]);
       const src = this._image(`preset-${i}`, ok(imSt) ? this._tileUrl(imSt) : null).src;
       const m = this._moveState(`goto-${i}`);
       const at = this._atPreset === i && !this._moves.length;
-      return `<button type="button" class="lp${src ? ' pic' : ''}${m.run ? ' busy' : ''}${at ? ' at' : ''}" data-goto="${i}" data-focus="lp-${i}" aria-pressed="${at}" aria-label="Go to preset ${i + 1}${i === defIdx ? ' (default)' : ''}">
+      const saving = !!sv && sv.slot === i;
+      return `<button type="button" class="lp${src ? ' pic' : ''}${m.run || saving ? ' busy' : ''}${at ? ' at' : ''}" data-goto="${i}" data-focus="lp-${i}" aria-pressed="${at}" aria-label="Go to preset ${i + 1}${i === defIdx ? ' (default)' : ''}${saving ? ', saving the current view' : '; hold to replace it with the current view'}"${saving ? ' aria-busy="true"' : ''}${sv ? ' aria-disabled="true"' : ''}>
               ${src ? `<img src="${escapeHtml(src)}" alt="" draggable="false">` : '<ha-icon icon="mdi:crosshairs-gps"></ha-icon>'}
               <span class="pn">P${i + 1}${i === defIdx ? ' <ha-icon icon="mdi:home-outline"></ha-icon>' : ''}</span>
             </button>`;
-    }).join('')}</div>` : '';
+    }).join('')}${saveTile()}</div>`);
     const dis = !avail;
     // Pan/tilt and go-to only while the live picture shows: without it a move has no visible effect (the still
     // stays) and the camera turns back to its default preset once idle. Zoom stays: it is kept for the next view.
-    const aim = avail && !!L && L.video;
-    const noAim = aim ? '' : ' (start live view first)';
+    const aim = avail && !!L && L.video && !sv;
+    const noAim = aim ? '' : (sv ? ' (saving the view)' : ' (start live view first)');
     const mv = (key) => {
       const s = this._moveState(key);
       return { cls: s.run ? ' busy' : '', q: s.n ? `<i class="qn" aria-hidden="true">${s.n}</i>` : '', lbl: s.n ? `, ${s.n} more waiting` : '' };
@@ -1831,7 +1982,7 @@ class EufyCameraCard extends HTMLElement {
             ${zShown > zMin ? `<button type="button" class="zr${this._busy['zoom-reset'] ? ' busy' : ''}" data-zoom="reset" data-focus="zoom-reset" aria-label="Reset zoom to ${fmtZoom(zMin)}"${dis ? ' disabled' : ''}><ha-icon icon="mdi:restore"></ha-icon><span>${escapeHtml(fmtZoom(zMin))}</span></button>` : ''}
           </div>` : '';
     // The message takes the chip line for TOAST_MS: one line, the chips step aside
-    const toast = this._toastText ? `<div class="toast" role="status" aria-label="${escapeHtml(this._toastText)}"><ha-icon icon="mdi:alert-circle-outline"></ha-icon><span>${escapeHtml(this._toastText)}</span></div>` : '';
+    const toast = this._toastText ? `<div class="toast${this._toastOk ? ' ok' : ''}" role="status" aria-label="${escapeHtml(this._toastText)}"><ha-icon icon="${this._toastOk ? 'mdi:check-circle-outline' : 'mdi:alert-circle-outline'}"></ha-icon><span>${escapeHtml(this._toastText)}</span></div>` : '';
     const over = `
         <div class="still${L && L.video ? ' gone' : ''}${L && !L.video ? ' dim' : ''}">${still.src ? `<img class="stillimg" src="${escapeHtml(still.src)}" alt="" draggable="false">` : ''}</div>
         ${vItem ? `<div class="still hview">${vPic && vPic.src ? (vItem.video
@@ -2046,6 +2197,9 @@ class EufyCameraCard extends HTMLElement {
     // ... and the tile strip its sideways position within one sub-tab (Show more, a resolved picture)
     const hs0 = this._lowerEl.querySelector('.hstrip');
     const hLeft = hs0 ? [hs0.dataset.tab, hs0.scrollLeft] : null;
+    // ... and the preset row its own
+    const lp0 = this._overEl.querySelector('.lpre');
+    const lpLeft = lp0 ? lp0.scrollLeft : 0;
     let changed = false;
     [['hdr', this._hdrEl, hdr], ['over', this._overEl, over], ['lower', this._lowerEl, lower]].forEach(([k, el, html]) => {
       if (this._keys[k] === html) return;
@@ -2055,6 +2209,7 @@ class EufyCameraCard extends HTMLElement {
     });
     if (changed && fk) this._focus(fk);
     if (changed && sTop) { const sl = this._lowerEl.querySelector('.slist'); if (sl) sl.scrollTop = sTop; }
+    if (changed && lpLeft) { const lp = this._overEl.querySelector('.lpre'); if (lp) lp.scrollLeft = lpLeft; }
     if (changed && hLeft && hLeft[1]) { const hs = this._lowerEl.querySelector('.hstrip'); if (hs && hs.dataset.tab === hLeft[0]) hs.scrollLeft = hLeft[1]; }
     this._lazyThumbs();
     this._placeDd();
@@ -2093,6 +2248,29 @@ class EufyCameraCard extends HTMLElement {
       this.render();
     });
     this._vslot.addEventListener('streams', ev => this._onStreams(ev));
+    // A press held HOLD_MS on a preset tile asks to replace that preset; the click that ends the hold goes nowhere
+    const tileOf = ev => ev.composedPath().find(n => n.classList && n.classList.contains('lp') && n.dataset.goto !== undefined);
+    this.content.addEventListener('pointerdown', (ev) => {
+      clearTimeout(this._holdT);
+      this._held = false;
+      const t = tileOf(ev);
+      if (!t || t.disabled || t.getAttribute('aria-disabled') === 'true' || ev.button > 0) return;
+      const i = parseInt(t.dataset.goto, 10);
+      this._holdT = setTimeout(() => { this._held = true; this._askReplace(i); }, HOLD_MS);
+    });
+    ['pointerup', 'pointercancel'].forEach(k => this.content.addEventListener(k, () => clearTimeout(this._holdT)));
+    this.content.addEventListener('keydown', () => { this._held = false; }, true);
+    // The context menu (right click, the context-menu key, Shift+F10, a touch hold) on the row asks instead
+    this.content.addEventListener('contextmenu', (ev) => {
+      if (!ev.composedPath().some(n => n.classList && n.classList.contains('lpre'))) return;
+      ev.preventDefault();
+      const t = tileOf(ev);
+      if (t && !t.disabled && t.getAttribute('aria-disabled') !== 'true' && this._pconfirm !== parseInt(t.dataset.goto, 10)) {
+        // A touch hold ends in this event too: the click after it is swallowed, as after a held press
+        if (ev.pointerType === 'touch') this._held = true;
+        this._askReplace(parseInt(t.dataset.goto, 10));
+      }
+    });
     // A station thumbnail that does not load (no still on the station) becomes the film icon
     this._lowerEl.addEventListener('error', (ev) => {
       const t = ev.target;
@@ -2365,6 +2543,24 @@ const CSS_TEXT = `
   .lp.at { box-shadow: inset 0 0 0 2px var(--cc-accent); }
   .lp.busy { animation: none; box-shadow: inset 0 0 0 2px #fff; }
   .lp:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+  .lp { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
+  .lp:is(:disabled, [aria-disabled=true]) { cursor: default; }
+  .lp:is(:disabled, [aria-disabled=true]):not(.busy) { color: rgba(255,255,255,0.7); }
+  .lp:is(:disabled, [aria-disabled=true]):not(.busy):hover { box-shadow: none; }
+  .lp.add { grid-auto-flow: row; align-content: center; gap: 2px; background: rgba(255,255,255,0.08);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35); }
+  .lp.add .pl { font-size: 11px; font-weight: 600; line-height: 13px; white-space: nowrap; }
+  .lp.add .spin { width: 14px; height: 14px; border-width: 2px; }
+  .lp.add ha-icon { display: flex; width: 18px; height: 18px; line-height: 0; }
+  /* The question that replaces the row: Replace Pn / keep */
+  .lpre.ask { align-items: center; gap: 6px; }
+  .lpb { flex: none; display: flex; align-items: center; gap: 4px; height: 34px; min-width: 34px; padding: 0 10px; border: 0;
+    border-radius: 6px; cursor: pointer; justify-content: center; background: rgba(255,255,255,0.14); color: #fff;
+    font-size: 12px; font-weight: 600; white-space: nowrap; --mdc-icon-size: 16px; }
+  .lpb ha-icon { display: flex; width: 16px; height: 16px; line-height: 0; }
+  .lpb.pri { background: #fff; color: #111; }
+  .lpb:hover { box-shadow: inset 0 0 0 2px rgba(255,255,255,0.6); }
+  .lpb:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
   /* Full screen on a large display: the overlay controls grow with the picture */
   @container (min-width: 900px) { .crow, .lbar, .ptzw, .lpre, .toast { zoom: 1.35; } }
   .toast { position: absolute; left: 10px; top: 10px; display: flex; align-items: center; gap: 5px; max-width: calc(100% - 20px); height: 26px;
@@ -2372,6 +2568,7 @@ const CSS_TEXT = `
     font-size: var(--fs-xs); font-weight: 500; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.35); --mdc-icon-size: 16px; }
   .toast ha-icon { display: flex; flex: none; width: 16px; height: 16px; line-height: 0; }
   .toast span { overflow: hidden; text-overflow: ellipsis; }
+  .toast.ok { background: rgba(18, 18, 18, 0.82); }
   /* Narrow pictures: a smaller pad and bar so both fit side by side */
   @container (max-width: 339px) {
     .ptz { width: 80px; height: 80px; }

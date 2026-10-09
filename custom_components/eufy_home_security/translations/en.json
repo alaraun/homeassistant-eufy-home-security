@@ -350,6 +350,9 @@
     "preset_slot_unknown": {
       "message": "This camera has no preset slot {index}, so nothing was sent."
     },
+    "preset_image_invalid": {
+      "message": "The preset picture is not a JPEG image of at most {max_mb} MB, so it was not stored."
+    },
     "recording_in_progress": {
       "message": "This camera is already recording a clip, so no second one was started. Wait for the running clip to finish, then try again."
     },

@@ -34,6 +34,7 @@ from . import (
     detections,
     errors,
     history,
+    preset_upload,
     recordings,
     runtime,
     session_probe,
@@ -146,10 +147,11 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Serve the bundled dashboard card, keep its resource current, and register the
-    station-recordings websocket commands and thumbnail view."""
+    station-recordings and preset-picture websocket commands and the thumbnail view."""
     del config  # config entries only
     await card.async_setup_card(hass)
     station_recordings.async_setup(hass)
+    preset_upload.async_setup(hass)
     return True
 
 
