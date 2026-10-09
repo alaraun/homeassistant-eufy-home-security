@@ -201,11 +201,15 @@ OPTIONS_SECTIONS: Mapping[str, tuple[str, ...]] = MappingProxyType(
 
 
 def _options_form_schema() -> vol.Schema:
-    """OPTIONS_SCHEMA grouped into OPTIONS_SECTIONS; a section left out takes its defaults."""
+    """OPTIONS_SCHEMA grouped into OPTIONS_SECTIONS.
+
+    A section marker has no default: the frontend fills a section that has one from
+    that default and never reads its fields' saved values.
+    """
     fields = {str(marker): (marker, selector) for marker, selector in OPTIONS_SCHEMA.schema.items()}
     return vol.Schema(
         {
-            vol.Required(name, default=dict): section(
+            vol.Required(name): section(
                 vol.Schema(dict(fields[key] for key in keys)), {"collapsed": True}
             )
             for name, keys in OPTIONS_SECTIONS.items()
