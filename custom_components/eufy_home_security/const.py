@@ -111,6 +111,14 @@ SESSION_PROBE_INTERVAL_SECONDS: Final = 6 * 60 * 60
 # constant is looked up under ``config.step`` by tests/test_packaging.py, and this
 # step lives under ``options.step``.
 OPTIONS_STEP_INIT: Final = "init"
+# The options form's collapsible sections, in form order; each holds the options
+# OPTIONS_SECTIONS in config_flow.py names. The options are stored flat.
+OPTIONS_SECTION_DETECTIONS: Final = "detections"
+OPTIONS_SECTION_CAMERA_IMAGES: Final = "camera_images"
+OPTIONS_SECTION_LIVE_VIEW: Final = "live_view"
+OPTIONS_SECTION_HISTORY: Final = "history"
+OPTIONS_SECTION_EUFY_ACCOUNT: Final = "eufy_account"
+OPTIONS_SECTION_MORE_COUNTRIES: Final = "more_countries"
 
 # Diagnostic entity keys, each the translation key and the key of its unique id.
 BATTERY_KEY: Final = "battery"

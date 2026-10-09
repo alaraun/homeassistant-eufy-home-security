@@ -94,6 +94,9 @@ location /api/hls/ {
   to a sign-in with that country: add it under **Extra eufy sign-in countries**. Each
   extra country signs in once more, on that country's eufy region, and its sign-ins
   count against eufy's daily limit.
+- Extra countries are experimental: each is a separate sign-in to the same account and
+  can end Home Assistant's eufy session or the eufy app's. Use them only for a shared
+  home that is otherwise missing; remove them if the account keeps being signed out.
 - Changing either option reloads the integration, signs in once more with each new
   country and asks eufy once for the devices.
 - Every request also carries Home Assistant's time zone, as the eufy app sends the

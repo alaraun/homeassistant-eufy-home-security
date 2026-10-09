@@ -1,4 +1,4 @@
-"""The entry's eleven options, driven through the real options flow.
+"""The entry's thirteen options, driven through the real options flow.
 
 Each option but the recording length and the sessions per HomeBase is read once at
 setup, so the automatic reload is what applies a change.
@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 from conftest import (
+    configure_options,
     set_up_warm,
 )
 from eufy_home_security import (
@@ -25,7 +26,7 @@ from eufy_home_security import (
 )
 from eufy_home_security.testing import SYNTHETIC, FakeStation
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType, InvalidData
+from homeassistant.data_entry_flow import FlowResultType, InvalidData, section
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -49,6 +50,12 @@ from custom_components.eufy_home_security.const import (
     DEFAULT_EVENT_HISTORY_DAYS,
     DEFAULT_RECORD_LENGTH_SECONDS,
     DOMAIN,
+    OPTIONS_SECTION_CAMERA_IMAGES,
+    OPTIONS_SECTION_DETECTIONS,
+    OPTIONS_SECTION_EUFY_ACCOUNT,
+    OPTIONS_SECTION_HISTORY,
+    OPTIONS_SECTION_LIVE_VIEW,
+    OPTIONS_SECTION_MORE_COUNTRIES,
     OPTIONS_STEP_INIT,
 )
 
@@ -66,7 +73,7 @@ async def _submit_options(
 ) -> None:
     """Submit the whole options form and wait out the reload it schedules."""
     result = await _open_options(hass, entry)
-    result = await hass.config_entries.options.async_configure(result["flow_id"], user_input)
+    result = await configure_options(hass, result["flow_id"], user_input)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
 
@@ -98,36 +105,48 @@ async def test_the_options_form_offers_its_thirteen_options_with_their_defaults(
     assert result["description_placeholders"]["history_path"] == str(
         Path(hass.config.media_dirs["local"]) / DOMAIN
     )
-    markers = list(result["data_schema"].schema)
+    sections = result["data_schema"].schema
+    assert [str(name) for name in sections] == [
+        OPTIONS_SECTION_DETECTIONS,
+        OPTIONS_SECTION_CAMERA_IMAGES,
+        OPTIONS_SECTION_LIVE_VIEW,
+        OPTIONS_SECTION_HISTORY,
+        OPTIONS_SECTION_EUFY_ACCOUNT,
+        OPTIONS_SECTION_MORE_COUNTRIES,
+    ], "the options form does not show its six sections, in order"
+    assert all(
+        isinstance(group, section) and group.options["collapsed"] for group in sections.values()
+    ), "every options section starts collapsed"
+    markers = [marker for group in sections.values() for marker in group.schema.schema]
     assert [str(marker) for marker in markers] == [
         CONF_DETECTION_HOLD,
         CONF_ALARM_TIMEOUT,
         CONF_CAMERA_IMAGE,
         CONF_LIVE_SNAPSHOT,
-        CONF_SESSION_PROBE,
-        CONF_CLOUD_PUSH,
-        CONF_COUNTRY,
-        CONF_EXTRA_COUNTRIES,
-        CONF_SCAN_REGIONS,
+        CONF_STATION_SESSIONS,
+        CONF_RECORD_LENGTH,
         CONF_EVENT_HISTORY_DAYS,
         CONF_EVENT_VIDEOS,
-        CONF_RECORD_LENGTH,
-        CONF_STATION_SESSIONS,
+        CONF_COUNTRY,
+        CONF_SESSION_PROBE,
+        CONF_CLOUD_PUSH,
+        CONF_EXTRA_COUNTRIES,
+        CONF_SCAN_REGIONS,
     ], "the options form does not offer exactly its thirteen options, in order"
     (
         hold,
         timeout,
         camera_image,
         live,
-        probe,
-        push,
-        country,
-        extra_countries,
-        scan_regions,
+        sessions,
+        length,
         history_days,
         videos,
-        length,
-        sessions,
+        country,
+        probe,
+        push,
+        extra_countries,
+        scan_regions,
     ) = markers
     assert hold.default() == DEFAULT_DETECTION_HOLD_SECONDS == 10
     assert timeout.default() == DEFAULT_ALARM_TIMEOUT_MINUTES == 10
@@ -151,6 +170,40 @@ async def test_the_options_form_offers_its_thirteen_options_with_their_defaults(
     await hass.async_block_till_done()
 
 
+async def test_the_form_shows_each_stored_option_in_its_section(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Stored options are flat; the form suggests each under its section, and an empty
+    country suggests Home Assistant's."""
+    hass.config.country = "EE"
+    entry = await set_up_warm(
+        hass,
+        seed_warm_cache,
+        options={CONF_DETECTION_HOLD: 42, CONF_EXTRA_COUNTRIES: ["CH"], CONF_SCAN_REGIONS: True},
+    )
+
+    result = await _open_options(hass, entry)
+    suggested = {
+        (str(name), str(marker)): (marker.description or {}).get("suggested_value")
+        for name, group in result["data_schema"].schema.items()
+        for marker in group.schema.schema
+    }
+    assert suggested[OPTIONS_SECTION_DETECTIONS, CONF_DETECTION_HOLD] == 42
+    assert suggested[OPTIONS_SECTION_MORE_COUNTRIES, CONF_EXTRA_COUNTRIES] == ["CH"]
+    assert suggested[OPTIONS_SECTION_MORE_COUNTRIES, CONF_SCAN_REGIONS] is True
+    assert suggested[OPTIONS_SECTION_EUFY_ACCOUNT, CONF_COUNTRY] == "EE"
+    assert suggested[OPTIONS_SECTION_DETECTIONS, CONF_ALARM_TIMEOUT] is None, (
+        "an option never stored shows its default, not a suggestion"
+    )
+    hass.config_entries.options.async_abort(result["flow_id"])
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
 async def test_hold_and_timeout_outside_their_ranges_are_refused(
     hass: HomeAssistant,
     fake_station: FakeStation,
@@ -166,7 +219,8 @@ async def test_hold_and_timeout_outside_their_ranges_are_refused(
     result = await _open_options(hass, entry)
     for hold, timeout in ((4, 10), (301, 10), (10, 0), (10, 61)):
         with pytest.raises(InvalidData):
-            await hass.config_entries.options.async_configure(
+            await configure_options(
+                hass,
                 result["flow_id"],
                 {
                     CONF_DETECTION_HOLD: hold,
@@ -297,7 +351,8 @@ async def test_camera_image_refuses_a_value_outside_its_three_choices(
     result = await _open_options(hass, entry)
     for value in ("live", "trigger_frame", "HD", ""):
         with pytest.raises(InvalidData):
-            await hass.config_entries.options.async_configure(
+            await configure_options(
+                hass,
                 result["flow_id"],
                 {
                     CONF_DETECTION_HOLD: 10,
@@ -401,9 +456,7 @@ async def test_sessions_per_homebase_outside_the_library_range_are_refused(
     result = await _open_options(hass, entry)
     for value in (MIN_STATION_SESSIONS - 1, STATION_SESSION_LIMIT + 1):
         with pytest.raises(InvalidData):
-            await hass.config_entries.options.async_configure(
-                result["flow_id"], {CONF_STATION_SESSIONS: value}
-            )
+            await configure_options(hass, result["flow_id"], {CONF_STATION_SESSIONS: value})
         assert entry.options == {}, value
     hass.config_entries.options.async_abort(result["flow_id"])
 
@@ -492,9 +545,7 @@ async def test_the_recording_length_is_5_to_300_seconds_and_applies_without_a_re
     result = await _open_options(hass, entry)
     for value in (4, 301):
         with pytest.raises(InvalidData):
-            await hass.config_entries.options.async_configure(
-                result["flow_id"], {CONF_RECORD_LENGTH: value}
-            )
+            await configure_options(hass, result["flow_id"], {CONF_RECORD_LENGTH: value})
         assert entry.options == {}, value
     hass.config_entries.options.async_abort(result["flow_id"])
 

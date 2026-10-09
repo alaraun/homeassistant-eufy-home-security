@@ -689,6 +689,11 @@ def _update_listener_uses(tree: ast.AST) -> list[int]:
     )
 
 
+def _option_texts(step: dict[str, Any], part: str) -> dict[str, str]:
+    """The options step's ``part`` (data or data_description) of every section, merged."""
+    return {key: text for texts in step["sections"].values() for key, text in texts[part].items()}
+
+
 def test_the_options_flow_offers_exactly_its_thirteen_options() -> None:
     """The entry's options are exactly these thirteen; a new one needs a deliberate change here.
 
@@ -710,6 +715,7 @@ def test_the_options_flow_offers_exactly_its_thirteen_options() -> None:
 
     from custom_components.eufy_home_security.config_flow import (
         OPTIONS_SCHEMA,
+        OPTIONS_SECTIONS,
         EufyHomeSecurityConfigFlow,
         EufyHomeSecurityOptionsFlow,
     )
@@ -729,6 +735,7 @@ def test_the_options_flow_offers_exactly_its_thirteen_options() -> None:
         CONF_STATION_SESSIONS,
         DEFAULT_EVENT_HISTORY_DAYS,
         DEFAULT_RECORD_LENGTH_SECONDS,
+        OPTIONS_SECTION_MORE_COUNTRIES,
         OPTIONS_STEP_INIT,
     )
 
@@ -746,35 +753,38 @@ def test_the_options_flow_offers_exactly_its_thirteen_options() -> None:
         CONF_ALARM_TIMEOUT,
         CONF_CAMERA_IMAGE,
         CONF_LIVE_SNAPSHOT,
-        CONF_SESSION_PROBE,
-        CONF_CLOUD_PUSH,
-        CONF_COUNTRY,
-        CONF_EXTRA_COUNTRIES,
-        CONF_SCAN_REGIONS,
+        CONF_STATION_SESSIONS,
+        CONF_RECORD_LENGTH,
         CONF_EVENT_HISTORY_DAYS,
         CONF_EVENT_VIDEOS,
-        CONF_RECORD_LENGTH,
-        CONF_STATION_SESSIONS,
+        CONF_COUNTRY,
+        CONF_SESSION_PROBE,
+        CONF_CLOUD_PUSH,
+        CONF_EXTRA_COUNTRIES,
+        CONF_SCAN_REGIONS,
     ]
     keys = [str(key) for key in OPTIONS_SCHEMA.schema]
     assert keys == expected, (
         f"the options schema offers {keys}; this entry has exactly thirteen options, and "
         f"another one added here without a decision would ship unannounced"
     )
+    assert [key for keys in OPTIONS_SECTIONS.values() for key in keys] == expected, (
+        "the options sections do not hold each option exactly once, in schema order"
+    )
     (
         hold,
         timeout,
         camera_image,
         live,
-        probe,
-        push,
-        country,
-        extra_countries,
-        scan_regions,
+        sessions,
+        length,
         history_days,
         videos,
-        length,
-        sessions,
+        country,
+        probe,
+        push,
+        extra_countries,
+        scan_regions,
     ) = OPTIONS_SCHEMA.schema
     assert push.default() is False, "cloud push uses eufy's cloud: opt-in only"
     assert country.default() == "", "an empty login country means Home Assistant's"
@@ -800,17 +810,31 @@ def test_the_options_flow_offers_exactly_its_thirteen_options() -> None:
     for path in (_STRINGS_PATH, _EN_PATH):
         document = json.loads(path.read_text())
         step = document["options"]["step"][OPTIONS_STEP_INIT]
-        for section in ("data", "data_description"):
-            assert set(step[section]) == set(expected), (
-                f"{path.name} {section} covers {sorted(step[section])} on the options "
-                f"form, which is not the set of fields the schema offers"
-            )
+        assert list(step["sections"]) == list(OPTIONS_SECTIONS), (
+            f"{path.name} names {list(step['sections'])} as the options sections, not "
+            f"the form's {list(OPTIONS_SECTIONS)}"
+        )
+        for name, section_keys in OPTIONS_SECTIONS.items():
+            texts = step["sections"][name]
+            assert texts["name"], f"{path.name} options section {name} has no name"
+            for part in ("data", "data_description"):
+                assert set(texts[part]) == set(section_keys), (
+                    f"{path.name} {name} {part} covers {sorted(texts[part])}, not the "
+                    f"section's fields {sorted(section_keys)}"
+                )
+        more_countries = step["sections"][OPTIONS_SECTION_MORE_COUNTRIES]
+        assert "experimental" in more_countries["name"].lower(), (
+            f"{path.name}: the extra countries section is not named experimental"
+        )
+        assert "session" in more_countries["description"], (
+            f"{path.name}: the extra countries section does not warn that it can end a session"
+        )
         assert set(document["selector"][CONF_CAMERA_IMAGE]["options"]) == {
             "hd",
             "thumbnail",
             "hd_only",
         }, f"{path.name} does not label exactly the three camera image choices"
-        camera_image_text = step["data_description"][CONF_CAMERA_IMAGE]
+        camera_image_text = _option_texts(step, "data_description")[CONF_CAMERA_IMAGE]
         for placeholder in ("{thumbnail_seconds}", "{hd_seconds}"):
             assert placeholder in camera_image_text, (
                 f"{path.name} camera image description lost {placeholder}: its timing "
@@ -849,7 +873,7 @@ def test_image_labels_say_whether_an_image_is_from_an_event_or_live() -> None:
     for path in (_STRINGS_PATH, _EN_PATH):
         doc = json.loads(path.read_text())
         step = doc["options"]["step"][OPTIONS_STEP_INIT]
-        assert step["data"][CONF_CAMERA_IMAGE] == "Event image", (
+        assert _option_texts(step, "data")[CONF_CAMERA_IMAGE] == "Event image", (
             f"{path.name}: the camera image option label is not Event image"
         )
         assert doc["selector"][CONF_CAMERA_IMAGE]["options"] == {
@@ -864,7 +888,7 @@ def test_image_labels_say_whether_an_image_is_from_an_event_or_live() -> None:
         assert buttons[CAPTURE_LIVE_IMAGE_KEY]["name"] == "Capture live image", (
             f"{path.name}: the live button is not named Capture live image"
         )
-        description = step["data_description"][CONF_CAMERA_IMAGE]
+        description = _option_texts(step, "data_description")[CONF_CAMERA_IMAGE]
         for needle in (
             "Refresh event image",
             "Capture live image",

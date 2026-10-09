@@ -32,6 +32,7 @@ from conftest import (
     SENSOR_SN,
     SYNTHETIC,
     add_entry,
+    configure_options,
     detection_event,
     entity_id_for,
     now_ms,
@@ -526,8 +527,8 @@ async def test_raising_the_session_budget_serves_a_waiting_live_view(
     assert not opening.done()
 
     flow = await hass.config_entries.options.async_init(entry.entry_id)
-    await hass.config_entries.options.async_configure(
-        flow["flow_id"], {CONF_STATION_SESSIONS: MIN_STATION_SESSIONS + 1}
+    await configure_options(
+        hass, flow["flow_id"], {CONF_STATION_SESSIONS: MIN_STATION_SESSIONS + 1}
     )
     async with asyncio.timeout(10):
         r2 = await opening

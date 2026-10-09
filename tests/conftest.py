@@ -13,7 +13,7 @@ import asyncio
 import os
 import re
 import shlex
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
@@ -46,6 +46,7 @@ from eufy_home_security.testing import (
 )
 from fake_ffmpeg import FAKE_FFMPEG_PREFIX
 from homeassistant.components.alarm_control_panel import DOMAIN as ALARM_DOMAIN
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import ATTR_ENTITY_ID, CONF_EMAIL, EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
@@ -56,7 +57,10 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.eufy_home_security import runtime, snapshots
-from custom_components.eufy_home_security.config_flow import EufyHomeSecurityConfigFlow
+from custom_components.eufy_home_security.config_flow import (
+    OPTIONS_SECTIONS,
+    EufyHomeSecurityConfigFlow,
+)
 from custom_components.eufy_home_security.const import (
     DOMAIN,
     GUARD_MODE_KEY,
@@ -71,6 +75,7 @@ __all__ = [
     "add_motion_sensor",
     "advance_to_poll",
     "cloud_calls",
+    "configure_options",
     "detection_event",
     "entity_id_for",
     "now_ms",
@@ -430,6 +435,19 @@ async def wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> Non
     async with asyncio.timeout(timeout):
         while not predicate():
             await asyncio.sleep(0.02)
+
+
+async def configure_options(
+    hass: HomeAssistant, flow_id: str, options: Mapping[str, Any]
+) -> ConfigFlowResult:
+    """Submit flat ``options`` to the options form, each under its section."""
+    return await hass.config_entries.options.async_configure(
+        flow_id,
+        {
+            name: {key: options[key] for key in keys if key in options}
+            for name, keys in OPTIONS_SECTIONS.items()
+        },
+    )
 
 
 async def set_up_warm(

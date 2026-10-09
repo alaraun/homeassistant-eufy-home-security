@@ -13,7 +13,14 @@ from collections.abc import Callable
 from typing import Any, Final
 
 import pytest
-from conftest import add_entry, cloud_calls, entity_id_for, set_up_warm, setup_entry
+from conftest import (
+    add_entry,
+    cloud_calls,
+    configure_options,
+    entity_id_for,
+    set_up_warm,
+    setup_entry,
+)
 from eufy_home_security import EufySecurity
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
 from homeassistant.components.repairs import RepairsFlowManager, repairs_flow_manager
@@ -139,9 +146,7 @@ async def test_an_added_extra_country_signs_in_with_it_and_asks_every_scope_once
     clients = len(built_clients)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_EXTRA_COUNTRIES: ["CH"]}
-    )
+    result = await configure_options(hass, result["flow_id"], {CONF_EXTRA_COUNTRIES: ["CH"]})
     await hass.async_block_till_done()
 
     assert entry.options[CONF_EXTRA_COUNTRIES] == ["CH"]
@@ -193,17 +198,13 @@ async def test_a_changed_login_country_reloads_and_asks_every_login_scope_once(
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["step_id"] == OPTIONS_STEP_INIT
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_COUNTRY: "EE"}
-    )
+    result = await configure_options(hass, result["flow_id"], {CONF_COUNTRY: "EE"})
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert len(built_clients) == clients, "Home Assistant's own country is no change"
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_COUNTRY: "CH"}
-    )
+    result = await configure_options(hass, result["flow_id"], {CONF_COUNTRY: "CH"})
     await hass.async_block_till_done()
 
     assert len(built_clients) == clients + 1, "the entry was not reloaded"
