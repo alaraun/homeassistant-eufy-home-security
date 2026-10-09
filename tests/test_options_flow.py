@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import voluptuous as vol
 from conftest import (
     configure_options,
     set_up_warm,
@@ -117,6 +118,10 @@ async def test_the_options_form_offers_its_thirteen_options_with_their_defaults(
     assert all(
         isinstance(group, section) and group.options["collapsed"] for group in sections.values()
     ), "every options section starts collapsed"
+    assert all(marker.default is vol.UNDEFINED for marker in sections), (
+        "an options section has a default, so the frontend shows that default instead "
+        "of the section's saved values"
+    )
     markers = [marker for group in sections.values() for marker in group.schema.schema]
     assert [str(marker) for marker in markers] == [
         CONF_DETECTION_HOLD,
