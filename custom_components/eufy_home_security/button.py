@@ -376,6 +376,9 @@ class EufyRefreshDeviceListButton(ButtonEntity):
         stale_devices.async_remove_unlisted(
             self.hass, self._entry, runtime.listed_serials(runtime_data.eufy)
         )
+        errors.sync_skipped_devices_issues(
+            self.hass, self._entry, runtime_data.eufy.skipped_devices
+        )
         after = set(runtime_data.eufy.stations)
         if after != before:
             _LOGGER.debug(

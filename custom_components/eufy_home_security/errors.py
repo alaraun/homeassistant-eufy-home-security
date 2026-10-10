@@ -8,8 +8,8 @@ The repair-issue helpers are the only mapping from library cloud and key errors 
 repair issues, and none of them logs in or calls the cloud: a kick-out or a throttle
 becomes something the user sees and decides on, never a retry. Issue ids and data
 carry only the entry id and a device-registry id; placeholders carry an account
-label, a device name and minutes, never a serial, owner account id, e-mail address
-or password.
+label, a device name and minutes, never a serial (a device left out of the device
+list only as the library redacts it), owner account id, e-mail address or password.
 
 :func:`arm_failed` and :func:`setting_write_failed` share five of their six messages
 through one placeholder, ``target`` (a lower-case mode name or an entity name), so
@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.const import CONF_EMAIL
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
@@ -59,6 +59,7 @@ from eufy_home_security import (
     RegionStatus,
     SessionRejectedError,
     SessionReplacedError,
+    SkippedDevice,
     Station,
     redact,
     redact_serial,
@@ -114,6 +115,7 @@ from .const import (
     ISSUE_CIPHER_UNAVAILABLE,
     ISSUE_CREDENTIALS_REFRESHED,
     ISSUE_CREDENTIALS_REFRESHED_LOGIN,
+    ISSUE_DEVICE_SERIAL_UNSUPPORTED,
     ISSUE_KEY_REJECTED,
     ISSUE_KEY_UNUSABLE,
     ISSUE_LOGIN_BUDGET,
@@ -124,6 +126,7 @@ from .const import (
     ISSUE_PENDING_INVITES,
     ISSUE_PUSH_NOT_RUNNING,
     ISSUE_SESSION_REPLACED,
+    ISSUE_STATION_P2P_ID_UNSUPPORTED,
     MEDIA_DOCS_URL,
 )
 
@@ -1072,7 +1075,7 @@ def raise_account_mismatch_issue(hass: HomeAssistant, entry: ConfigEntry[Any], s
 
 def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:
     """Delete the entry's account-id-mismatch, cipher-unavailable, key-unusable,
-    no-devices, pending-invitations and login-limited issues.
+    no-devices, pending-invitations, login-limited and skipped-device issues.
 
     Unload, the start of every setup attempt and entry removal call it, so an issue
     raised by an attempt that then failed (and so was never unloaded) does not
@@ -1088,6 +1091,7 @@ def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) ->
         no_devices_issue_id(entry.entry_id),
         pending_invites_issue_id(entry.entry_id),
         login_limited_issue_id(entry.entry_id),
+        *(skipped_devices_issue_id(entry.entry_id, key) for key in _SKIP_ISSUES.values()),
     )
     cancel_login_limited_expiry(hass, entry.entry_id)
     stale = [
@@ -1130,6 +1134,53 @@ def sync_no_devices_issue(
             "regions": ", ".join(sorted(regions)),
         },
     )
+
+
+# The skip reasons of the library's ``SkippedDevice`` that get an issue, and its key.
+# None for ``no_did`` (no station, paired to none: another eufy product, no fault) or
+# ``orphan`` (a skipped station's issue says its paired devices are left out with it;
+# one paired to an unlisted station shows in diagnostics only).
+_SKIP_ISSUES: Final[Mapping[str, str]] = {
+    "bad_did": ISSUE_STATION_P2P_ID_UNSUPPORTED,
+    "bad_serial": ISSUE_DEVICE_SERIAL_UNSUPPORTED,
+}
+
+
+def skipped_devices_issue_id(entry_id: str, key: str) -> str:
+    """The account's issue of translation key ``key`` for skipped devices: one per entry."""
+    return f"{key}_{entry_id}"
+
+
+def sync_skipped_devices_issues(
+    hass: HomeAssistant, entry: ConfigEntry[Any], skipped: Iterable[SkippedDevice]
+) -> None:
+    """Show one issue per skip reason of :data:`_SKIP_ISSUES` the device list has; withdraw
+    the others.
+
+    Non-fixable: nothing in Home Assistant or the eufy app makes local connections
+    accept such a device. The placeholders are the account's label and the devices'
+    serials as the library redacts them (model prefix and last four characters).
+    """
+    skipped = tuple(skipped)
+    for reason, key in _SKIP_ISSUES.items():
+        issue_id = skipped_devices_issue_id(entry.entry_id, key)
+        labels = [device.device_sn_redacted for device in skipped if device.reason == reason]
+        if not labels:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+            continue
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=key,
+            translation_placeholders={
+                "account": account_label(entry),
+                "devices": ", ".join(labels),
+            },
+        )
 
 
 def pending_invites_issue_id(entry_id: str) -> str:

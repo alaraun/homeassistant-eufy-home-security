@@ -42,9 +42,16 @@ from eufy_home_security import (
     LoginLimitedError,
     SessionCache,
     SessionReplacedError,
+    SkippedDevice,
     redact_serial,
 )
-from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
+from eufy_home_security.testing import (
+    SYNTHETIC,
+    FakeCloud,
+    FakeStation,
+    camera_device,
+    station_device,
+)
 from homeassistant.components.alarm_control_panel import DOMAIN as ALARM_DOMAIN
 from homeassistant.components.event import DOMAIN as EVENT_DOMAIN
 from homeassistant.components.repairs import RepairsFlowManager, repairs_flow_manager
@@ -1001,3 +1008,135 @@ async def test_with_the_region_option_a_press_finds_a_station_homed_on_the_other
     assert station.device.region == "us"
 
     await _unload(hass, entry)
+
+
+# A station whose P2P id local connections refuse (a 9-digit number, a 10-character
+# suffix), a camera paired to it, a camera whose serial cannot name it in an id and
+# a device that is no station and paired to none: all synthetic.
+_FAR_STATION_SN: Final = "T8030P3000000001"
+_FAR_CAMERA_SN: Final = "T8113P3000000002"
+_FAR_DID: Final = "TESTPRA-000123456-ABCDE12345"
+_ODD_CAMERA_SN: Final = "T8160-BAD_0001"
+_VACUUM_SN: Final = "T2266P1000000001"
+
+
+def _skip_issue(hass: HomeAssistant, entry: MockConfigEntry, key: str) -> ir.IssueEntry | None:
+    return ir.async_get(hass).async_get_issue(
+        DOMAIN, errors.skipped_devices_issue_id(entry.entry_id, key)
+    )
+
+
+def _list_far_station(cloud: FakeCloud) -> None:
+    cloud.devices += [
+        station_device(_FAR_STATION_SN, did=_FAR_DID, name="Far"),
+        camera_device(_FAR_CAMERA_SN, station_sn=_FAR_STATION_SN, name="Behind far"),
+    ]
+
+
+async def test_a_station_whose_p2p_id_local_connections_refuse_is_a_repair_and_the_rest_loads(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """One non-fixable issue naming the station by its redacted serial; the account's
+    other station loads, and a setup on a list without that station withdraws it."""
+    _list_far_station(fake_cloud)
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert set(entry.runtime_data.coordinators) == {SYNTHETIC.station_sn}
+    issue = _skip_issue(hass, entry, "station_p2p_id_unsupported")
+    assert issue is not None
+    assert issue.is_fixable is False
+    assert issue.is_persistent is False
+    assert issue.severity is ir.IssueSeverity.WARNING
+    assert issue.translation_key == "station_p2p_id_unsupported"
+    assert issue.translation_placeholders == {
+        "account": errors.account_label(entry),
+        "devices": redact_serial(_FAR_STATION_SN),
+    }
+    assert _skip_issue(hass, entry, "device_serial_unsupported") is None
+
+    await _unload(hass, entry)
+    assert _skip_issue(hass, entry, "station_p2p_id_unsupported") is None
+
+    # An attempt that raised it and then failed is never unloaded: setup decides afresh.
+    errors.sync_skipped_devices_issues(hass, entry, _far_skips())
+    assert _skip_issue(hass, entry, "station_p2p_id_unsupported") is not None
+    _unlist_far_station(fake_cloud)
+    seed_warm_cache()
+    assert await setup_entry(hass, entry)
+    assert _skip_issue(hass, entry, "station_p2p_id_unsupported") is None
+    assert set(entry.runtime_data.coordinators) == {SYNTHETIC.station_sn}
+
+    await _unload(hass, entry)
+
+
+def _far_skips() -> list[SkippedDevice]:
+    return [
+        SkippedDevice(redact_serial(_FAR_STATION_SN), "bad_did"),
+        SkippedDevice(redact_serial(_FAR_CAMERA_SN), "orphan"),
+    ]
+
+
+def _unlist_far_station(cloud: FakeCloud) -> None:
+    far = {_FAR_STATION_SN, _FAR_CAMERA_SN}
+    cloud.devices = [d for d in cloud.devices if d["device_sn"] not in far]
+
+
+async def test_a_device_list_refresh_without_the_refused_station_withdraws_its_issue(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Refresh device list decides the issue afresh, without a reload."""
+    _list_far_station(fake_cloud)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    assert _skip_issue(hass, entry, "station_p2p_id_unsupported") is not None
+    before = len(built_clients)
+
+    _unlist_far_station(fake_cloud)
+    await _press_refresh_device_list(hass, entry)
+
+    assert _skip_issue(hass, entry, "station_p2p_id_unsupported") is None
+    assert len(built_clients) == before
+
+    await _unload(hass, entry)
+
+
+async def test_a_device_whose_serial_cannot_name_it_is_a_repair_and_a_non_station_is_not(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A serial that is not letters and digits gets its own issue, naming the redacted
+    serial; a device that is no station and paired to none (another eufy product) gets
+    none."""
+    fake_cloud.devices += [
+        camera_device(_ODD_CAMERA_SN, station_sn=SYNTHETIC.station_sn, channel=1, name="Odd"),
+        {"device_sn": _VACUUM_SN, "device_type": 0, "device_name": "Vacuum"},
+    ]
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    reasons = {s.reason for s in entry.runtime_data.eufy.skipped_devices}
+    assert reasons == {"bad_serial", "no_did"}
+    issue = _skip_issue(hass, entry, "device_serial_unsupported")
+    assert issue is not None
+    assert issue.is_fixable is False
+    assert issue.translation_key == "device_serial_unsupported"
+    assert issue.translation_placeholders == {
+        "account": errors.account_label(entry),
+        "devices": redact_serial(_ODD_CAMERA_SN),
+    }
+    assert _skip_issue(hass, entry, "station_p2p_id_unsupported") is None
+    assert [
+        issue_id
+        for domain, issue_id in ir.async_get(hass).issues
+        if domain == DOMAIN and issue_id.endswith(entry.entry_id)
+    ] == [errors.skipped_devices_issue_id(entry.entry_id, "device_serial_unsupported")]
+
+    await _unload(hass, entry)
+    assert _skip_issue(hass, entry, "device_serial_unsupported") is None
