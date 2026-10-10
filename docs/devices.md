@@ -20,6 +20,9 @@ generated from eufy's own model data. What the file says decides the entity:
 
 A model without a settings file in the library gets no setting entities. A newer
 library release adds models and controls; update the integration to get them.
+A device paired to a HomeBase gets no time zone, clock format, switching
+notification or NAS storage settings: the eufy app offers those only for a device
+without a HomeBase. Their entities from an older release are removed at the next start.
 Details: [usage.md](usage.md#device-settings).
 
 ## Tested models
