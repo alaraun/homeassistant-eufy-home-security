@@ -5,6 +5,19 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.3.2](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.1...v0.3.2) (2026-10-10)
+
+
+### Features
+
+* a second press on the camera card's record button stops the recording (library 0.3.8) ([#69](https://github.com/alaraun/homeassistant-eufy-home-security/issues/69)) ([0e6d914](https://github.com/alaraun/homeassistant-eufy-home-security/commit/0e6d9147c9e04c3c56b0bea70aef2534157e0e5a))
+
+
+### Bug Fixes
+
+* a station with a P2P id local connections do not accept is skipped with a repair, the account's other stations load (library 0.3.7) ([#68](https://github.com/alaraun/homeassistant-eufy-home-security/issues/68)) ([4a1f977](https://github.com/alaraun/homeassistant-eufy-home-security/commit/4a1f9773d8970d467c9f7aeb66dfd18b3f04171d))
+* the camera card centres the icons of its picture controls ([#66](https://github.com/alaraun/homeassistant-eufy-home-security/issues/66)) ([08e14e7](https://github.com/alaraun/homeassistant-eufy-home-security/commit/08e14e712cfabc1cd908df24f07a0dec42f5cd9b))
+
 ## [0.3.1](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.0...v0.3.1) (2026-10-10)
 
 
