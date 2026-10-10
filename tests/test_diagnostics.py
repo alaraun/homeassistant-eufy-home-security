@@ -134,6 +134,7 @@ async def test_the_diagnostics_download_has_the_cache_summary_and_session_health
     assert session["extra_live_sessions_open"] == 0
     assert session["media_slot_channel"] is None
     assert station["max_sessions"] == DEFAULT_STATION_SESSIONS
+    assert station["unread_dump_keys"] == []
 
     sub_devices = station["sub_devices"]
     assert isinstance(sub_devices, list)
@@ -151,6 +152,24 @@ async def test_the_diagnostics_download_has_the_cache_summary_and_session_health
     assert models["T8160"]["state"] == "bundled"
     assert models["T8030"]["newer_vendor_data"] is False
 
+    await _unload(hass, entry)
+
+
+async def test_the_diagnostics_download_names_the_dump_keys_the_library_does_not_read(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A top-level dump key the library reads nowhere is listed under its station, sorted."""
+    fake_station.dump_extra = {"zz_unknown_list": [], "aa_unknown_flag": 1}
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    data = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+
+    station = data["stations"][redact_serial(SYNTHETIC.station_sn)]
+    assert station["unread_dump_keys"] == ["aa_unknown_flag", "zz_unknown_list"]
     await _unload(hass, entry)
 
 
@@ -450,6 +469,7 @@ def _stand_in_coordinator(serial: str, like: Any) -> Any:
         sub_devices=[],
         devices=[],
         stats=like.stats,
+        session=SimpleNamespace(unread_dump_keys=frozenset()),
         max_sessions=like.max_sessions,
         storage=None,
     )

@@ -137,6 +137,8 @@ async def async_get_config_entry_diagnostics(
             "devices": [device.as_redacted_dict() for device in station.devices],
             "max_sessions": station.max_sessions,
             "session": dataclasses.asdict(station.stats()),
+            # Top-level keys of the station's parameter dumps the library reads nowhere.
+            "unread_dump_keys": sorted(station.session.unread_dump_keys),
             "events_received_by_cipher": data.router.events_received_by_cipher(station.serial),
             "storage": _storage_figures(station.storage),
             "presets": _preset_figures(station),

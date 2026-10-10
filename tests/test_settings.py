@@ -377,6 +377,50 @@ async def test_a_setting_moved_to_another_platform_leaves_no_orphan_behind(
     await hass.async_block_till_done()
 
 
+async def test_a_paired_device_loses_its_rows_of_settings_offered_only_without_a_parent(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    seed_warm_cache: Callable[..., None],
+    built_clients: list[EufySecurity],
+) -> None:
+    """A paired device's row of a ``PARENTLESS_ONLY`` setting is forgotten at setup.
+
+    A ``toggles`` member's row goes too. The station's own row of such a key and another
+    config entry's row stay.
+    """
+    seed_warm_cache()
+    entry = add_entry(hass)
+    other = add_entry(hass, email="other@example.com", unique_id="other@example.com")
+    registry = er.async_get(hass)
+    camera = SYNTHETIC.camera_sn
+    stale = [
+        (Platform.SWITCH, entity_unique_id(camera, "hb_connect_nas_switch")),
+        (Platform.NUMBER, entity_unique_id(camera, "hb_connect_nas_storage_type")),
+        (Platform.SELECT, entity_unique_id(camera, "timezone_set")),
+        (Platform.SWITCH, entity_unique_id(camera, "switching_notification_0")),
+    ]
+    for domain, unique_id in stale:
+        registry.async_get_or_create(domain, DOMAIN, unique_id, config_entry=entry)
+    own = registry.async_get_or_create(
+        Platform.SELECT,
+        DOMAIN,
+        entity_unique_id(SYNTHETIC.station_sn, "timezone_set"),
+        config_entry=entry,
+    )
+    foreign = registry.async_get_or_create(
+        Platform.SELECT, DOMAIN, entity_unique_id(camera, "time_format_set"), config_entry=other
+    )
+
+    assert await setup_entry(hass, entry)
+
+    for domain, unique_id in stale:
+        assert registry.async_get_entity_id(domain, DOMAIN, unique_id) is None, unique_id
+    assert registry.async_get(own.entity_id) is not None
+    assert registry.async_get(foreign.entity_id) is not None
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
 async def test_a_variant_control_is_registered_disabled(
     hass: HomeAssistant,
     fake_station: FakeStation,

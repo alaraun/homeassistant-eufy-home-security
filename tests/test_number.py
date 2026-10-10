@@ -290,7 +290,7 @@ _CAMERA_NUMBERS: Final = frozenset(
     {
         "trigger_interval_time",
         "video_clip_length",
-        "hb_connect_nas_storage_type",
+        # hb_connect_nas_storage_type: offered only without a parent (PARENTLESS_ONLY)
         "detection_sensitivity",
     }
 )

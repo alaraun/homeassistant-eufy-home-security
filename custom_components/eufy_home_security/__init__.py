@@ -59,7 +59,7 @@ from .coordinator import StationCoordinator
 from .events import EventRouter
 from .presets import PresetManager
 from .runtime import EufyConfigEntry
-from .settings import setting_specs
+from .settings import offered_only_without_parent, setting_specs
 from .snapshots import SnapshotManager, camera_image_mode
 from .storage import StorageCoordinator
 from .streaming import StreamManager
@@ -482,6 +482,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         station_recordings=station_recordings.StationRecordings(hass, stored_recordings),
     )
     _async_forget_moved_setting_entities(hass, entry, coordinators.values())
+    _async_forget_parentless_setting_entities(hass, entry, coordinators.values())
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     for serial, storage_coordinator in storage.items():
         if coordinators[serial].station.connected:
@@ -589,6 +590,38 @@ def _async_forget_moved_setting_entities(
                 registered = registry.async_get(entity_id)
                 if registered is not None and registered.config_entry_id == entry.entry_id:
                     registry.async_remove(entity_id)
+
+
+def _async_forget_parentless_setting_entities(
+    hass: HomeAssistant, entry: EufyConfigEntry, coordinators: Iterable[StationCoordinator]
+) -> None:
+    """Forget a paired device's rows of settings offered only without a parent.
+
+    The library lists no such setting for a device paired to a station
+    (``settings.offered_only_without_parent``); a row an earlier release built would
+    stay as an unavailable orphan. Only this entry's rows on the setting platforms, of
+    devices paired to a served station, and never a unique id this setup builds.
+    """
+    registry = er.async_get(hass)
+    paired: set[str] = set()
+    built: set[str] = set()
+    for coordinator in coordinators:
+        station = coordinator.station
+        built.update(
+            entity_unique_id(spec.device_sn or station.serial, spec.key)
+            for spec in setting_specs(station)
+        )
+        paired.update(
+            device.device_sn
+            for device in station.sub_devices
+            if device.device_sn and device.device_sn != station.serial
+        )
+    for registered in er.async_entries_for_config_entry(registry, entry.entry_id):
+        unique_id = registered.unique_id
+        if registered.domain not in _SETTING_DOMAINS or unique_id in built:
+            continue
+        if any(offered_only_without_parent(unique_id, serial) for serial in paired):
+            registry.async_remove(registered.entity_id)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from homeassistant.const import Platform
 
-from eufy_home_security import GuardMode, Station
+from eufy_home_security import GuardMode, Station, entity_unique_id
 from eufy_home_security.devices import (
     MODE_ACTION_FLAGS,
     Setting,
@@ -21,6 +21,7 @@ from eufy_home_security.devices import (
     SettingKind,
     mode_action_flags,
 )
+from eufy_home_security.devices.model_settings import PARENTLESS_ONLY
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +124,17 @@ _CONTROLS: Mapping[SettingControl, Platform] = {
     SettingControl.TOGGLES: Platform.SWITCH,
     SettingControl.TEXT: Platform.TEXT,
 }
+
+
+def offered_only_without_parent(unique_id: str, device_sn: str) -> bool:
+    """Whether ``unique_id`` is device ``device_sn``'s entity of a setting the library lists
+    only for a device without a parent station (``PARENTLESS_ONLY``); a ``toggles``
+    member's entity counts."""
+    for key in PARENTLESS_ONLY:
+        base = entity_unique_id(device_sn, key)
+        if unique_id == base or unique_id.startswith(f"{base}_"):
+            return True
+    return False
 
 
 def setting_platform(setting: Setting) -> Platform | None:
