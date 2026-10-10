@@ -92,7 +92,9 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     (every width, full screen too) and a red dot at the top left stays; a tap or click on the picture brings them
     back, another hides them. Keyboard focus shows them too; a recording's `● REC` chip stays.
 - **Record:** the live bar's record button, or `Record a clip` in the menu while idle, records a clip of the
-  integration's Recording length into the history (Captures). While any client records, a `● REC 12 s` chip shows.
+  integration's Recording length into the history (Captures). While any client records, a `● REC 12 s` chip shows,
+  and the same button (red, a stop square) or `Stop recording` in the menu ends the clip; the part recorded so far
+  is saved.
 - **History:** the camera's saved files, newest first, as a row of tiles in sub-tabs: **Events** (detections),
   **Captures** (live captures, New still), **Presets** (only when there are any) and **Station** (the recordings
   on the HomeBase's own storage). Events, Captures and Presets have a Pictures / Videos filter; 10 items show
@@ -126,7 +128,7 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
 ## Writes
 
 - **Immediate:** pan/tilt, zoom and go-to-preset (`eufy_home_security.pan_tilt`, `.zoom`, `.goto_preset`), Record
-  (`eufy_home_security.record`), Save view and Replace (`eufy_home_security.save_preset`, then the picture over
+  (`eufy_home_security.record`), Stop recording (`eufy_home_security.stop_recording`), Save view and Replace (`eufy_home_security.save_preset`, then the picture over
   the websocket command `eufy_home_security/preset_image`) and the Station Play/Save. Pan/tilt steps run one at a time; up to 3 presses wait
   their turn.
 - **Staged:** settings, `New still` and `Refresh event image`. ✕ / Set appear in the header; Set sends one write

@@ -117,3 +117,9 @@ record:
           step: 1
           unit_of_measurement: s
           mode: box
+
+stop_recording:
+  target:
+    entity:
+      integration: eufy_home_security
+      domain: camera

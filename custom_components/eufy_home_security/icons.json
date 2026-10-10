@@ -123,6 +123,9 @@
     },
     "record": {
       "service": "mdi:record-rec"
+    },
+    "stop_recording": {
+      "service": "mdi:stop-circle-outline"
     }
   }
 }

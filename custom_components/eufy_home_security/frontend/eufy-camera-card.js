@@ -4,7 +4,7 @@
 // `entity` is required; the settings rows are built from whatever settings the device has: the common ones
 // grouped, a setting that applies only in one state of another nested under it, the rest under More settings.
 
-const CARD_VERSION = '2026.10.10-1';
+const CARD_VERSION = '2026.10.10-2';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -244,6 +244,7 @@ class EufyCameraCard extends HTMLElement {
     this._hfilt = {};       // sub-tab -> { pic, vid }: which media it shows (both by default)
     this._hday = null;      // History day (YYYY-MM-DD): only that day's files and recordings; null = the newest
     this._rec = null;       // { at } while this card's record action runs
+    this._recStop = false;  // a stop_recording call is on its way; cleared when the clip ends
     this._srec = null;      // station recordings: { items, supported, loading, err }
     this._sfetch = new Map(); // record id -> 'play' | 'save' while its fetch runs
     this._thumbs = new Set(); // station thumbnail URLs already shown (rendered with src at once)
@@ -763,7 +764,8 @@ class EufyCameraCard extends HTMLElement {
   // wakes) and saves a clip of its Recording length into the history (Captures). Returns when the clip is saved.
   _record() {
     const h = this._hass;
-    if (!h || this._recording()) return;
+    if (!h) return;
+    if (this._recording()) { this._stopRecord(); return; }
     const R = { at: Date.now() };
     this._rec = R;
     this.render();
@@ -777,6 +779,17 @@ class EufyCameraCard extends HTMLElement {
       })
       .catch(e => this._toast((e && e.message) || 'Not recorded'))
       .finally(() => { if (this._rec === R) this._rec = null; this.render(); });
+  }
+
+  // The integration's stop_recording action: the running clip ends and is saved as recorded so far (this card's or
+  // anyone's: the camera's state says recording)
+  _stopRecord() {
+    const h = this._hass;
+    if (!h || this._recStop) return;
+    this._recStop = true;
+    this.render();
+    Promise.resolve(h.callService(DOMAIN, 'stop_recording', { entity_id: this._config.entity }))
+      .catch((e) => { this._recStop = false; this._toast((e && e.message) || 'Not stopped'); this.render(); });
   }
 
   _recTick() {
@@ -1672,6 +1685,8 @@ class EufyCameraCard extends HTMLElement {
     if (!avail && this._live) { this._stop('Camera unavailable'); return; }
     const L = this._live;
     const recording = avail && this._recording();
+    if (!recording) this._recStop = false;
+    const recStop = recording && this._recStop;
     if (recording && !this._recT) this._recT = setInterval(() => this._recTick(), 1000);
     if (!recording && this._recT) { clearInterval(this._recT); this._recT = null; }
 
@@ -1835,8 +1850,8 @@ class EufyCameraCard extends HTMLElement {
       ? [['live', 'pin', L.continuous ? `Stop after ${mmss(this._liveSeconds())}` : 'Keep live (continuous)', L.continuous ? 'mdi:timer-outline' : 'mdi:all-inclusive'],
         ['live', 'full', 'Full screen', 'mdi:fullscreen'], ['live', 'stop', 'Stop live view', 'mdi:stop']]
       : [['live', 'timed', `Live view · ${mmss(this._liveSeconds())}`, 'mdi:play'], ['live', 'continuous', 'Live view · continuous', 'mdi:all-inclusive']]);
-    // Record a clip (live or idle: the action opens the stream itself); disabled while one is recorded
-    if (avail && canLive) liveMenu.push(['live', 'rec', recording ? 'Recording a clip' : 'Record a clip', 'mdi:record-rec', recording]);
+    // Record a clip (live or idle: the action opens the stream itself); while one is recorded the same item stops it
+    if (avail && canLive) liveMenu.push(['live', 'rec', recording ? 'Stop recording' : 'Record a clip', recording ? 'mdi:stop-circle-outline' : 'mdi:record-rec', recStop]);
     const actMenu = ['capture', 'refresh'].filter(a => E[a] && avail).map(a => ['action', a, ACTIONS[a].label, ACTIONS[a].icon]);
     const items = [...liveMenu, ...actMenu];
     const menu = this._menuOpen ? `
@@ -1922,7 +1937,7 @@ class EufyCameraCard extends HTMLElement {
     const bar = L ? `<div class="lbar" role="group" aria-label="Live view">
             <button type="button" class="lb" data-live="stop" data-focus="live-stop" aria-label="Stop live view"><ha-icon icon="mdi:stop"></ha-icon></button>
             <button type="button" class="lb opt2${L.continuous ? ' on' : ''}" data-live="pin" data-focus="live-pin" aria-pressed="${L.continuous}" aria-label="Continuous live view"><ha-icon icon="mdi:all-inclusive"></ha-icon></button>
-            <button type="button" class="lb rec${recording ? ' on' : ''}" data-live="rec" data-focus="live-rec" aria-label="${recording ? 'Recording a clip' : 'Record a clip'}"${recording ? ' disabled' : ''}><ha-icon icon="mdi:record-rec"></ha-icon></button>
+            <button type="button" class="lb rec${recording ? ' on' : ''}" data-live="rec" data-focus="live-rec" aria-label="${recording ? 'Stop recording' : 'Record a clip'}"${recStop ? ' disabled' : ''}><ha-icon icon="${recording ? 'mdi:stop' : 'mdi:record-rec'}"></ha-icon></button>
             ${L.video ? `<button type="button" class="lb" data-live="mute" data-focus="live-mute" aria-pressed="${!L.muted}" aria-label="${L.muted ? 'Unmute' : 'Mute'}"><ha-icon icon="${L.muted ? 'mdi:volume-off' : 'mdi:volume-high'}"></ha-icon></button>` : ''}
             ${canPre ? `<button type="button" class="lb${this._preOpen ? ' on' : ''}" data-live="presets" data-focus="live-presets" aria-expanded="${!!this._preOpen}" aria-label="Presets"><ha-icon icon="mdi:crosshairs-gps"></ha-icon></button>` : ''}
             <button type="button" class="lb opt2" data-live="full" data-focus="live-full" aria-label="${this._isFull() ? 'Exit full screen' : 'Full screen'}"><ha-icon icon="${this._isFull() ? 'mdi:fullscreen-exit' : 'mdi:fullscreen'}"></ha-icon></button>
@@ -2493,7 +2508,9 @@ const CSS_TEXT = `
   .lb:hover { background: rgba(255, 255, 255, 0.16); }
   .lb.on { background: color-mix(in srgb, var(--cc-accent) 70%, transparent); }
   .lb.rec ha-icon { color: color-mix(in srgb, var(--cc-live) 50%, #fff); }
-  .lb.rec.on { background: color-mix(in srgb, var(--cc-live) 60%, transparent); cursor: default; }
+  .lb.rec.on { background: color-mix(in srgb, var(--cc-live) 60%, transparent); }
+  .lb.rec.on:hover { background: color-mix(in srgb, var(--cc-live) 75%, transparent); }
+  .lb.rec:disabled { cursor: default; opacity: 0.6; }
   .lb.rec.on ha-icon { color: #fff; }
   .chip.recc { gap: 5px; }
   /* Narrow pictures: the recording chip keeps its dot and seconds */
