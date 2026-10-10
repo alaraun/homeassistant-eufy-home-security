@@ -4,7 +4,7 @@
 // `entity` is required; the settings rows are built from whatever settings the device has: the common ones
 // grouped, a setting that applies only in one state of another nested under it, the rest under More settings.
 
-const CARD_VERSION = '2026.10.09-4';
+const CARD_VERSION = '2026.10.10-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -2476,6 +2476,8 @@ const CSS_TEXT = `
   .pin0 { grid-column: 2; width: 34px; height: 34px; border-radius: 50%; border: 0; padding: 0; cursor: pointer; display: grid; place-items: center;
     background: var(--cc-glass); backdrop-filter: blur(6px); color: #fff; --mdc-icon-size: 18px; }
   .pin0:hover { background: var(--cc-glass-hi); }
+  /* HA's ha-icon is a block whose line box sets its glyph about 1 px low: a flex box of the glyph's size centres it */
+  .play ha-icon, .pin0 ha-icon, .lb ha-icon, .pb ha-icon, .zb ha-icon, .hx ha-icon { display: flex; line-height: 0; }
   .play:focus-visible, .pin0:focus-visible, .lb:focus-visible, .pb:focus-visible, .zb:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
   .plbl { grid-column: 1; font-size: var(--fs-xs); font-weight: 500; text-shadow: 0 1px 3px rgba(0,0,0,0.8); font-variant-numeric: tabular-nums; }
   .ctr.off, .ctr.wake { display: flex; flex-direction: column; gap: 8px; font-size: var(--fs-sm); text-shadow: 0 1px 3px rgba(0,0,0,0.8); --mdc-icon-size: 40px; }
