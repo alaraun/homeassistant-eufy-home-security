@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.3.1](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.0...v0.3.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* a camera behind a HomeBase shows its detection sensitivity, recording quality, notification type, view mode and snooze (library 0.3.6) ([#64](https://github.com/alaraun/homeassistant-eufy-home-security/issues/64)) ([f3391e8](https://github.com/alaraun/homeassistant-eufy-home-security/commit/f3391e8b9464774918d10a13a25569172a72982d))
+
 ## [0.3.0](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.2.2...v0.3.0) (2026-10-10)
 
 
