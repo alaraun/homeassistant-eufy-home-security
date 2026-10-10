@@ -99,6 +99,8 @@ from .const import (
     EXC_RECORDING_FAILED,
     EXC_RECORDING_IN_PROGRESS,
     EXC_RECORDING_NEEDS_HISTORY,
+    EXC_RECORDING_NOT_RUNNING,
+    EXC_RECORDING_STOPPED_EMPTY,
     EXC_RECORDING_UNSUPPORTED,
     EXC_SESSION_REPLACED_SEE_REPAIRS,
     EXC_SETTING_DEVICE_UNAVAILABLE,
@@ -805,6 +807,20 @@ def recording_in_progress() -> ServiceValidationError:
     """A record action while the camera's last one still runs; nothing was started."""
     return ServiceValidationError(
         translation_domain=DOMAIN, translation_key=EXC_RECORDING_IN_PROGRESS
+    )
+
+
+def recording_not_running() -> ServiceValidationError:
+    """A stop_recording action while the camera records no clip; nothing changed."""
+    return ServiceValidationError(
+        translation_domain=DOMAIN, translation_key=EXC_RECORDING_NOT_RUNNING
+    )
+
+
+def recording_stopped_empty() -> HomeAssistantError:
+    """A clip stopped before the camera sent its first picture; nothing was saved."""
+    return HomeAssistantError(
+        translation_domain=DOMAIN, translation_key=EXC_RECORDING_STOPPED_EMPTY
     )
 
 

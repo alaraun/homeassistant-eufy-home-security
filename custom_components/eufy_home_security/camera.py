@@ -58,6 +58,7 @@ from homeassistant.util import dt as dt_util
 from eufy_home_security import (
     MAX_ZOOM,
     MIN_ZOOM,
+    CaptureStoppedError,
     ClipWriter,
     EufySecurityError,
     MediaClip,
@@ -100,6 +101,7 @@ from .const import (
     SERVICE_PAN_TILT,
     SERVICE_RECORD,
     SERVICE_SAVE_PRESET,
+    SERVICE_STOP_RECORDING,
     SERVICE_ZOOM,
     ZOOM_ACTION_STEP,
     ZOOM_IN,
@@ -193,6 +195,7 @@ async def async_setup_entry(
         "async_record",
         supports_response=SupportsResponse.OPTIONAL,
     )
+    platform.async_register_entity_service(SERVICE_STOP_RECORDING, None, "async_stop_recording")
 
 
 # A slot index as every preset action takes it.
@@ -234,6 +237,8 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
         self._serial = device_sn
         self._manager = manager
         self._presets = presets
+        # Set by stop_recording: ends the running record action's capture.
+        self._record_stop: asyncio.Event | None = None
         # Per instance, never at class scope: only a camera the library can open live
         # on its station advertises a stream, so Home Assistant never offers a live
         # view the library would refuse to open.
@@ -370,15 +375,19 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
         if self._attr_is_recording:
             raise errors.recording_in_progress()
         seconds = duration if duration is not None else _record_length(entry.options)
+        stop = asyncio.Event()
 
         async def produce(write: ClipWriter) -> MediaClip:
-            return await broadcast.async_capture(seconds, write)
+            return await broadcast.async_capture(seconds, write, stop=stop)
 
+        self._record_stop = stop
         self._attr_is_recording = True
         self.async_write_ha_state()
         try:
             async with asyncio.timeout(seconds + _RECORD_MARGIN_SECONDS):
                 saved = await events.async_save_clip(self._serial, produce, kind=_LIVE_KIND)
+        except CaptureStoppedError as err:
+            raise errors.recording_stopped_empty() from err
         except EufySecurityError as err:
             raise errors.recording_failed_to_capture(err) from err
         except (history.ClipStoreError, OSError, TimeoutError) as err:
@@ -390,6 +399,7 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
             )
             raise errors.recording_failed() from err
         finally:
+            self._record_stop = None
             self._attr_is_recording = False
             self.async_write_ha_state()
         return {
@@ -397,6 +407,16 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
             ATTR_DURATION: saved.clip.duration_s,
             ATTR_COMPLETE: saved.clip.complete,
         }
+
+    async def async_stop_recording(self) -> None:
+        """The ``stop_recording`` action: end this camera's running clip now.
+
+        The ``record`` call saves the part recorded so far and answers ``complete``
+        True; refused when the camera records no clip.
+        """
+        if self._record_stop is None:
+            raise errors.recording_not_running()
+        self._record_stop.set()
 
     @override
     async def async_added_to_hass(self) -> None:

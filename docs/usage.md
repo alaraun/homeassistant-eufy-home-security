@@ -178,6 +178,11 @@ the event history:
   ```
 
   A clip whose stream ended early is kept with `complete: false`.
+
+- `eufy_home_security.stop_recording` on the same camera ends a running clip now: the part
+  recorded so far is saved as a complete clip (`complete: true`) and the record action
+  returns. Stopped before the camera sent its first picture, nothing is saved and the record
+  action raises an error. With no clip running it is refused.
 - Refused with **Event history** at 0 days, past **Sessions per HomeBase**, and when
   the camera does not wake or sends no picture. Home Assistant's own `camera.record`
   is unchanged.

@@ -376,6 +376,12 @@
     "camera_unavailable": {
       "message": "The camera sent no picture, so no clip was saved. A battery camera sleeps between uses and takes a few seconds to wake; check that it is charged and within Wi-Fi range, then try again."
     },
+    "recording_not_running": {
+      "message": "This camera is not recording a clip, so there is nothing to stop."
+    },
+    "recording_stopped_empty": {
+      "message": "The recording was stopped before the camera sent its first picture, so no clip was saved."
+    },
     "recording_failed": {
       "message": "The camera sent the clip, but Home Assistant could not save it to the event history. Check that the media folder is writable and has free space, and that Home Assistant's ffmpeg works; the log has the details."
     }
@@ -845,6 +851,10 @@
           "description": "Seconds to record, from 5 to 300. Without it, the Recording length option is used."
         }
       }
+    },
+    "stop_recording": {
+      "name": "Stop recording",
+      "description": "Ends the clip the camera is recording now. The part recorded so far is saved in the event history as a complete clip, and the Record clip action returns."
     }
   }
 }

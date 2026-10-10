@@ -302,6 +302,10 @@ EXC_LIVE_STREAM_LIMIT: Final = "live_stream_limit"
 EXC_CAMERA_UNAVAILABLE: Final = "camera_unavailable"
 # A clip the camera delivered but that could not be stored (ffmpeg or the media folder).
 EXC_RECORDING_FAILED: Final = "recording_failed"
+# The stop_recording action with no clip running on the camera.
+EXC_RECORDING_NOT_RUNNING: Final = "recording_not_running"
+# A clip stopped before the camera sent its first picture: nothing was saved.
+EXC_RECORDING_STOPPED_EMPTY: Final = "recording_stopped_empty"
 
 # Repair issue translation keys (the top-level "issues" key of strings.json). Each
 # issue id is the key followed by the entry id, and for a station's issue the
@@ -393,6 +397,7 @@ SERVICE_SAVE_PRESET: Final = "save_preset"
 SERVICE_DELETE_PRESET: Final = "delete_preset"
 # The camera entity's record action, its field and its response keys.
 SERVICE_RECORD: Final = "record"
+SERVICE_STOP_RECORDING: Final = "stop_recording"
 ATTR_DURATION: Final = "duration"
 ATTR_MEDIA_CONTENT_ID: Final = "media_content_id"
 ATTR_COMPLETE: Final = "complete"

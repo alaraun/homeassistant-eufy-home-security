@@ -27,6 +27,7 @@ from conftest import (
 )
 from eufy_home_security import (
     CameraWakeError,
+    CaptureStoppedError,
     ClipWriter,
     DeviceTimeoutError,
     EufySecurity,
@@ -56,6 +57,7 @@ from custom_components.eufy_home_security.const import (
     DEFAULT_RECORD_LENGTH_SECONDS,
     DOMAIN,
     SERVICE_RECORD,
+    SERVICE_STOP_RECORDING,
 )
 
 CAMERA_NAME: Final = "Front"
@@ -82,6 +84,12 @@ async def _record(hass: HomeAssistant, **data: Any) -> dict[str, Any]:
     return result
 
 
+async def _stop(hass: HomeAssistant) -> None:
+    await hass.services.async_call(
+        DOMAIN, SERVICE_STOP_RECORDING, {ATTR_ENTITY_ID: _camera(hass)}, blocking=True
+    )
+
+
 def _videos(hass: HomeAssistant) -> list[Path]:
     root = history.history_dir(hass)
     return sorted(root.rglob("*.mp4")) if root.is_dir() else []
@@ -103,7 +111,12 @@ def _stub_capture(
     asked: list[float] = []
 
     async def capture(
-        self: StreamBroadcast, seconds: float, write: ClipWriter, *, start_timeout: float = 30
+        self: StreamBroadcast,
+        seconds: float,
+        write: ClipWriter,
+        *,
+        start_timeout: float | None = None,
+        stop: asyncio.Event | None = None,
     ) -> MediaClip:
         asked.append(seconds)
         if gate is not None:
@@ -392,4 +405,69 @@ async def test_record_on_a_camera_without_a_live_stream_is_refused(
 
     assert refused.value.translation_key == "recording_unsupported"
     assert asked == []
+    await _unload(hass, entry)
+
+
+async def test_stop_recording_ends_a_running_clip_and_keeps_it_whole(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A real capture of the fake's stream, stopped long before its length: the part
+    recorded is saved, ``complete`` True, and the camera is idle again."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    camera = _camera(hass)
+    before = state_of(hass, camera)
+
+    running = hass.async_create_task(_record(hass, duration=300))
+    await wait_until(lambda: state_of(hass, camera) == CameraState.RECORDING)
+    await wait_until(lambda: bool(fake_station.live_cameras))
+    await asyncio.sleep(1)
+    await _stop(hass)
+    result = await asyncio.wait_for(running, 30)
+
+    assert result[ATTR_COMPLETE] is True
+    assert 0 < result[ATTR_DURATION] < 60
+    assert len(_videos(hass)) == 1
+    assert state_of(hass, camera) == before
+    await wait_until(lambda: not fake_station.live_cameras)
+    await _unload(hass, entry)
+
+
+async def test_stop_recording_with_no_clip_running_is_refused(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Nothing records: a validation error, nothing changes."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    with pytest.raises(ServiceValidationError) as refused:
+        await _stop(hass)
+
+    assert refused.value.translation_key == "recording_not_running"
+    assert _all_files(hass) == []
+    await _unload(hass, entry)
+
+
+async def test_a_clip_stopped_before_its_first_picture_saves_nothing(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The library's ``CaptureStoppedError``: its own message, no file, the camera idle."""
+    _stub_capture(monkeypatch, error=CaptureStoppedError("stopped before the first keyframe"))
+    entry = await set_up_warm(hass, seed_warm_cache)
+    before = state_of(hass, _camera(hass))
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await _record(hass)
+
+    assert raised.value.translation_key == "recording_stopped_empty"
+    assert _all_files(hass) == []
+    assert state_of(hass, _camera(hass)) == before
     await _unload(hass, entry)
