@@ -260,6 +260,14 @@
           "entry_not_loaded": "The eufy account is not loaded in Home Assistant right now. Wait until it has finished loading, then open this repair again."
         }
       }
+    },
+    "station_p2p_id_unsupported": {
+      "title": "eufy station not supported for {account}",
+      "description": "The eufy account {account} lists a station whose P2P id local connections do not accept: {devices}. The eufy app does not connect to it locally either, so Home Assistant leaves it and the devices paired to it out; the account's other stations work as usual. Nothing in Home Assistant can change that. This repair is checked again on every reload and on Refresh device list."
+    },
+    "device_serial_unsupported": {
+      "title": "eufy device not supported for {account}",
+      "description": "The eufy account {account} lists a device whose serial number is not only letters and digits: {devices}. Home Assistant cannot name it, so it leaves it out (and, for a station, the devices paired to it); the account's other devices work as usual. This repair is checked again on every reload and on Refresh device list. If the device shows in the eufy app, open an issue with the diagnostics download."
     }
   },
   "exceptions": {

@@ -334,6 +334,10 @@ ISSUE_KEY_UNUSABLE: Final = "key_unusable"
 ISSUE_NO_DEVICES: Final = "no_devices"
 # Invitations sent to the account that it has not accepted in the eufy app.
 ISSUE_PENDING_INVITES: Final = "pending_invites"
+# eufy lists a station whose P2P id local connections do not accept; it is left out.
+ISSUE_STATION_P2P_ID_UNSUPPORTED: Final = "station_p2p_id_unsupported"
+# eufy lists a device whose serial is not letters and digits; it is left out.
+ISSUE_DEVICE_SERIAL_UNSUPPORTED: Final = "device_serial_unsupported"
 
 # Camera snapshots. The camera entity's unique-id key; it has no name of its
 # own, the camera is its device.

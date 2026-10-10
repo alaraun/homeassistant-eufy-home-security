@@ -255,6 +255,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         # No cached device list either (a cold cache): only now is the entry not ready.
         raise errors.cache_unavailable(err) from err
     errors.sync_no_devices_issue(hass, entry, (await eufy.async_cloud_status()).regions)
+    errors.sync_skipped_devices_issues(hass, entry, eufy.skipped_devices)
     if not eufy.stations:
         # A shared home shows only once its invitation is accepted in the eufy app.
         errors.sync_pending_invites_issue(hass, entry, await runtime.async_pending_invites(eufy))
