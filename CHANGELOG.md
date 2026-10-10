@@ -5,6 +5,18 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.3.0](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.2.2...v0.3.0) (2026-10-10)
+
+
+### Features
+
+* settings a camera reports behind its HomeBase (library 0.3.5) ([#59](https://github.com/alaraun/homeassistant-eufy-home-security/issues/59)) ([1e45e54](https://github.com/alaraun/homeassistant-eufy-home-security/commit/1e45e546f971b36f9311d1e3e5e1c61a29f89493))
+
+
+### Miscellaneous Chores
+
+* release 0.3.0 ([#60](https://github.com/alaraun/homeassistant-eufy-home-security/issues/60)) ([a08d278](https://github.com/alaraun/homeassistant-eufy-home-security/commit/a08d27860c17a1db872db117d524bc93194f885c))
+
 ## [0.2.2](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.2.1...v0.2.2) (2026-10-09)
 
 
