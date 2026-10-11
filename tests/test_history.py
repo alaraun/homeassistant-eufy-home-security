@@ -32,6 +32,7 @@ from eufy_home_security import (
     EufySecurity,
     MediaClip,
 )
+from eufy_home_security.p2p.media import VideoCodec
 from eufy_home_security.testing import FakeCloud, FakeStation, camera_device
 from fake_ffmpeg import REMUX_MAGIC
 from homeassistant.components.button import DOMAIN as BUTTON_DOMAIN
@@ -352,6 +353,7 @@ def _clip(**fields: Any) -> MediaClip:
         "width": 3840,
         "height": 2160,
         "resizes": 0,
+        "codec": VideoCodec.HEVC,
     }
     values.update(fields)
     return MediaClip(**values)
@@ -415,6 +417,31 @@ async def test_a_clip_is_remuxed_by_stream_copy_and_renamed_into_place(
     assert history.media_content_id(hass, expected) == (
         f"media-source://media_source/local/{DOMAIN}/{CAMERA_NAME}/{expected.name}"
     )
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("codec", [VideoCodec.H264, None], ids=["h264", "no-video"])
+async def test_a_clip_that_is_not_hevc_is_remuxed_without_the_hvc1_tag(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    codec: VideoCodec | None,
+) -> None:
+    """ffmpeg refuses ``hvc1`` on H.264: an H.264 or video-less clip keeps ffmpeg's own tag."""
+    argv_log = tmp_path / "argv.jsonl"
+    monkeypatch.setenv("FAKE_FFMPEG_ARGV", str(argv_log))
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    saved = await _history(entry).async_save_clip(
+        SYNTHETIC.camera_sn, _producer(_clip(codec=codec)), kind="live"
+    )
+
+    assert saved.path.read_bytes() == REMUX_MAGIC + TS_BYTES * 2
+    (args,) = [json.loads(line) for line in argv_log.read_text().splitlines()]
+    assert args[6:-1] == ["-map", "0", "-c", "copy", "-movflags", "+faststart", "-f", "mp4"]
     await _unload(hass, entry)
 
 

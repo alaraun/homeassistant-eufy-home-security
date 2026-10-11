@@ -51,6 +51,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.package import is_docker_env
 
 from eufy_home_security import ClipWriter, MediaClip, redact_serial
+from eufy_home_security.p2p.media import VideoCodec
 
 from . import snapshots
 from .const import CLIP_REMUX_TIMEOUT_SECONDS, DOMAIN
@@ -73,20 +74,12 @@ _FALLBACK_NAME: Final = "camera"
 _PART_SUFFIX: Final = ".part"
 _STALE_PART: Final = timedelta(days=1)
 # ffmpeg around the input and output paths: copy every stream into an MP4, never
-# encode. ``hvc1`` makes HEVC playable in Safari and Home Assistant's media browser.
+# encode. ``hvc1`` makes HEVC playable in Safari and Home Assistant's media browser;
+# ffmpeg refuses it on H.264, which keeps ffmpeg's own ``avc1``.
 REMUX_ARGS_BEFORE: Final[tuple[str, ...]] = ("-hide_banner", "-loglevel", "error", "-y", "-i")
-REMUX_ARGS_AFTER: Final[tuple[str, ...]] = (
-    "-map",
-    "0",
-    "-c",
-    "copy",
-    "-tag:v",
-    "hvc1",
-    "-movflags",
-    "+faststart",
-    "-f",
-    "mp4",
-)
+REMUX_COPY_ARGS: Final[tuple[str, ...]] = ("-map", "0", "-c", "copy")
+REMUX_HEVC_TAG_ARGS: Final[tuple[str, ...]] = ("-tag:v", "hvc1")
+REMUX_OUTPUT_ARGS: Final[tuple[str, ...]] = ("-movflags", "+faststart", "-f", "mp4")
 # How many detections' still names are kept for pairing a recording with its still.
 _NOTES_MAX: Final = 2000
 
@@ -333,7 +326,9 @@ class EventHistory:
                 raise IncompleteClipError(clip)
             when = moment or clip.started_at or dt_util.utcnow()
             path = history_path(self._root, name, dt_util.as_local(when), kind, CLIP_SUFFIX)
-            await _async_remux(snapshots.ffmpeg_command(self._hass), ts_path, mp4_tmp)
+            await _async_remux(
+                snapshots.ffmpeg_command(self._hass), ts_path, mp4_tmp, codec=clip.codec
+            )
             await self._hass.async_add_executor_job(_publish, mp4_tmp, path)
         except BaseException:
             await asyncio.shield(self._hass.async_add_executor_job(_remove, ts_path, mp4_tmp))
@@ -422,8 +417,12 @@ def _remove(*paths: Path | None) -> None:
                 path.unlink()
 
 
-async def _async_remux(command: Sequence[str], source: Path, target: Path) -> None:
+async def _async_remux(
+    command: Sequence[str], source: Path, target: Path, *, codec: VideoCodec | None
+) -> None:
     """Copy the streams of the MPEG-TS ``source`` into the MP4 ``target`` with ffmpeg.
+
+    ``codec`` is the clip's video codec: HEVC gets the ``hvc1`` tag, anything else none.
 
     An asyncio subprocess, bounded by ``CLIP_REMUX_TIMEOUT_SECONDS``; never an encode.
     Raises :class:`ClipStoreError` when ffmpeg is missing, fails or overruns; a
@@ -434,7 +433,9 @@ async def _async_remux(command: Sequence[str], source: Path, target: Path) -> No
             *command,
             *REMUX_ARGS_BEFORE,
             str(source),
-            *REMUX_ARGS_AFTER,
+            *REMUX_COPY_ARGS,
+            *(REMUX_HEVC_TAG_ARGS if codec is VideoCodec.HEVC else ()),
+            *REMUX_OUTPUT_ARGS,
             str(target),
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
