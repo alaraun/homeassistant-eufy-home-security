@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.3.3](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.2...v0.3.3) (2026-10-11)
+
+
+### Bug Fixes
+
+* HomeBase 2 cameras' H.264 live video plays and a standalone T8442 comes up (library 0.3.9) ([#70](https://github.com/alaraun/homeassistant-eufy-home-security/issues/70)) ([f2fa338](https://github.com/alaraun/homeassistant-eufy-home-security/commit/f2fa338e905bada158a17573dac536ca7f0d1fa4))
+
 ## [0.3.2](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.1...v0.3.2) (2026-10-10)
 
 
