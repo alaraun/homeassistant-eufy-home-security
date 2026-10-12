@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.3.5](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.4...v0.3.5) (2026-10-12)
+
+
+### Bug Fixes
+
+* the S100 (T84A1) connects and a refused storage query is not repeated (library 0.3.12) ([#76](https://github.com/alaraun/homeassistant-eufy-home-security/issues/76)) ([bb8b631](https://github.com/alaraun/homeassistant-eufy-home-security/commit/bb8b631216c11c06f8db571080fa25dbc6f98871))
+
 ## [0.3.4](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.3...v0.3.4) (2026-10-12)
 
 
