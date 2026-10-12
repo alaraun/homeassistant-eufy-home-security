@@ -1,4 +1,4 @@
-"""The key-unusable repair: eufy serves a station a key that does not parse."""
+"""The key-unusable repair: eufy serves no key for the station's connection method."""
 
 from __future__ import annotations
 
@@ -29,12 +29,12 @@ _RSA_VERSION = 1
 
 @pytest.fixture
 def unusable_key(fake_cloud: FakeCloud, fake_station: FakeStation) -> None:
-    """The station answers the RSA handshake; the cloud serves its key lowercased.
+    """The station answers the RSA handshake; the cloud serves no RSA key for it.
 
-    Applied before the warm cache is seeded, so the cached key is the unusable one.
+    Applied before the warm cache is seeded, so the cached credentials lack it too.
     """
     fake_station.conn_init_version = _RSA_VERSION
-    fake_cloud.rsa_cipher_keys[fake_station.serial] = fake_station.rsa_private_key_pem.lower()
+    fake_cloud.rsa_cipher_keys.pop(fake_station.serial, None)
 
 
 def _issues(hass: HomeAssistant, entry: MockConfigEntry, kind: str) -> dict[str, ir.IssueEntry]:
@@ -55,14 +55,15 @@ async def _unload(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     await hass.async_block_till_done()
 
 
-async def test_an_unusable_key_raises_one_key_unusable_issue_and_no_fetch(
+async def test_an_unusable_key_raises_one_key_unusable_issue_after_at_most_one_fetch(
     hass: HomeAssistant,
     fake_cloud: FakeCloud,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
     unusable_key: None,
 ) -> None:
-    """Not fixable, names the station, no key-rejected issue, no credentials notice, no fetch."""
+    """Not fixable, names the station, no key-rejected issue; the library asks eufy for
+    the key at most once more, and that fetch leaves no "fetched again" notice."""
     seed_warm_cache()
     entry = add_entry(hass)
 
@@ -76,7 +77,7 @@ async def test_an_unusable_key_raises_one_key_unusable_issue_and_no_fetch(
     assert (issue.translation_placeholders or {})["station"]
     assert _issues(hass, entry, "key_rejected") == {}
     assert _issues(hass, entry, "credentials_refreshed") == {}
-    assert _cipher_calls(fake_cloud) == 0
+    assert _cipher_calls(fake_cloud) <= 1
 
 
 async def test_a_key_unusable_issue_follows_the_connection_events(

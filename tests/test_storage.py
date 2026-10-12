@@ -29,6 +29,7 @@ from eufy_home_security import (
     entity_unique_id,
 )
 from eufy_home_security.p2p import session as session_module
+from eufy_home_security.p2p.storage_info import CMD_STORAGE
 from eufy_home_security.testing import SYNTHETIC, FakeStation
 from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
@@ -406,6 +407,51 @@ async def test_a_failed_read_makes_only_the_storage_entities_unavailable_until_o
     assert state_of(hass, wear) == "2"
     assert state_of(hass, problem) == STATE_OFF
 
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("code", [-1, -108])
+async def test_a_station_that_refuses_the_storage_query_is_not_asked_again(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    code: int,
+) -> None:
+    """A storage query the station refuses at its receipt: no storage entities, no
+    WARNING or ERROR, and no read on the 30-minute schedule until the next setup."""
+    fake_station.refused_commands[CMD_STORAGE] = code
+    with caplog.at_level(logging.DEBUG, logger=_STORAGE_LOGGER):
+        entry = await set_up_warm(hass, seed_warm_cache)
+    anchor = dt_util.utcnow()
+    storage = _storage(entry)
+
+    for key in (*_DISK_SENSOR_KEYS, *_EMMC_SENSOR_KEYS):
+        assert _registered(hass, SENSOR_DOMAIN, key) is None, key
+    for key in _DISK_BINARY_KEYS:
+        assert _registered(hass, BINARY_SENSOR_DOMAIN, key) is None, key
+    assert not [
+        r for r in caplog.records if r.name == _STORAGE_LOGGER and r.levelno >= logging.WARNING
+    ]
+    assert storage.update_interval is None
+
+    reads = 0
+    real_read = storage.station.async_get_storage
+
+    async def counting_read(*, timeout: float | None = None) -> StorageInfo:
+        nonlocal reads
+        reads += 1
+        return await real_read(timeout=timeout)
+
+    monkeypatch.setattr(storage.station, "async_get_storage", counting_read)
+    await advance_to_poll(hass, STORAGE_POLL_INTERVAL_SECONDS + 5, anchor=anchor)
+    assert reads == 0
+
+    # A record the station pushes anyway still shows.
+    fake_station.send_storage()
+    await wait_until(lambda: _registered(hass, SENSOR_DOMAIN, DISK_USED_KEY) is not None)
     await _unload(hass, entry)
 
 

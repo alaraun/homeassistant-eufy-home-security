@@ -251,7 +251,7 @@ EXC_ON_DEMAND_UNREACHABLE: Final = "on_demand_unreachable"
 EXC_SESSION_REPLACED_SEE_REPAIRS: Final = "session_replaced_see_repairs"
 # An arm or disarm refused because the station rejects even its re-fetched key.
 EXC_STATION_KEY_REJECTED: Final = "station_key_rejected"
-# An arm or disarm refused because eufy serves the station a key that cannot be used.
+# An arm or disarm refused because eufy serves no key the station can use.
 EXC_STATION_KEY_UNUSABLE: Final = "station_key_unusable"
 # An arm or disarm that needed eufy's cloud, which refused or was down.
 EXC_CLOUD_UNAVAILABLE: Final = "cloud_unavailable"

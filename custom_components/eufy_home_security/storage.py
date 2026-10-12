@@ -37,6 +37,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
 
 from eufy_home_security import (
+    CommandRejectedError,
     EufySecurityError,
     Station,
     StorageInfo,
@@ -98,13 +99,28 @@ class StorageCoordinator(DataUpdateCoordinator[StorageInfo]):
 
     @override
     async def _async_update_data(self) -> StorageInfo:
-        """One storage read; every library error becomes ``UpdateFailed``.
+        """One storage read; every other library error becomes ``UpdateFailed``.
 
         The coordinator logs the first failure once and the recovery once, as the
         station poll does, and marks only this coordinator's entities unavailable.
+        A station that refuses the query at its receipt (a negative code: it has no
+        storage record to give, e.g. a HomeBase mini) is not read again until the
+        next setup; the record shown stays (None before any), and a pushed record
+        still applies.
         """
         try:
             return await self.station.async_get_storage()
+        except CommandRejectedError as err:
+            if err.code >= 0:
+                raise errors.update_failed(err) from err
+            self.update_interval = None
+            _LOGGER.info(
+                "Station %s refuses the storage query (code %d); its storage is not read "
+                "again until the integration reloads",
+                redact_serial(self.station.serial),
+                err.code,
+            )
+            return self.data
         except EufySecurityError as err:
             raise errors.update_failed(err) from err
 

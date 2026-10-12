@@ -202,37 +202,44 @@ class EufyStreamView(HomeAssistantView):
         # The status waits for the first chunk: a camera the station could not wake ends
         # the subscription with no data, and gets a 503 instead of an empty 200. A cancel
         # propagates; leaving the block unsubscribes.
-        async with contextlib.aclosing(broadcast.subscribe()) as stream:
-            first = await anext(stream, None)
-            error = broadcast.error
-            if first is None and isinstance(error, CameraWakeError):
-                retry = error.retry_after
-                _LOGGER.debug(
-                    "Live stream of %s: the camera did not wake%s; 503",
-                    serial,
-                    f", next attempt in {retry:.0f} s" if retry else "",
-                )
-                return web.Response(status=HTTPStatus.SERVICE_UNAVAILABLE)
-            if first is None and isinstance(error, LiveStreamLimitError):
-                _LOGGER.info(
-                    "Live stream of %s: refused, the sessions per HomeBase option allows "
-                    "%d live stream(s) and none closed in time; 503",
-                    serial,
-                    error.limit,
-                )
-                return web.Response(status=HTTPStatus.SERVICE_UNAVAILABLE)
-            await response.prepare(request)
-            try:
-                if first is not None:
-                    await response.write(first)
-                    chunks += 1
-                    async for chunk in stream:
-                        await response.write(chunk)
+        try:
+            async with contextlib.aclosing(broadcast.subscribe()) as stream:
+                first = await anext(stream, None)
+                error = broadcast.error
+                if first is None and isinstance(error, CameraWakeError):
+                    retry = error.retry_after
+                    _LOGGER.debug(
+                        "Live stream of %s: the camera did not wake%s; 503",
+                        serial,
+                        f", next attempt in {retry:.0f} s" if retry else "",
+                    )
+                    return web.Response(status=HTTPStatus.SERVICE_UNAVAILABLE)
+                if first is None and isinstance(error, LiveStreamLimitError):
+                    _LOGGER.info(
+                        "Live stream of %s: refused, the sessions per HomeBase option allows "
+                        "%d live stream(s) and none closed in time; 503",
+                        serial,
+                        error.limit,
+                    )
+                    return web.Response(status=HTTPStatus.SERVICE_UNAVAILABLE)
+                await response.prepare(request)
+                try:
+                    if first is not None:
+                        await response.write(first)
                         chunks += 1
-            except ConnectionResetError, ClientConnectionResetError:
-                # The viewer went away mid-write. Not an error, and not this module's to
-                # report: leaving the loop has already unsubscribed.
-                pass
+                        async for chunk in stream:
+                            await response.write(chunk)
+                            chunks += 1
+                except ConnectionResetError, ClientConnectionResetError:
+                    # The viewer went away mid-write. Not an error, and not this module's to
+                    # report: leaving the loop has already unsubscribed.
+                    pass
+        except asyncio.CancelledError:
+            # Home Assistant cancels the request when the viewer disconnects.
+            _LOGGER.debug(
+                "Live stream of %s ended after %d chunk(s): the viewer went away", serial, chunks
+            )
+            raise
         # Read promptly: the library clears this when a new stream starts.
         error = broadcast.error
         # Nothing is reopened here: Home Assistant asks for the URL again by itself.

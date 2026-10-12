@@ -577,6 +577,32 @@ async def test_the_last_viewer_leaving_releases_the_camera_and_a_later_view_reop
     await _unload(hass, entry)
 
 
+async def test_a_viewer_that_goes_away_logs_the_end_of_its_stream(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_client_no_auth: ClientSessionGenerator,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A viewer whose request Home Assistant cancels (the client left) still logs its end."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_client_no_auth()
+    path = await _stream_path(hass, _camera_id(hass))
+
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        response = await client.get(path)
+        assert (await _read_ts(response))[0] == TS_SYNC
+        response.close()
+        await wait_until(lambda: not fake_station.streaming, timeout=20)
+        await hass.async_block_till_done()
+
+    ended = [r.getMessage() for r in caplog.records if "ended after" in r.getMessage()]
+    assert len(ended) == 1, ended
+    assert SYNTHETIC.camera_sn not in ended[0]
+    await _unload(hass, entry)
+
+
 # ── a still ends a live view only at the session budget ───────────────────────
 
 

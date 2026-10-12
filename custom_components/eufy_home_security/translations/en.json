@@ -240,8 +240,8 @@
       "description": "{station} uses key number {cipher} for its local connection, but eufy holds no such key for the station's owner, so Home Assistant cannot connect to it and its entities are unavailable. Signing in again does not help. In the eufy app, on the account that set the station up, check that the station is still there and shared with the account Home Assistant uses; share it again if needed. Then reload the integration: Home Assistant asks eufy again on every reload, and on its own at most once an hour."
     },
     "key_unusable": {
-      "title": "eufy serves an unusable key for {station}",
-      "description": "{station} uses an older connection method whose key eufy serves in a form that cannot be read, so Home Assistant cannot connect to it and its entities are unavailable. Fetching the key again returns the same, and signing in again does not help. If the eufy app offers a firmware update for this device, install it, then reload the integration."
+      "title": "eufy serves no usable key for {station}",
+      "description": "{station} needs a key for its connection method that eufy does not serve for it, so Home Assistant cannot connect to it and its entities are unavailable. Fetching the key again returns the same, and signing in again does not help. Please open an issue with the integration's diagnostics download."
     },
     "no_devices": {
       "title": "No eufy devices found for {account}",
@@ -305,7 +305,7 @@
       "message": "The station rejected its key, so {target} was not set. Open its repair under Settings > System > Repairs to let Home Assistant fetch its key once more."
     },
     "station_key_unusable": {
-      "message": "eufy serves this station a key that cannot be used, so {target} was not set. See its repair under Settings > System > Repairs."
+      "message": "eufy serves no key this station can use, so {target} was not set. See its repair under Settings > System > Repairs."
     },
     "cloud_unavailable": {
       "message": "Changing {target} needed the HomeBase's key fetched from eufy again, and eufy could not be reached or is temporarily refusing this account, so it was not set. Check Settings > System > Repairs for this account and try again later; Home Assistant does not sign in again by itself."

@@ -268,8 +268,8 @@ def arm_failed(
       ``CommandUnsupportedError`` included).
     - ``KeyRejectedError``: the write reconnected and the station rejected even its
       re-fetched key; the station's key-rejected repair is the remedy.
-    - ``CipherUnusableError``: eufy serves the station a key that cannot be used; the
-      station's key-unusable repair explains it.
+    - ``CipherUnusableError``: eufy serves no key the station's connection method can
+      use; the station's key-unusable repair explains it.
     - ``CloudError``: the reconnect needed the key or owner id fetched again and eufy
       was down or refused. Nothing here signs in.
     - Anything else (``CommunicationError``, or a ``ProtocolError`` met while the
@@ -912,12 +912,13 @@ def key_unusable_issue_id(entry_id: str, device_id: str) -> str:
 
 
 def raise_key_unusable_issue(hass: HomeAssistant, entry: ConfigEntry[Any], serial: str) -> None:
-    """One issue for a station whose key from eufy cannot be used (``CipherUnusableError``).
+    """One issue for a station eufy serves no usable key for (``CipherUnusableError``).
 
-    The key does not parse, and eufy serves the same bytes on every fetch, so the
-    library fetches nothing again and no fix flow is offered. Not fixable and not
+    eufy serves no key for the station's connection method, and the same on every
+    fetch, so the library fetches nothing again and no fix flow is offered. Not fixable and not
     persistent; the id is per device. Cleared when the station connects, and with
-    every setup attempt, which decides afresh.
+    every setup attempt, which decides afresh. A "fetched the key again" notice of the
+    station goes: that fetch brought no usable key.
     """
     device = _station_device(hass, entry, serial)
     if device is None:
@@ -925,6 +926,7 @@ def raise_key_unusable_issue(hass: HomeAssistant, entry: ConfigEntry[Any], seria
             "Station %s has no registered device; no key-unusable issue", redact_serial(serial)
         )
         return
+    ir.async_delete_issue(hass, DOMAIN, credentials_refreshed_issue_id(entry.entry_id, device.id))
     ir.async_create_issue(
         hass,
         DOMAIN,
