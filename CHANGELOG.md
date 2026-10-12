@@ -5,6 +5,14 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.3.4](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.3...v0.3.4) (2026-10-12)
+
+
+### Bug Fixes
+
+* H.264 clips are stored, and the S100 (T84A1) and Doorbell 2K (T8200) connect (library 0.3.10) ([#72](https://github.com/alaraun/homeassistant-eufy-home-security/issues/72)) ([cf9c4b9](https://github.com/alaraun/homeassistant-eufy-home-security/commit/cf9c4b9f852bc5765cb57e49fe79e86caa2c9edb))
+* stills from H.264 cameras decode, and the card plays them over WebRTC in every browser (library 0.3.11) ([#75](https://github.com/alaraun/homeassistant-eufy-home-security/issues/75)) ([1ed52a4](https://github.com/alaraun/homeassistant-eufy-home-security/commit/1ed52a4a040b733a905562ee4b18baf950c377e0))
+
 ## [0.3.3](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.2...v0.3.3) (2026-10-11)
 
 
