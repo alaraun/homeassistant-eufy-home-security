@@ -131,6 +131,8 @@ from eufy_home_security import (
     SecurityEvent,
     Station,
     UnsupportedError,
+    VideoCodec,
+    picture_codec,
     redact_serial,
 )
 from eufy_home_security.station import FULL_RESOLUTION_TIMEOUT
@@ -176,14 +178,10 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# The ffmpeg arguments after the binary: one Annex-B HEVC picture on stdin, one JPEG
-# on stdout, nothing else written anywhere.
-FFMPEG_ARGS: Final[tuple[str, ...]] = (
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-f",
-    "hevc",
+# The ffmpeg arguments after the binary, around the input format (``hevc`` / ``h264``):
+# one Annex-B keyframe on stdin, one JPEG on stdout, nothing else written.
+FFMPEG_INPUT_ARGS: Final[tuple[str, ...]] = ("-hide_banner", "-loglevel", "error", "-f")
+FFMPEG_OUTPUT_ARGS: Final[tuple[str, ...]] = (
     "-i",
     "pipe:0",
     "-frames:v",
@@ -265,8 +263,13 @@ async def async_open_media[T](
     return await call(True)
 
 
-async def async_hevc_to_jpeg(command: Sequence[str], hevc: bytes, timeout: float) -> bytes | None:
-    """Decode one Annex-B HEVC keyframe to JPEG with ``command``; None when it cannot.
+async def async_keyframe_to_jpeg(
+    command: Sequence[str], keyframe: bytes, codec: VideoCodec | None, timeout: float
+) -> bytes | None:
+    """Decode one Annex-B keyframe to JPEG with ``command``; None when it cannot.
+
+    ``codec`` is the keyframe's codec when the library named it; None reads it from the
+    picture, and a picture that shows neither is read as HEVC.
 
     An asyncio subprocess, never a blocking one. No decoder, a non-zero exit, a
     timeout, an output that is not a JPEG or is larger than ``MAX_JPEG_BYTES`` all
@@ -275,7 +278,9 @@ async def async_hevc_to_jpeg(command: Sequence[str], hevc: bytes, timeout: float
     try:
         proc = await asyncio.create_subprocess_exec(
             *command,
-            *FFMPEG_ARGS,
+            *FFMPEG_INPUT_ARGS,
+            codec or picture_codec(keyframe) or VideoCodec.HEVC,
+            *FFMPEG_OUTPUT_ARGS,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
@@ -286,7 +291,7 @@ async def async_hevc_to_jpeg(command: Sequence[str], hevc: bytes, timeout: float
         return None
     try:
         async with asyncio.timeout(timeout):
-            out, _ = await proc.communicate(hevc)
+            out, _ = await proc.communicate(keyframe)
     except TimeoutError:
         _LOGGER.debug("ffmpeg did not decode a camera keyframe within %s s", timeout)
         return None
@@ -1086,7 +1091,7 @@ class SnapshotManager:
             start = time.monotonic()
             try:
                 async with asyncio.timeout(TRIGGER_FRAME_TIMEOUT_SECONDS):
-                    hevc = await station.async_event_trigger_frame(event, trailing_frames=0)
+                    keyframe = await station.async_event_trigger_frame(event, trailing_frames=0)
             except (EufySecurityError, TimeoutError) as err:
                 _LOGGER.debug(
                     "Trigger frame of %s: failed (%s), in %.1f s",
@@ -1098,12 +1103,12 @@ class SnapshotManager:
                 _LOGGER.debug(
                     "Trigger frame of %s: fetched %d bytes in %.1f s, decode started",
                     serial,
-                    len(hevc),
+                    len(keyframe),
                     _elapsed(start),
                 )
                 start = time.monotonic()
-                jpeg = await async_hevc_to_jpeg(
-                    ffmpeg_command(self._hass), hevc, FFMPEG_DECODE_TIMEOUT_SECONDS
+                jpeg = await async_keyframe_to_jpeg(
+                    ffmpeg_command(self._hass), keyframe, None, FFMPEG_DECODE_TIMEOUT_SECONDS
                 )
                 current = self._still_current(camera, occurrence, when, event.authenticated, seq)
                 _log_decode(device_sn, jpeg, start, current=current)
@@ -1278,16 +1283,16 @@ class SnapshotManager:
             async with asyncio.timeout(LIVE_SNAPSHOT_TIMEOUT_SECONDS):
                 return await station.async_snapshot(device_sn, wait=wait)
 
-        hevc = await async_open_media(station, self._yield_media, fetch)
+        keyframe = await async_open_media(station, self._yield_media, fetch)
         _LOGGER.debug(
             "Live keyframe of %s: fetched %d bytes in %.1f s, decode started",
             serial,
-            len(hevc),
+            len(keyframe),
             _elapsed(start),
         )
         start = time.monotonic()
-        jpeg = await async_hevc_to_jpeg(
-            ffmpeg_command(self._hass), hevc, FFMPEG_DECODE_TIMEOUT_SECONDS
+        jpeg = await async_keyframe_to_jpeg(
+            ffmpeg_command(self._hass), keyframe, None, FFMPEG_DECODE_TIMEOUT_SECONDS
         )
         current = camera.image is None
         _log_decode(device_sn, jpeg, start, current=current)
@@ -1295,7 +1300,7 @@ class SnapshotManager:
             self._store(camera, device_sn, jpeg, StillSource.LIVE, None, None, seq=camera.seq)
 
     async def _async_capture(self, station: Station, camera: _CameraStill, device_sn: str) -> None:
-        """One pressed live keyframe; never an HEVC stored."""
+        """One pressed live keyframe; only its JPEG is stored."""
         serial = redact_serial(device_sn)
         _LOGGER.debug("Live capture of %s: fetching", serial)
         start = time.monotonic()
@@ -1331,8 +1336,11 @@ class SnapshotManager:
         jpeg = (
             image.data
             if image.is_jpeg
-            else await async_hevc_to_jpeg(
-                ffmpeg_command(self._hass), image.data, FFMPEG_DECODE_TIMEOUT_SECONDS
+            else await async_keyframe_to_jpeg(
+                ffmpeg_command(self._hass),
+                image.data,
+                image.codec,
+                FFMPEG_DECODE_TIMEOUT_SECONDS,
             )
         )
         # Read after the fetch: a press coalesced into this job moved it.
@@ -1414,8 +1422,8 @@ class SnapshotManager:
             _elapsed(start),
         )
         start = time.monotonic()
-        jpeg = await async_hevc_to_jpeg(
-            ffmpeg_command(self._hass), image.data, FFMPEG_DECODE_TIMEOUT_SECONDS
+        jpeg = await async_keyframe_to_jpeg(
+            ffmpeg_command(self._hass), image.data, image.codec, FFMPEG_DECODE_TIMEOUT_SECONDS
         )
         seq = camera.refresh_seq
         current = not self._stopped and camera.shown_seq <= seq
@@ -1632,8 +1640,11 @@ class SnapshotManager:
         jpeg = (
             image.data
             if image.is_jpeg
-            else await async_hevc_to_jpeg(
-                ffmpeg_command(self._hass), image.data, FFMPEG_DECODE_TIMEOUT_SECONDS
+            else await async_keyframe_to_jpeg(
+                ffmpeg_command(self._hass),
+                image.data,
+                image.codec,
+                FFMPEG_DECODE_TIMEOUT_SECONDS,
             )
         )
         current = (

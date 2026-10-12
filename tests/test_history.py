@@ -31,8 +31,8 @@ from eufy_home_security import (
     DeviceTimeoutError,
     EufySecurity,
     MediaClip,
+    VideoCodec,
 )
-from eufy_home_security.p2p.media import VideoCodec
 from eufy_home_security.testing import FakeCloud, FakeStation, camera_device
 from fake_ffmpeg import REMUX_MAGIC
 from homeassistant.components.button import DOMAIN as BUTTON_DOMAIN

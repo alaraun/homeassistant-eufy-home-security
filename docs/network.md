@@ -63,8 +63,8 @@ location /api/hls/ {
 
 | Browser | Live video |
 |---|---|
-| Chrome, Edge, Safari | WebRTC (HEVC), first picture in about 5 s |
-| Firefox | no HEVC over WebRTC, so no picture there; HLS works, about 11 s to the first picture on a cold start. The bundled [camera card](card.md) switches to HLS by itself |
+| Chrome, Edge, Safari | WebRTC (HEVC and H.264), first picture in about 5 s |
+| Firefox | H.264 cameras over WebRTC; no HEVC over WebRTC, so an HEVC camera gives no picture there, while HLS works, about 11 s to the first picture on a cold start. The bundled [camera card](card.md) picks the player by the camera's `video_codec` |
 
 ## eufy account
 

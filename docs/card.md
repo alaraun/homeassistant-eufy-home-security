@@ -143,7 +143,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
 - Pan/tilt and go-to-preset need a running live view; an idle camera stores zoom and preset for the next view.
 - Cameras behind one HomeBase stream side by side only up to the integration's "Sessions per HomeBase" budget;
   past it the view ends with `No picture from the camera` after about 20 s.
-- Live view uses HA's WebRTC player where the browser receives H.265 over WebRTC (Chrome, Edge, Safari) and HA's
-  HLS player otherwise (Firefox; the first picture takes longer). See [network.md](network.md) for the
-  browser table.
+- Live view uses HA's WebRTC player where the browser receives the camera's codec over WebRTC: H.264 cameras in
+  every browser, HEVC cameras in Chrome, Edge and Safari. Otherwise (an HEVC camera in Firefox) it uses HA's HLS
+  player, and the first picture takes longer. A camera whose `video_codec` is not known yet (no picture since Home
+  Assistant started) counts as HEVC. See [network.md](network.md) for the browser table.
 - A `New still` behind a HomeBase at its session budget waits up to about 20 s for a view to end first.

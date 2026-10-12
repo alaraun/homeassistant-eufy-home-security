@@ -4,7 +4,7 @@
 // `entity` is required; the settings rows are built from whatever settings the device has: the common ones
 // grouped, a setting that applies only in one state of another nested under it, the rest under More settings.
 
-const CARD_VERSION = '2026.10.10-2';
+const CARD_VERSION = '2026.10.12-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -856,11 +856,13 @@ class EufyCameraCard extends HTMLElement {
     }).catch(() => { if (this._live === L) this._stop('Live view not available here'); });
   }
 
-  // WebRTC when the browser can receive H.265 over it (go2rtc passes the camera's HEVC through; without it the
-  // video track is inactive and the player reports nothing, e.g. Firefox); else HLS, which plays HEVC via MSE.
+  // WebRTC when the browser can receive the camera's codec over it (go2rtc passes the video through; without it
+  // the video track is inactive and the player reports nothing): H.264 in every browser, H.265 only where offered
+  // (not Firefox). Else HLS, which plays HEVC via MSE. No video_codec yet (no keyframe this run) counts as HEVC.
   _playerFor(types) {
     const rtc = types.includes('web_rtc'), hls = types.includes('hls');
-    if (rtc && (!hls || this._rtcHevc())) return 'web_rtc';
+    const st = this._st(this._config.entity), h264 = !!st && st.attributes.video_codec === 'h264';
+    if (rtc && (!hls || h264 || this._rtcHevc())) return 'web_rtc';
     if (hls) return 'hls';
     return 'auto';
   }

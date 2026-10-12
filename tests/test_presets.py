@@ -1811,13 +1811,13 @@ def real_jpegs(monkeypatch) -> list[bytes]:
     """Decode each preset keyframe to a real 1280x720 JPEG of its own colour; lists them."""
     made: list[bytes] = []
 
-    async def decode(command, hevc: bytes, timeout: float) -> bytes:
+    async def decode(command, keyframe: bytes, codec, timeout: float) -> bytes:
         out = BytesIO()
         Image.new("RGB", (1280, 720), (20 * len(made), 80, 160)).save(out, "JPEG")
         made.append(out.getvalue())
         return made[-1]
 
-    monkeypatch.setattr(snapshots, "async_hevc_to_jpeg", decode)
+    monkeypatch.setattr(snapshots, "async_keyframe_to_jpeg", decode)
     return made
 
 

@@ -91,6 +91,11 @@ to the detection's time. A camera has no image, and no `image_source`, until its
 detection or button press. The last image of each camera and preset survives a
 restart.
 
+`video_codec` is `hevc` or `h264`: the codec of the camera's latest picture since Home
+Assistant started (most cameras send HEVC; cameras on a HomeBase 2 and some doorbells and
+Solo cameras send H.264). Absent until the camera has sent a picture. Stills, recordings
+and live view work in both codecs.
+
 ## Event history
 
 Every camera and preset image is also saved to the media folder, under **Media → My

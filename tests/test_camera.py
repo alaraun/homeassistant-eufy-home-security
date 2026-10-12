@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import json
 import logging
+import shlex
 import time
 from collections.abc import Callable
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Final
 
 import pytest
@@ -32,8 +35,9 @@ from conftest import (
     state_of,
     wait_until,
 )
-from eufy_home_security import DetectionType, EufySecurity, FrameCipher, Station
+from eufy_home_security import DetectionType, EufySecurity, FrameCipher, Station, VideoCodec
 from eufy_home_security.testing import FakeCloud, FakeStation, camera_device
+from fake_ffmpeg import FAKE_FFMPEG_PREFIX
 from homeassistant.components.alarm_control_panel import DOMAIN as ALARM_DOMAIN
 from homeassistant.components.alarm_control_panel import SERVICE_ALARM_ARM_HOME
 from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
@@ -47,6 +51,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, async_
 from custom_components.eufy_home_security import snapshots
 from custom_components.eufy_home_security.const import (
     ATTR_IMAGE_SOURCE,
+    ATTR_VIDEO_CODEC,
     CAMERA_KEY,
     CONF_CAMERA_IMAGE,
     CONF_LIVE_SNAPSHOT,
@@ -878,6 +883,100 @@ async def test_the_decoder_command_imports_nothing_on_the_event_loop(
     monkeypatch.setattr(builtins, "__import__", _no_ffmpeg_import)
     for _ in range(2):
         assert REAL_FFMPEG_COMMAND(hass) == ["ffmpeg"]
+
+
+# Annex-B keyframes as the cameras send them: HEVC opens with its VPS, H.264 with its SPS.
+HEVC_KEYFRAME: Final = b"\x00\x00\x00\x01\x40\x01" + bytes(64)
+H264_KEYFRAME: Final = (
+    b"\x00\x00\x00\x01\x67\x64\x00\x28" + bytes(24) + b"\x00\x00\x00\x01\x65" + bytes(64)
+)
+
+
+@pytest.mark.parametrize(
+    ("keyframe", "codec", "expected"),
+    [
+        (HEVC_KEYFRAME, None, "hevc"),
+        (H264_KEYFRAME, None, "h264"),
+        (H264_KEYFRAME, VideoCodec.H264, "h264"),
+        (HEVC_KEYFRAME, VideoCodec.HEVC, "hevc"),
+        (bytes(64), None, "hevc"),
+        (bytes(64), VideoCodec.H264, "h264"),
+    ],
+    ids=[
+        "hevc-by-picture",
+        "h264-by-picture",
+        "h264-named",
+        "hevc-named",
+        "unknown-as-hevc",
+        "named-over-unknown-picture",
+    ],
+)
+async def test_a_keyframe_is_decoded_in_its_own_codec(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    keyframe: bytes,
+    codec: VideoCodec | None,
+    expected: str,
+) -> None:
+    """ffmpeg reads the keyframe as the codec named, else as its picture shows, else HEVC."""
+    argv_log = tmp_path / "argv.jsonl"
+    monkeypatch.setenv("FAKE_FFMPEG_ARGV", str(argv_log))
+
+    jpeg = await snapshots.async_keyframe_to_jpeg(
+        shlex.split(FAKE_FFMPEG_PREFIX), keyframe, codec, timeout=5
+    )
+
+    (args,) = [json.loads(line) for line in argv_log.read_text().splitlines()]
+    assert args[args.index("-f") + 1] == expected
+    assert (jpeg is not None) is (keyframe != bytes(64))
+
+
+async def test_an_h264_trigger_frame_is_shown(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """An H.264 camera's trigger frame (no codec beside it) decodes as H.264 and shows."""
+
+    async def h264_frame(self: Station, event: Any, **kwargs: Any) -> bytes:
+        return H264_KEYFRAME
+
+    monkeypatch.setattr(Station, "async_event_trigger_frame", h264_frame)
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    entry.runtime_data.router.handle(
+        detection_event(DetectionType.PERSON, t_ms=now_ms(), video_path=CLIP_PATH)
+    )
+    await wait_until(lambda: _manager(entry).source_for(SYNTHETIC.camera_sn) is not None)
+
+    image = await _image(hass, _camera_id(hass))
+    assert image is not None and image.startswith(FOUR_K_JPEG_PREFIX)
+    assert _manager(entry).source_for(SYNTHETIC.camera_sn) == "trigger_frame"
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("codec", [VideoCodec.H264, VideoCodec.HEVC, None])
+async def test_the_camera_names_the_codec_its_video_came_in(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    codec: VideoCodec | None,
+) -> None:
+    """``video_codec`` is the codec of the camera's latest keyframe; absent before any."""
+    monkeypatch.setattr(Station, "video_codec", lambda self, device_sn: codec)
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    state = hass.states.get(_camera_id(hass))
+    assert state is not None
+    if codec is None:
+        assert ATTR_VIDEO_CODEC not in state.attributes
+    else:
+        assert state.attributes[ATTR_VIDEO_CODEC] == codec.value
+    await _unload(hass, entry)
 
 
 async def test_a_detection_without_a_thumbnail_shows_its_trigger_frame(

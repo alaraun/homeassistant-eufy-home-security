@@ -87,6 +87,7 @@ from .const import (
     ATTR_MEDIA_CONTENT_ID,
     ATTR_PRESET,
     ATTR_TRIGGERED_AT,
+    ATTR_VIDEO_CODEC,
     CAMERA_FRAME_INTERVAL_SECONDS,
     CAMERA_KEY,
     CLIP_REMUX_TIMEOUT_SECONDS,
@@ -438,15 +439,20 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
     @property
     @override
     def extra_state_attributes(self) -> dict[str, Any]:
-        """The shown image's tier and times; never a path, serial or record id.
+        """The shown image's tier and times and the video codec; never a path, serial or
+        record id.
 
         ``triggered_at`` is the detection's own time, or, for a refreshed image, the
         start of the recording it came from. ``image_updated`` is when the image was
         stored and differs for every stored image, the same picture fetched again
         included. A camera with no image has neither ``image_source`` nor
         ``image_updated``, and Home Assistant answers its image request with an error.
+        ``video_codec`` is the codec of the camera's latest keyframe in this run, absent
+        before any; the card picks its player by it.
         """
         attributes: dict[str, Any] = {}
+        if (codec := self.coordinator.station.video_codec(self._serial)) is not None:
+            attributes[ATTR_VIDEO_CODEC] = codec.value
         source = self._manager.source_for(self._serial)
         if source is not None:
             attributes[ATTR_IMAGE_SOURCE] = source.value

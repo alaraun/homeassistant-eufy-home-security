@@ -7,10 +7,12 @@ a real ``ffmpeg`` path does.
 
 Two modes, chosen by the ``-i`` argument:
 
-- ``-i pipe:0`` (a keyframe decode) reads all of stdin. Data starting with the
-  Annex-B VPS start ``00 00 00 01 40 01`` can only have come out of a keyframe that
-  really decrypted, so it answers with a minimal JPEG declaring 3840x2160 and exits
-  0. Anything else exits 69, as a decoder given garbage fails.
+- ``-i pipe:0`` (a keyframe decode) reads all of stdin. Data in the input format
+  ``-f`` names (``hevc``: the Annex-B VPS start ``00 00 00 01 40 01``; ``h264``: the SPS
+  start ``00 00 00 01 67``) can only have come out of a keyframe that really
+  decrypted, so it answers with a minimal JPEG declaring 3840x2160 and exits 0.
+  Anything else, a keyframe read in the wrong format included, exits 69, as a decoder
+  given garbage fails.
 - ``-i <file> ... <output>`` (a clip remux) writes :data:`REMUX_MAGIC` and then the
   input's bytes to the last argument and exits 0; an input that does not start with
   an MPEG-TS sync byte exits 69.
@@ -39,6 +41,9 @@ FAKE_FFMPEG_PREFIX = f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(__fil
 REMUX_MAGIC = b"FAKE-MP4\n"
 
 _ANNEX_B_VPS = b"\x00\x00\x00\x01\x40\x01"
+_ANNEX_B_SPS_H264 = b"\x00\x00\x00\x01\x67"
+# A keyframe's first bytes per ``-f`` input format.
+_PICTURE_START: dict[str, bytes] = {"hevc": _ANNEX_B_VPS, "h264": _ANNEX_B_SPS_H264}
 _SOF0_3840_2160 = b"\xff\xc0\x00\x11\x08" + struct.pack(">HH", 2160, 3840) + b"\x03" + b"\x00" * 9
 _TS_SYNC = 0x47
 
@@ -72,7 +77,8 @@ def main() -> int:
     _sleep()
     if os.environ.get("FAKE_FFMPEG_FAIL"):
         return 1
-    if not data.startswith(_ANNEX_B_VPS):
+    start = _PICTURE_START.get(args[args.index("-f") + 1]) if "-f" in args else None
+    if start is None or not data.startswith(start):
         return 69
     sys.stdout.buffer.write(b"\xff\xd8" + _SOF0_3840_2160 + b"\xff\xd9")
     sys.stdout.buffer.flush()

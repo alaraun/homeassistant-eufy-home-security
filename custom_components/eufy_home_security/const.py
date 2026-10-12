@@ -435,6 +435,8 @@ PRESET_REFRESH_TIMEOUT_SECONDS: Final = 30
 ACCOUNT_DEVICE_NAME: Final = "eufy account"
 # Which tier the shown image came from: thumbnail, trigger_frame, detection_live or live.
 ATTR_IMAGE_SOURCE: Final = "image_source"
+# The codec of the camera's latest keyframe in this run (``hevc`` / ``h264``); absent before any.
+ATTR_VIDEO_CODEC: Final = "video_codec"
 # The still-cache name of a camera entity's still; a preset's is ``preset_<index>``.
 CAMERA_STILL_NAME: Final = "camera"
 # When the shown image was stored, as an ISO timestamp: differs for every stored image.

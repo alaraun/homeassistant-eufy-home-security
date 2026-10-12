@@ -365,8 +365,11 @@ class PresetManager:
         jpeg = (
             image.data
             if image.is_jpeg
-            else await snapshots.async_hevc_to_jpeg(
-                snapshots.ffmpeg_command(self._hass), image.data, FFMPEG_DECODE_TIMEOUT_SECONDS
+            else await snapshots.async_keyframe_to_jpeg(
+                snapshots.ffmpeg_command(self._hass),
+                image.data,
+                image.codec,
+                FFMPEG_DECODE_TIMEOUT_SECONDS,
             )
         )
         if jpeg is None:
