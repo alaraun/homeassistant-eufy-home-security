@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.3.6](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.5...v0.3.6) (2026-10-13)
+
+
+### Bug Fixes
+
+* HomeBase 2 storage sizes, a repair for WebRTC-only stations, standalone T8442/T8200 live view (library 0.3.14) ([#78](https://github.com/alaraun/homeassistant-eufy-home-security/issues/78)) ([6dd16d3](https://github.com/alaraun/homeassistant-eufy-home-security/commit/6dd16d305a8e395ad74f0f61039e3108aa50b910))
+
 ## [0.3.5](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.4...v0.3.5) (2026-10-12)
 
 
