@@ -34,7 +34,6 @@ from homeassistant.helpers.typing import StateType
 from eufy_home_security import StationState, StorageMedium, SubDeviceState
 from eufy_home_security.devices import SettingKind, SettingUnit, model_for_serial
 
-from . import detections
 from .const import (
     BATTERY_KEY,
     BATTERY_TEMPERATURE_KEY,
@@ -191,7 +190,7 @@ class EufyDeviceFieldDescription(SensorEntityDescription):
     """One field of a paired device's state; the entity exists once a state reports it."""
 
     read: Callable[[SubDeviceState], StateType]
-    # Only for a device whose model declares a battery (``detections.has_battery``).
+    # Only for a device whose model declares a battery (``Station.has_battery``).
     battery: bool = False
 
 
@@ -410,7 +409,7 @@ async def async_setup_entry(
             own = device_sn == coordinator.station.serial
             # No battery sensor for a model without a battery (the eufy app shows
             # none); a model without bundled settings keeps it.
-            unpowered = detections.has_battery(coordinator.station, device_sn) is False
+            unpowered = coordinator.station.has_battery(device_sn) is False
             entities.extend(
                 EufyDiagnosticSensor(coordinator, device_sn, description)
                 for description in SUB_DEVICE_DIAGNOSTICS
@@ -443,7 +442,7 @@ async def async_setup_entry(
                 for description in DEVICE_FIELD_SENSORS
                 if (device.device_sn, description.key) not in owned
                 if not description.battery
-                or detections.has_battery(coordinator.station, device.device_sn) is not False
+                or coordinator.station.has_battery(device.device_sn) is not False
             ),
             async_add_entities,
         )

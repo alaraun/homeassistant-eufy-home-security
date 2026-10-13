@@ -251,30 +251,6 @@ def has_live_stream(station: Station, serial: str) -> bool:
     return station.live_support(serial).support is not Support.UNKNOWN
 
 
-# The thing-description property a battery model declares; the eufy app shows a
-# device's battery and charging state only when its model has it.
-BATTERY_PROPERTY: Final = "battery_value"
-
-
-def has_battery(station: Station, serial: str) -> bool | None:
-    """Whether the camera ``serial`` on ``station`` runs on a battery.
-
-    True when its model's bundled settings declare ``battery_value`` (declared by the
-    eufy app's thing descriptions), False when the model is bundled and declares none
-    (a mains-powered camera, a wired doorbell). None for a model without bundled
-    settings, and for every kind but a camera or doorbell: the app's rule is the camera
-    card's, and a sensor or keypad declares its battery differently. A pure lookup,
-    safe on the event loop.
-    """
-    model = model_for_serial(serial)
-    if model is None or not has_detection_entities(model.kind):
-        return None
-    settings = station.settings_for(serial)
-    if not settings:
-        return None
-    return any(setting.key == BATTERY_PROPERTY for setting in settings)
-
-
 def has_doorbell_entity(kind: DeviceKind | None) -> bool:
     """Whether a device of ``kind`` gets the doorbell ring event.
 

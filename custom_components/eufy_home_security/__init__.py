@@ -617,7 +617,7 @@ def _async_forget_battery_entities(
 ) -> None:
     """Forget the battery and charging rows of a device whose model has no battery.
 
-    The platforms build none for it (``detections.has_battery`` False); a row an
+    The platforms build none for it (``Station.has_battery`` False); a row an
     earlier release built from the station's charging field would stay as an
     unavailable orphan. Only this entry's rows, only devices whose model says so.
     """
@@ -626,7 +626,7 @@ def _async_forget_battery_entities(
         station = coordinator.station
         for device in station.devices:
             serial = device.device_sn
-            if not serial or detections.has_battery(station, serial) is not False:
+            if not serial or station.has_battery(serial) is not False:
                 continue
             for domain, keys in _BATTERY_UNIQUE_KEYS.items():
                 for key in keys:
