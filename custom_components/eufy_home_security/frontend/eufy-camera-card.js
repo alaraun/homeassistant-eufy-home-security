@@ -4,7 +4,7 @@
 // `entity` is required; the settings rows are built from whatever settings the device has: the common ones
 // grouped, a setting that applies only in one state of another nested under it, the rest under More settings.
 
-const CARD_VERSION = '2026.10.12-1';
+const CARD_VERSION = '2026.10.13-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -1819,6 +1819,10 @@ class EufyCameraCard extends HTMLElement {
         const d = this._dependsOn(r.deps[0].eid, r.deps[0].id);
         r.depOpt = d && d.opt ? (OPT_SHORT[d.opt] || this._optLabel(this._st(d.id), d.opt)) : '';
         r.depOn = !r.deps.every(x => x.off);
+        // Shown while the controller (staged, else live) is at the option they need; with that option unknown,
+        // while any of them applies
+        const cv = d && (this._stg[d.key] !== undefined ? String(this._stg[d.key]) : (this._st(d.id) || {}).state);
+        r.depShown = d && d.opt ? cv === d.opt : r.depOn;
       }
       rows.push(r, ...(deps[r.id] || []));
     });
@@ -2098,7 +2102,7 @@ class EufyCameraCard extends HTMLElement {
       let prevTg = true;
       rows.forEach((r) => {
         if (r.dep || r.group.id !== this._tab) return;
-        if (!r.deps) { const h = rowHtml(r, !!r.tg && !prevTg); prevTg = !!r.tg; out += h; return; }
+        if (!r.deps || !r.depShown) { const h = rowHtml(r, !!r.tg && !prevTg); prevTg = !!r.tg; out += h; return; }
         prevTg = false;
         const cap = r.depOpt ? `Only in ${r.depOpt}` : `Depend on ${r.label}`;
         out += `<div class="cgrp">${rowHtml(r)}<div class="deps${r.depOn ? ' on' : ''}" role="group" aria-label="${escapeHtml(`${cap}${r.depOn ? '' : ', not in use now'}`)}"><div class="dcap" aria-hidden="true">${escapeHtml(cap)}</div>${r.deps.map(rowHtml).join('')}</div></div>`;

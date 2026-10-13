@@ -119,7 +119,7 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     while the key is set; remove the key to get every group. In the editor the groups are chips: drag to
     reorder, ✕ to hide, the picker below adds one back; removing every chip shows every group.
   - A setting that applies only in one option of another sits under it, captioned with that option (`Only in
-    Custom`), greyed while that option is not chosen.
+    Custom`), and shows only while that option is chosen or picked (before Set).
   - A setting the integration makes unavailable is greyed out; one the device never reports reads
     `Not reported` until written from the card.
   - The Power tab adds a line of readings (charging, solar intensity, battery temperature, days since the last
