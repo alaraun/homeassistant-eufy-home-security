@@ -67,7 +67,13 @@ from .entity import (
     device_block,
 )
 from .settings import setting_specs
-from .storage import EufyStorageEntity, StorageCoordinator, StoragePart, async_add_part_entities
+from .storage import (
+    EufyStorageEntity,
+    StorageCoordinator,
+    StoragePart,
+    async_add_part_entities,
+    reported_descriptions,
+)
 
 if TYPE_CHECKING:
     from .runtime import EufyConfigEntry
@@ -220,15 +226,11 @@ def _async_add_storage_binary_sensors(
 
     @callback
     def _add_part(part: StoragePart) -> None:
-        # Only the facts the first record naming the part carries (a HomeBase 2's has no
-        # health or partition state).
-        medium = part.medium(coordinator.data)
         async_add_entities(
             EufyStorageBinarySensor(coordinator, description)
-            for description in STORAGE_BINARY_SENSORS
-            if description.part is part
-            and medium is not None
-            and description.value_fn(medium) is not None
+            for description in reported_descriptions(
+                coordinator, Platform.BINARY_SENSOR, part, STORAGE_BINARY_SENSORS
+            )
         )
 
     async_add_part_entities(entry, coordinator, _add_part)

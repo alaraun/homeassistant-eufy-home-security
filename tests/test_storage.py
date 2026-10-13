@@ -15,9 +15,11 @@ from typing import Any, Final
 
 import pytest
 from conftest import (
+    add_entry,
     advance_to_poll,
     entity_id_for,
     set_up_warm,
+    setup_entry,
     state_of,
     wait_until,
 )
@@ -273,6 +275,58 @@ async def test_a_figure_the_record_does_not_carry_gets_no_entity(
         assert _registered(hass, BINARY_SENSOR_DOMAIN, key) is None, key
     used = entity_id_for(hass, SENSOR_DOMAIN, SYNTHETIC.station_sn, DISK_USED_KEY)
     assert state_of(hass, used) == "14.16"
+
+    await _unload(hass, entry)
+
+
+async def test_an_earlier_entity_of_a_figure_the_record_does_not_carry_is_forgotten(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Rows an earlier release registered for figures the record lacks are removed when
+    the part's first record arrives; a reported figure's row keeps its entity id, and
+    another config entry's row stays."""
+    for key in ("cur_temperate", "health", "parted_status"):
+        fake_station.storage["hdd_info"].pop(key)
+    fake_station.storage["emmc_info"].pop("health")
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    serial = SYNTHETIC.station_sn
+    stale = [
+        (SENSOR_DOMAIN, DISK_TEMPERATURE_KEY),
+        (BINARY_SENSOR_DOMAIN, DISK_PROBLEM_KEY),
+        (BINARY_SENSOR_DOMAIN, DISK_FORMATTING_KEY),
+    ]
+    for domain, key in stale:
+        registry.async_get_or_create(
+            domain, DOMAIN, entity_unique_id(serial, key), config_entry=entry
+        )
+    other = add_entry(hass, email="other@example.com", unique_id="other@example.com")
+    foreign = registry.async_get_or_create(
+        BINARY_SENSOR_DOMAIN,
+        DOMAIN,
+        entity_unique_id(serial, EMMC_PROBLEM_KEY),
+        config_entry=other,
+    )
+    kept = registry.async_get_or_create(
+        SENSOR_DOMAIN,
+        DOMAIN,
+        entity_unique_id(serial, EMMC_WEAR_KEY),
+        config_entry=entry,
+        suggested_object_id="my_emmc_wear",
+    )
+
+    assert await setup_entry(hass, entry)
+    await hass.async_block_till_done()
+
+    for domain, key in stale:
+        assert _registered(hass, domain, key) is None, key
+    assert registry.async_get(kept.entity_id) is not None
+    assert state_of(hass, kept.entity_id) == "2"
+    assert registry.async_get(foreign.entity_id) is not None, "another entry's row stays"
 
     await _unload(hass, entry)
 

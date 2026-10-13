@@ -27,12 +27,13 @@ at platform setup.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from datetime import timedelta
 from enum import StrEnum
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, Protocol, override
 
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
 
@@ -165,6 +166,55 @@ def async_add_part_entities(
 
     _check()
     entry.async_on_unload(coordinator.async_add_listener(_check))
+
+
+class StorageDescription(Protocol):
+    """What :func:`reported_descriptions` reads of a (frozen) entity description."""
+
+    @property
+    def key(self) -> str: ...
+    @property
+    def part(self) -> StoragePart: ...
+    @property
+    def value_fn(self) -> Callable[[StorageMedium], object]: ...
+
+
+def reported_descriptions[DescT: StorageDescription](
+    coordinator: StorageCoordinator, domain: str, part: StoragePart, descriptions: Iterable[DescT]
+) -> list[DescT]:
+    """``part``'s descriptions whose figure the latest record carries.
+
+    A figure the record lacks (a HomeBase 2's has sizes only, a standalone camera's eMMC
+    no health) gets no entity, and the row an earlier release registered for it is
+    removed from ``domain``, this entry's rows only.
+    """
+    medium = part.medium(coordinator.data)
+    reported: list[DescT] = []
+    missing: list[str] = []
+    for description in descriptions:
+        if description.part is not part:
+            continue
+        if medium is not None and description.value_fn(medium) is not None:
+            reported.append(description)
+        else:
+            missing.append(description.key)
+    _forget(coordinator, domain, missing)
+    return reported
+
+
+def _forget(coordinator: StorageCoordinator, domain: str, keys: Sequence[str]) -> None:
+    registry = er.async_get(coordinator.hass)
+    for key in keys:
+        unique_id = entity_unique_id(coordinator.station.serial, key)
+        entity_id = registry.async_get_entity_id(domain, DOMAIN, unique_id)
+        if entity_id is None:
+            continue
+        registered = registry.async_get(entity_id)
+        if (
+            registered is not None
+            and registered.config_entry_id == coordinator.config_entry.entry_id
+        ):
+            registry.async_remove(entity_id)
 
 
 class EufyStorageEntity(CoordinatorEntity[StorageCoordinator]):

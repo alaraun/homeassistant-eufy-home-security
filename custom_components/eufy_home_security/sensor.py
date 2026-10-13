@@ -58,7 +58,13 @@ from .const import (
 from .coordinator import StationCoordinator
 from .entity import EufyDeviceEntity, EufySettingEntity, async_add_when_reported, device_block
 from .settings import SettingEntitySpec, setting_specs
-from .storage import EufyStorageEntity, StorageCoordinator, StoragePart, async_add_part_entities
+from .storage import (
+    EufyStorageEntity,
+    StorageCoordinator,
+    StoragePart,
+    async_add_part_entities,
+    reported_descriptions,
+)
 
 if TYPE_CHECKING:
     from .runtime import EufyConfigEntry
@@ -365,15 +371,11 @@ def _async_add_storage_sensors(
 
     @callback
     def _add_part(part: StoragePart) -> None:
-        # Only the figures the first record naming the part carries (a HomeBase 2's has
-        # sizes only): an entity for a figure the station never reports shows nothing.
-        medium = part.medium(coordinator.data)
         async_add_entities(
             EufyStorageSensor(coordinator, description)
-            for description in STORAGE_SENSORS
-            if description.part is part
-            and medium is not None
-            and description.value_fn(medium) is not None
+            for description in reported_descriptions(
+                coordinator, Platform.SENSOR, part, STORAGE_SENSORS
+            )
         )
 
     async_add_part_entities(entry, coordinator, _add_part)

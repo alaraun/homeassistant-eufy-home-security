@@ -292,6 +292,7 @@ not checked against the app's display.
 problem, formatting) come from the HomeBase's storage record, read every 30 minutes.
 Each HomeBase gets only the figures its record carries: a HomeBase 2 reports sizes only,
 a HomeBase mini its eMMC only. A HomeBase that refuses the storage query gets none.
+An entity an earlier release created for a figure the HomeBase does not report is removed.
 
 **Firmware update** entities also carry, when reported: `subsystem_firmware` on the
 HomeBase (version strings by parameter id; the subsystems are unnamed) and
