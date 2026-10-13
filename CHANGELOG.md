@@ -5,6 +5,14 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.3.7](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.6...v0.3.7) (2026-10-13)
+
+
+### Bug Fixes
+
+* storage entities of figures a station does not report are removed ([#80](https://github.com/alaraun/homeassistant-eufy-home-security/issues/80)) ([72e89ef](https://github.com/alaraun/homeassistant-eufy-home-security/commit/72e89efd5619b55be9ab59ada208e7c9059d6844))
+* the camera card shows Custom-only settings only while Custom is chosen ([#82](https://github.com/alaraun/homeassistant-eufy-home-security/issues/82)) ([44e0e85](https://github.com/alaraun/homeassistant-eufy-home-security/commit/44e0e854106a6a10e1ff03e86c079bdfcaa0fe88))
+
 ## [0.3.6](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.5...v0.3.6) (2026-10-13)
 
 
