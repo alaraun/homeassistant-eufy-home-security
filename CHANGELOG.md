@@ -5,6 +5,18 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.3.8](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.7...v0.3.8) (2026-10-13)
+
+
+### Features
+
+* a Last event image entity per camera ([#83](https://github.com/alaraun/homeassistant-eufy-home-security/issues/83)) ([653f3c8](https://github.com/alaraun/homeassistant-eufy-home-security/commit/653f3c82d67760f9f9e020769cb37d9e629f7657))
+
+
+### Bug Fixes
+
+* no battery or charging entities for a camera model without a battery ([#84](https://github.com/alaraun/homeassistant-eufy-home-security/issues/84)) ([45e6f80](https://github.com/alaraun/homeassistant-eufy-home-security/commit/45e6f8093193152ac2bb4a77eecdbf81d90a55da))
+
 ## [0.3.7](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.6...v0.3.7) (2026-10-13)
 
 
