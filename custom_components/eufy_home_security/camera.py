@@ -53,7 +53,6 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.util import dt as dt_util
 
 from eufy_home_security import (
     MAX_ZOOM,
@@ -81,12 +80,10 @@ from .const import (
     ATTR_COMPLETE,
     ATTR_DIRECTION,
     ATTR_DURATION,
-    ATTR_IMAGE_SOURCE,
     ATTR_IMAGE_UPDATED,
     ATTR_MAKE_DEFAULT,
     ATTR_MEDIA_CONTENT_ID,
     ATTR_PRESET,
-    ATTR_TRIGGERED_AT,
     ATTR_VIDEO_CODEC,
     CAMERA_FRAME_INTERVAL_SECONDS,
     CAMERA_KEY,
@@ -453,18 +450,7 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
         attributes: dict[str, Any] = {}
         if (codec := self.coordinator.station.video_codec(self._serial)) is not None:
             attributes[ATTR_VIDEO_CODEC] = codec.value
-        source = self._manager.source_for(self._serial)
-        if source is not None:
-            attributes[ATTR_IMAGE_SOURCE] = source.value
-        when = self._manager.event_time_for(self._serial)
-        if when is not None:
-            attributes[ATTR_TRIGGERED_AT] = dt_util.utc_from_timestamp(when / 1000).isoformat(
-                timespec="milliseconds"
-            )
-        elif (recorded := self._manager.recorded_time_for(self._serial)) is not None:
-            attributes[ATTR_TRIGGERED_AT] = dt_util.as_utc(recorded).isoformat(
-                timespec="milliseconds"
-            )
+        attributes.update(self._manager.shown_image_attributes(self._serial))
         if (stored := self._manager.stored_time_for(self._serial)) is not None:
             attributes[ATTR_IMAGE_UPDATED] = stored.isoformat(timespec="milliseconds")
         return attributes

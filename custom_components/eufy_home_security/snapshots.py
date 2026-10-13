@@ -139,6 +139,8 @@ from eufy_home_security.station import FULL_RESOLUTION_TIMEOUT
 
 from . import detections, errors, still_cache
 from .const import (
+    ATTR_IMAGE_SOURCE,
+    ATTR_TRIGGERED_AT,
     CAMERA_STILL_NAME,
     DEFAULT_CAMERA_IMAGE,
     DOMAIN,
@@ -529,6 +531,28 @@ class SnapshotManager:
         """When the shown image was stored; differs for every stored image. None before one."""
         camera = self._cameras.get(device_sn)
         return camera.stored_time if camera is not None else None
+
+    def shown_image_attributes(self, device_sn: str) -> dict[str, Any]:
+        """``image_source`` and ``triggered_at`` of the camera's shown image, as entity
+        attributes; empty before one. Never a path, serial or record id.
+
+        ``triggered_at`` is the detection's own time, or, for a refreshed image, the
+        start of the recording it came from; a live image has none.
+        """
+        attributes: dict[str, Any] = {}
+        source = self.source_for(device_sn)
+        if source is not None:
+            attributes[ATTR_IMAGE_SOURCE] = source.value
+        when = self.event_time_for(device_sn)
+        if when is not None:
+            attributes[ATTR_TRIGGERED_AT] = dt_util.utc_from_timestamp(when / 1000).isoformat(
+                timespec="milliseconds"
+            )
+        elif (recorded := self.recorded_time_for(device_sn)) is not None:
+            attributes[ATTR_TRIGGERED_AT] = dt_util.as_utc(recorded).isoformat(
+                timespec="milliseconds"
+            )
+        return attributes
 
     @callback
     def async_request_event(self, station: Station, event: SecurityEvent) -> None:

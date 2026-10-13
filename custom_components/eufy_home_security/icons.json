@@ -70,6 +70,9 @@
       }
     },
     "image": {
+      "last_event": {
+        "default": "mdi:image"
+      },
       "preset_image": {
         "default": "mdi:image-marker"
       }

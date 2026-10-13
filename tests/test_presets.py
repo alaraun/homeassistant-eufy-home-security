@@ -153,7 +153,7 @@ async def test_a_cold_cache_gives_a_ptz_camera_only_the_refresh_presets_button(
     entry_reg = _registry_entry(hass, button_id)
     assert entry_reg.entity_category == "config"
 
-    assert len(hass.states.async_entity_ids("image")) == 0
+    assert not any("preset" in entity_id for entity_id in hass.states.async_entity_ids("image"))
 
     assert not any(
         "_preset_" in entity.unique_id

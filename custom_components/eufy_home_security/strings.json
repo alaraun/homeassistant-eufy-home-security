@@ -776,6 +776,9 @@
       }
     },
     "image": {
+      "last_event": {
+        "name": "Last event"
+      },
       "preset_image": {
         "name": "Preset {index} image"
       }

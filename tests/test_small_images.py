@@ -31,7 +31,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
 from custom_components.eufy_home_security import small_images, still_cache
-from custom_components.eufy_home_security.const import CAMERA_KEY
+from custom_components.eufy_home_security.const import CAMERA_KEY, LAST_EVENT_IMAGE_KEY
 from custom_components.eufy_home_security.snapshots import SnapshotManager
 
 FULL_WIDTH: Final = 960
@@ -218,5 +218,34 @@ async def test_a_still_that_does_not_decode_serves_the_full_image(
     response = await client.get(f"/api/eufy_home_security/image/{_camera_id(hass)}/small")
     assert response.status == 200
     assert await response.read() == image
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_the_last_event_image_entity_shares_the_cameras_small_copy(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_client_no_auth: ClientSessionGenerator,
+) -> None:
+    """Its entity_picture is the small copy under its own id and token, versioned per
+    still; a new still changes the version."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    image_id = entity_id_for(hass, "image", SYNTHETIC.camera_sn, LAST_EVENT_IMAGE_KEY)
+    await _show(hass, entry, fake_station, jpeg(FULL_WIDTH, FULL_HEIGHT))
+    state = hass.states.get(image_id)
+    assert state is not None
+    picture = state.attributes["entity_picture"]
+    assert picture.startswith(f"/api/eufy_home_security/image/{image_id}/small?v=")
+    assert f"token={state.attributes['access_token']}" in picture
+    response = await (await hass_client_no_auth()).get(picture)
+    assert response.status == 200
+    assert size_of(await response.read()) == (480, 270)
+
+    await _show(hass, entry, fake_station, jpeg(FULL_WIDTH, FULL_HEIGHT, (200, 30, 30)))
+    after = hass.states.get(image_id)
+    assert after is not None
+    assert after.attributes["entity_picture"].split("&")[0] != picture.split("&")[0]
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

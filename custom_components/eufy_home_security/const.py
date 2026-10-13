@@ -369,6 +369,8 @@ CAPTURE_PRESET_KEY: Final = "capture_preset"
 SERVICE_CAPTURE_PRESET: Final = CAPTURE_PRESET_KEY
 # The per-slot "Preset n image" image entity's translation key.
 PRESET_IMAGE_KEY: Final = "preset_image"
+# The per-camera "Last event" image entity (the camera's shown detection image).
+LAST_EVENT_IMAGE_KEY: Final = "last_event"
 # The per-camera "Default preset" CONFIG select's translation key and unique-id key:
 # the slot the camera returns to on its own when idle.
 DEFAULT_PRESET_KEY: Final = "default_preset"

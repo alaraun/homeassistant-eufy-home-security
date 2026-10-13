@@ -31,6 +31,13 @@ reloads the integration.
 - Schedule and the Custom modes are shown, never set.
 - A mode changed in the eufy app shows within 45 s.
 
+## Detections
+
+Each camera has a Motion, Person, Pet and Vehicle sensor and a **Detection** event
+entity. A detection turns on only the sensor of its own kind (a person detection
+leaves Motion off) for the **Detection hold** seconds; the event entity fires for every
+kind, so an automation for "anything detected" triggers on it.
+
 ## Camera images
 
 The camera entity shows its latest detection's image.
@@ -90,6 +97,11 @@ A detection's HD image is `trigger_frame` or `detection_live` with `triggered_at
 to the detection's time. A camera has no image, and no `image_source`, until its first
 detection or button press. The last image of each camera and preset survives a
 restart.
+
+**Last event** image entity: the same picture as `image.<camera>_last_event`, for
+`picture-entity` cards and automations. Its state is the time the image was stored, its
+attributes `image_source` and `triggered_at` as above; unknown until the first image.
+Showing it never wakes a camera.
 
 `video_codec` is `hevc` or `h264`: the codec of the camera's latest picture since Home
 Assistant started (most cameras send HEVC; cameras on a HomeBase 2 and some doorbells and

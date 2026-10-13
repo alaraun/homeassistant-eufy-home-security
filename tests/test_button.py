@@ -776,7 +776,7 @@ async def test_a_camera_without_presets_gets_no_preset_entities(
         for entity in registry.entities.values()
         if entity.platform == DOMAIN
     )
-    assert hass.states.async_entity_ids("image") == []
+    assert not any("preset" in entity_id for entity_id in hass.states.async_entity_ids("image"))
     camera_id = _camera_id(hass)
     with pytest.raises(ServiceValidationError) as exc:
         await hass.services.async_call(

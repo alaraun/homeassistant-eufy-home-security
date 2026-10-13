@@ -42,6 +42,8 @@ from homeassistant.components.alarm_control_panel import DOMAIN as ALARM_DOMAIN
 from homeassistant.components.alarm_control_panel import SERVICE_ALARM_ARM_HOME
 from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
 from homeassistant.components.camera import async_get_image
+from homeassistant.components.image import DOMAIN as IMAGE_DOMAIN
+from homeassistant.components.image import async_get_image as async_get_image_entity
 from homeassistant.const import ATTR_ENTITY_ID, EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -55,6 +57,7 @@ from custom_components.eufy_home_security.const import (
     CAMERA_KEY,
     CONF_CAMERA_IMAGE,
     CONF_LIVE_SNAPSHOT,
+    LAST_EVENT_IMAGE_KEY,
     LIVE_SNAPSHOT_COOLDOWN_SECONDS,
     THUMBNAIL_RETRY_DELAY_SECONDS,
 )
@@ -1449,4 +1452,72 @@ async def test_an_unknown_stored_camera_image_sets_up_as_hd(
     fake_station.push_camera_event()
     await wait_until(lambda: sources == ["thumbnail", "trigger_frame"])
     await wait_until(lambda: not _manager(entry).busy)
+    await _unload(hass, entry)
+
+
+# ── the last-event image entity ───────────────────────────────────────────────
+
+
+def _last_event_id(hass: HomeAssistant, serial: str = SYNTHETIC.camera_sn) -> str:
+    return entity_id_for(hass, IMAGE_DOMAIN, serial, LAST_EVENT_IMAGE_KEY)
+
+
+async def test_each_camera_gets_a_last_event_image_that_is_unknown_before_a_detection(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """One last-event image per camera, none for the station; no image, no attributes,
+    and nothing asked of the station before the first detection."""
+    entry = await _set_up_with_other_camera(hass, fake_station, fake_cloud, seed_warm_cache)
+    for serial in (SYNTHETIC.camera_sn, OTHER_CAMERA_SN):
+        entity_id = _last_event_id(hass, serial)
+        state = hass.states.get(entity_id)
+        assert state is not None and state.state == "unknown"
+        assert ATTR_IMAGE_SOURCE not in state.attributes
+        assert "entity_picture" not in state.attributes
+        with pytest.raises(HomeAssistantError):
+            await async_get_image_entity(hass, entity_id)
+    last_event_ids = [i for i in hass.states.async_entity_ids(IMAGE_DOMAIN) if "preset" not in i]
+    assert len(last_event_ids) == 2
+    await asyncio.sleep(0.2)
+    assert _commands(fake_station, 1003) == 0
+    assert _commands(fake_station, 1308) == 0
+    await _unload(hass, entry)
+
+
+async def test_the_last_event_image_follows_the_cameras_detection_image(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A detection: the image entity serves the camera's shown image, its state is the
+    store time and its attributes name the source and the detection's time."""
+    fake_station.images[THUMB_PATH] = THUMBNAIL
+    entry = await set_up_warm(hass, seed_warm_cache)
+    camera_id = _camera_id(hass)
+    image_id = _last_event_id(hass)
+    sources = _record_sources(hass, camera_id)
+
+    fake_station.push_camera_event()
+    await wait_until(lambda: sources == ["thumbnail", "trigger_frame"])
+    await wait_until(lambda: not _manager(entry).busy)
+    await hass.async_block_till_done()
+
+    image = await async_get_image_entity(hass, image_id)
+    assert image.content_type == "image/jpeg"
+    assert image.content == await _image(hass, camera_id)
+    assert image.content.startswith(FOUR_K_JPEG_PREFIX)
+    state = hass.states.get(image_id)
+    assert state is not None
+    camera_state = hass.states.get(camera_id)
+    assert camera_state is not None
+    stored = _manager(entry).stored_time_for(SYNTHETIC.camera_sn)
+    assert stored is not None and dt_util.parse_datetime(state.state) == stored
+    assert state.attributes[ATTR_IMAGE_SOURCE] == "trigger_frame"
+    assert state.attributes["triggered_at"] == camera_state.attributes["triggered_at"]
+    assert all("/zx/" not in str(value) for value in state.attributes.values())
     await _unload(hass, entry)
