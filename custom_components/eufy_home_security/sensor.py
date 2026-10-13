@@ -34,6 +34,7 @@ from homeassistant.helpers.typing import StateType
 from eufy_home_security import StationState, StorageMedium, SubDeviceState
 from eufy_home_security.devices import SettingKind, SettingUnit, model_for_serial
 
+from . import detections
 from .const import (
     BATTERY_KEY,
     BATTERY_TEMPERATURE_KEY,
@@ -190,6 +191,8 @@ class EufyDeviceFieldDescription(SensorEntityDescription):
     """One field of a paired device's state; the entity exists once a state reports it."""
 
     read: Callable[[SubDeviceState], StateType]
+    # Only for a device whose model declares a battery (``detections.has_battery``).
+    battery: bool = False
 
 
 # Power-manager figures of a camera, all DIAGNOSTIC. The code meanings are declared
@@ -202,6 +205,7 @@ DEVICE_FIELD_SENSORS: Final = (
         # Raw solar input; its scale is model specific, so no unit or device class.
         state_class=SensorStateClass.MEASUREMENT,
         read=lambda device: device.solar_intensity,
+        battery=True,
     ),
     EufyDeviceFieldDescription(
         key=BATTERY_TEMPERATURE_KEY,
@@ -211,6 +215,7 @@ DEVICE_FIELD_SENSORS: Final = (
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
         read=lambda device: device.battery_temperature,
+        battery=True,
     ),
     EufyDeviceFieldDescription(
         key=WORKING_DAYS_KEY,
@@ -221,6 +226,7 @@ DEVICE_FIELD_SENSORS: Final = (
         suggested_display_precision=0,
         state_class=SensorStateClass.MEASUREMENT,
         read=lambda device: device.working_days,
+        battery=True,
     ),
     # Counted since the last USB charge, which resets them.
     EufyDeviceFieldDescription(
@@ -402,10 +408,14 @@ async def async_setup_entry(
             # and model already come from the station diagnostics above, under the
             # same unique ids, so only its battery and signal are added here.
             own = device_sn == coordinator.station.serial
+            # No battery sensor for a model without a battery (the eufy app shows
+            # none); a model without bundled settings keeps it.
+            unpowered = detections.has_battery(coordinator.station, device_sn) is False
             entities.extend(
                 EufyDiagnosticSensor(coordinator, device_sn, description)
                 for description in SUB_DEVICE_DIAGNOSTICS
                 if not (own and description.key in (FIRMWARE_KEY, MODEL_KEY))
+                if not (unpowered and description.key == BATTERY_KEY)
             )
         entities.extend(
             EufySettingSensor(coordinator, spec)
@@ -432,6 +442,8 @@ async def async_setup_entry(
                 if device.device_sn
                 for description in DEVICE_FIELD_SENSORS
                 if (device.device_sn, description.key) not in owned
+                if not description.battery
+                or detections.has_battery(coordinator.station, device.device_sn) is not False
             ),
             async_add_entities,
         )

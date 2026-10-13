@@ -141,6 +141,9 @@ class EufyDeviceFieldBinaryDescription(BinarySensorEntityDescription):
 
     read: Callable[[SubDeviceState], bool | None]
     attributes_fn: Callable[[SubDeviceState], dict[str, Any]] | None = None
+    # Only for a device whose model declares a battery (``detections.has_battery``):
+    # a mains-powered camera reports a charging field too, which the eufy app hides.
+    battery: bool = False
 
 
 def _charging_attributes(device: SubDeviceState) -> dict[str, Any]:
@@ -159,12 +162,14 @@ DEVICE_FIELD_BINARY_SENSORS: Final = (
         device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
         read=lambda device: device.charging,
         attributes_fn=_charging_attributes,
+        battery=True,
     ),
     EufyDeviceFieldBinaryDescription(
         key=SOLAR_CHARGING_KEY,
         translation_key=SOLAR_CHARGING_KEY,
         device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
         read=lambda device: device.solar_charging,
+        battery=True,
     ),
     # The motion sensor's own flag, beside its battery percentage.
     EufyDeviceFieldBinaryDescription(
@@ -212,6 +217,8 @@ def _async_add_state_binary_sensors(
         for device in coordinator.station.devices
         if device.device_sn
         for description in DEVICE_FIELD_BINARY_SENSORS
+        if not description.battery
+        or detections.has_battery(coordinator.station, device.device_sn) is not False
     )
     async_add_when_reported(entry, coordinator, candidates, async_add_entities)
 

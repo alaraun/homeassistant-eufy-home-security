@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Iterable
-from typing import Any
+from collections.abc import Iterable, Mapping
+from types import MappingProxyType
+from typing import Any, Final
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_EMAIL, EVENT_HOMEASSISTANT_STOP, Platform
@@ -46,6 +47,9 @@ from . import (
 )
 from .const import (
     ACCOUNT_DEVICE_NAME,
+    BATTERY_KEY,
+    BATTERY_TEMPERATURE_KEY,
+    CHARGING_KEY,
     CONF_CAMERA_IMAGE,
     CONF_CLOUD_PUSH,
     CONF_EVENT_HISTORY_DAYS,
@@ -54,6 +58,9 @@ from .const import (
     CONF_SCAN_REGIONS,
     DEFAULT_EVENT_HISTORY_DAYS,
     DOMAIN,
+    SOLAR_CHARGING_KEY,
+    SOLAR_INTENSITY_KEY,
+    WORKING_DAYS_KEY,
 )
 from .coordinator import StationCoordinator
 from .events import EventRouter
@@ -484,6 +491,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     )
     _async_forget_moved_setting_entities(hass, entry, coordinators.values())
     _async_forget_parentless_setting_entities(hass, entry, coordinators.values())
+    _async_forget_battery_entities(hass, entry, coordinators.values())
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     for serial, storage_coordinator in storage.items():
         if coordinators[serial].station.connected:
@@ -591,6 +599,45 @@ def _async_forget_moved_setting_entities(
                 registered = registry.async_get(entity_id)
                 if registered is not None and registered.config_entry_id == entry.entry_id:
                     registry.async_remove(entity_id)
+
+
+# The battery-bound rows of a paired device, by platform domain.
+_BATTERY_UNIQUE_KEYS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
+    {
+        Platform.SENSOR: frozenset(
+            {BATTERY_KEY, BATTERY_TEMPERATURE_KEY, WORKING_DAYS_KEY, SOLAR_INTENSITY_KEY}
+        ),
+        Platform.BINARY_SENSOR: frozenset({CHARGING_KEY, SOLAR_CHARGING_KEY}),
+    }
+)
+
+
+def _async_forget_battery_entities(
+    hass: HomeAssistant, entry: EufyConfigEntry, coordinators: Iterable[StationCoordinator]
+) -> None:
+    """Forget the battery and charging rows of a device whose model has no battery.
+
+    The platforms build none for it (``detections.has_battery`` False); a row an
+    earlier release built from the station's charging field would stay as an
+    unavailable orphan. Only this entry's rows, only devices whose model says so.
+    """
+    registry = er.async_get(hass)
+    for coordinator in coordinators:
+        station = coordinator.station
+        for device in station.devices:
+            serial = device.device_sn
+            if not serial or detections.has_battery(station, serial) is not False:
+                continue
+            for domain, keys in _BATTERY_UNIQUE_KEYS.items():
+                for key in keys:
+                    entity_id = registry.async_get_entity_id(
+                        domain, DOMAIN, entity_unique_id(serial, key)
+                    )
+                    if entity_id is None:
+                        continue
+                    registered = registry.async_get(entity_id)
+                    if registered is not None and registered.config_entry_id == entry.entry_id:
+                        registry.async_remove(entity_id)
 
 
 def _async_forget_parentless_setting_entities(

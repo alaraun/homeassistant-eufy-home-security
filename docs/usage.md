@@ -277,6 +277,12 @@ camera. Each entity appears once its device reports the value; a value its devic
 stops reporting shows unknown. The code meanings are declared from eufy's app code,
 not checked against the app's display.
 
+A camera whose model has no battery (a mains-powered floodlight or indoor camera, a
+wired doorbell) gets no **Battery**, **Charging**, **Solar charging**, **Solar
+intensity**, **Battery temperature** or **Working days** entity, although the HomeBase
+reports a charging field for it; the eufy app shows no battery for these models either.
+Rows an earlier release created for such a device are removed at setup.
+
 | Device | Entity | Type | Shows |
 |---|---|---|---|
 | Camera | **Charging** | binary sensor (battery charging) | Charging from any source. Attributes `solar_charging`, `power_source` (raw source code: 0/2 none, 1 USB, 3 AC, 4 built-in solar, 5 USB + built-in solar, 6/8 external panel, 7/12 external + built-in, 20 connected panel; other codes as reported) |

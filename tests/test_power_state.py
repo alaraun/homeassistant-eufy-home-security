@@ -15,16 +15,18 @@ from typing import Final
 import pytest
 from conftest import (
     SENSOR_SN,
+    add_entry,
     add_motion_sensor,
     advance_to_poll,
     entity_id_for,
     set_up_warm,
+    setup_entry,
     state_of,
     wait_until,
 )
 from eufy_home_security import EufySecurity, Station, entity_unique_id
 from eufy_home_security.devices import Setting
-from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
+from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation, camera_device
 from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
 from homeassistant.components.sensor import ATTR_STATE_CLASS
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
@@ -42,6 +44,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from custom_components.eufy_home_security.const import (
+    BATTERY_KEY,
     BATTERY_LOW_KEY,
     BATTERY_TEMPERATURE_KEY,
     CHARGING_KEY,
@@ -342,6 +345,103 @@ async def test_a_readable_setting_of_the_same_key_keeps_its_unique_id(
     # The setting sensor (no read path in this stub, so unknown), not a second entity.
     assert state_of(hass, entity_id) == STATE_UNKNOWN
     assert "does not generate unique IDs" not in caplog.text
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+# A mains-powered floodlight, paired beside the battery camera.
+_FLOODLIGHT_SN: Final = "T8425P2000000005"
+_FLOODLIGHT_CHANNEL: Final = 2
+
+
+def _add_floodlight(station: FakeStation, cloud: FakeCloud) -> None:
+    """Pair the floodlight, its block reporting every battery and charging field."""
+    cloud.devices.append(
+        camera_device(
+            _FLOODLIGHT_SN, station_sn=station.serial, channel=_FLOODLIGHT_CHANNEL, name="Drive"
+        )
+    )
+    station.params[_FLOODLIGHT_CHANNEL] = {
+        1101: "100",
+        1142: "-55",
+        _POWER_SOURCE_PARAM: "3",
+        **_POWER_MANAGER,
+    }
+
+
+async def test_a_model_without_a_battery_gets_no_battery_or_charging_entities(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A mains-powered model's block carries battery and charging fields, which the
+    eufy app does not show for it: no such entities, while its other figures and the
+    battery camera's own keep theirs."""
+    _add_floodlight(fake_station, fake_cloud)
+    fake_station.params[_CAMERA_CHANNEL].update(
+        {_POWER_SOURCE_PARAM: _SOLAR_SOURCE, **_POWER_MANAGER}
+    )
+    entry = await set_up_warm(hass, seed_warm_cache)
+    await hass.async_block_till_done()
+
+    for domain, key in (
+        (SENSOR_DOMAIN, BATTERY_KEY),
+        (SENSOR_DOMAIN, BATTERY_TEMPERATURE_KEY),
+        (SENSOR_DOMAIN, WORKING_DAYS_KEY),
+        (SENSOR_DOMAIN, SOLAR_INTENSITY_KEY),
+        (BINARY_SENSOR_DOMAIN, CHARGING_KEY),
+        (BINARY_SENSOR_DOMAIN, SOLAR_CHARGING_KEY),
+    ):
+        assert _entity_id_or_none(hass, domain, _FLOODLIGHT_SN, key) is None, key
+        assert _entity_id_or_none(hass, domain, SYNTHETIC.camera_sn, key) is not None, key
+    assert (
+        state_of(hass, entity_id_for(hass, SENSOR_DOMAIN, _FLOODLIGHT_SN, DETECTED_EVENTS_KEY))
+        == "30"
+    )
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_battery_rows_an_earlier_release_made_for_a_mains_model_are_forgotten(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Registry rows of the floodlight's battery and charging keys are removed at
+    setup; the battery camera's rows and the floodlight's other rows stay."""
+    _add_floodlight(fake_station, fake_cloud)
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    stale = [
+        registry.async_get_or_create(
+            domain, DOMAIN, entity_unique_id(_FLOODLIGHT_SN, key), config_entry=entry
+        ).entity_id
+        for domain, key in (
+            (SENSOR_DOMAIN, BATTERY_KEY),
+            (SENSOR_DOMAIN, WORKING_DAYS_KEY),
+            (BINARY_SENSOR_DOMAIN, CHARGING_KEY),
+        )
+    ]
+    kept = registry.async_get_or_create(
+        SENSOR_DOMAIN,
+        DOMAIN,
+        entity_unique_id(SYNTHETIC.camera_sn, BATTERY_KEY),
+        config_entry=entry,
+    ).entity_id
+
+    assert await setup_entry(hass, entry)
+    await hass.async_block_till_done()
+
+    assert all(registry.async_get(entity_id) is None for entity_id in stale)
+    assert registry.async_get(kept) is not None
+    assert _entity_id_or_none(hass, SENSOR_DOMAIN, _FLOODLIGHT_SN, FIRMWARE_KEY) is not None
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
