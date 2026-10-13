@@ -129,6 +129,7 @@ from .const import (
     ISSUE_PUSH_NOT_RUNNING,
     ISSUE_SESSION_REPLACED,
     ISSUE_STATION_P2P_ID_UNSUPPORTED,
+    ISSUE_STATION_WEBRTC_ONLY,
     MEDIA_DOCS_URL,
 )
 
@@ -1161,6 +1162,7 @@ def sync_no_devices_issue(
 _SKIP_ISSUES: Final[Mapping[str, str]] = {
     "bad_did": ISSUE_STATION_P2P_ID_UNSUPPORTED,
     "bad_serial": ISSUE_DEVICE_SERIAL_UNSUPPORTED,
+    "webrtc_only": ISSUE_STATION_WEBRTC_ONLY,
 }
 
 

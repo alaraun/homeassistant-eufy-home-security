@@ -288,6 +288,11 @@ not checked against the app's display.
 | Motion sensor | **Battery low** | diagnostic binary sensor (battery) | The sensor's own low-battery flag |
 | HomeBase | **Storage problem** | diagnostic binary sensor (problem) | On when the storage status is not one the app shows as normal. Attribute `storage_status` (raw code) |
 
+**Disk and eMMC** entities (used, free, size, used percentage, temperature, wear,
+problem, formatting) come from the HomeBase's storage record, read every 30 minutes.
+Each HomeBase gets only the figures its record carries: a HomeBase 2 reports sizes only,
+a HomeBase mini its eMMC only. A HomeBase that refuses the storage query gets none.
+
 **Firmware update** entities also carry, when reported: `subsystem_firmware` on the
 HomeBase (version strings by parameter id; the subsystems are unnamed) and
 `siren_actions` on a camera (raw siren action per guard mode, keyed `away`, `home`,

@@ -1085,6 +1085,41 @@ def _unlist_far_station(cloud: FakeCloud) -> None:
     cloud.devices = [d for d in cloud.devices if d["device_sn"] not in far]
 
 
+_WEBRTC_STATION_SN: Final = "T9000P3000000003"
+_WEBRTC_CAMERA_SN: Final = "T8113P3000000004"
+
+
+async def test_a_station_reached_only_over_webrtc_is_a_repair_with_its_cameras(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A HomeBase Professional or NVR (webrtc_only) gets one non-fixable issue naming it
+    and its paired devices; the account's other station loads, no other skip issue."""
+    fake_cloud.devices += [
+        station_device(_WEBRTC_STATION_SN, name="Pro"),
+        camera_device(_WEBRTC_CAMERA_SN, station_sn=_WEBRTC_STATION_SN, name="Behind pro"),
+    ]
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert set(entry.runtime_data.coordinators) == {SYNTHETIC.station_sn}
+    issue = _skip_issue(hass, entry, "station_webrtc_only")
+    assert issue is not None
+    assert issue.is_fixable is False
+    assert issue.is_persistent is False
+    assert issue.severity is ir.IssueSeverity.WARNING
+    assert issue.translation_placeholders == {
+        "account": errors.account_label(entry),
+        "devices": f"{redact_serial(_WEBRTC_STATION_SN)}, {redact_serial(_WEBRTC_CAMERA_SN)}",
+    }
+    assert _skip_issue(hass, entry, "station_p2p_id_unsupported") is None
+
+    await _unload(hass, entry)
+    assert _skip_issue(hass, entry, "station_webrtc_only") is None
+
+
 async def test_a_device_list_refresh_without_the_refused_station_withdraws_its_issue(
     hass: HomeAssistant,
     fake_cloud: FakeCloud,

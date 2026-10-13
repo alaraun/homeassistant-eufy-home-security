@@ -220,10 +220,15 @@ def _async_add_storage_binary_sensors(
 
     @callback
     def _add_part(part: StoragePart) -> None:
+        # Only the facts the first record naming the part carries (a HomeBase 2's has no
+        # health or partition state).
+        medium = part.medium(coordinator.data)
         async_add_entities(
             EufyStorageBinarySensor(coordinator, description)
             for description in STORAGE_BINARY_SENSORS
             if description.part is part
+            and medium is not None
+            and description.value_fn(medium) is not None
         )
 
     async_add_part_entities(entry, coordinator, _add_part)

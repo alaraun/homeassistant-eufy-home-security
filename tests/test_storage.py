@@ -251,6 +251,32 @@ async def test_no_disk_means_no_disk_entities_until_a_record_reports_one(
     await _unload(hass, entry)
 
 
+async def test_a_figure_the_record_does_not_carry_gets_no_entity(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A record with sizes only (a HomeBase 2's): used, free and size entities, no
+    temperature, problem, formatting or wear entity that could only show unknown."""
+    for key in ("cur_temperate", "health", "parted_status"):
+        fake_station.storage["hdd_info"].pop(key)
+    for key in ("eol_percent", "health"):
+        fake_station.storage["emmc_info"].pop(key)
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    for key in (DISK_USED_KEY, DISK_FREE_KEY, DISK_SIZE_KEY, EMMC_USED_SPACE_KEY, EMMC_FREE_KEY):
+        assert _registered(hass, SENSOR_DOMAIN, key) is not None, key
+    assert _registered(hass, SENSOR_DOMAIN, DISK_TEMPERATURE_KEY) is None
+    assert _registered(hass, SENSOR_DOMAIN, EMMC_WEAR_KEY) is None
+    for key in (DISK_PROBLEM_KEY, DISK_FORMATTING_KEY, EMMC_PROBLEM_KEY):
+        assert _registered(hass, BINARY_SENSOR_DOMAIN, key) is None, key
+    used = entity_id_for(hass, SENSOR_DOMAIN, SYNTHETIC.station_sn, DISK_USED_KEY)
+    assert state_of(hass, used) == "14.16"
+
+    await _unload(hass, entry)
+
+
 async def test_a_pushed_record_updates_the_entities_without_a_read(
     hass: HomeAssistant,
     fake_station: FakeStation,

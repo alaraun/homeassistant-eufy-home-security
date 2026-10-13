@@ -261,6 +261,10 @@
         }
       }
     },
+    "station_webrtc_only": {
+      "title": "eufy station needs WebRTC for {account}",
+      "description": "The eufy account {account} lists a station the eufy app reaches only over its WebRTC connection (a HomeBase Professional or an NVR), which this integration does not support yet: {devices} (the station and the devices paired to it). They are left out; the account's other stations work as usual. This repair is checked again on every reload and on Refresh device list."
+    },
     "station_p2p_id_unsupported": {
       "title": "eufy station not supported for {account}",
       "description": "The eufy account {account} lists a station whose P2P id local connections do not accept: {devices}. The eufy app does not connect to it locally either, so Home Assistant leaves it and the devices paired to it out; the account's other stations work as usual. Nothing in Home Assistant can change that. This repair is checked again on every reload and on Refresh device list."

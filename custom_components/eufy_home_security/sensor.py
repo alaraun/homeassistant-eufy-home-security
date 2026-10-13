@@ -329,6 +329,7 @@ def _wear_sensor(part: StoragePart, key: str) -> EufyStorageDescription:
 #   station's ``emmc_used`` dump sensor shows it, which is also why used space is
 #   keyed ``emmc_used_space``. No temperature: ``emmc_info`` has no ``cur_temperate``.
 # - Recordings used/capacity: no app screen shows them; diagnostics download only.
+# A figure the part's first record does not carry gets no entity.
 STORAGE_SENSORS: Final = (
     _gib_sensor(StoragePart.DISK, DISK_USED_KEY, lambda medium: medium.used_gib),
     _gib_sensor(StoragePart.DISK, DISK_FREE_KEY, lambda medium: medium.free_gib),
@@ -364,10 +365,15 @@ def _async_add_storage_sensors(
 
     @callback
     def _add_part(part: StoragePart) -> None:
+        # Only the figures the first record naming the part carries (a HomeBase 2's has
+        # sizes only): an entity for a figure the station never reports shows nothing.
+        medium = part.medium(coordinator.data)
         async_add_entities(
             EufyStorageSensor(coordinator, description)
             for description in STORAGE_SENSORS
             if description.part is part
+            and medium is not None
+            and description.value_fn(medium) is not None
         )
 
     async_add_part_entities(entry, coordinator, _add_part)

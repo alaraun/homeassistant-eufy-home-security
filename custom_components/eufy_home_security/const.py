@@ -340,6 +340,8 @@ ISSUE_NO_DEVICES: Final = "no_devices"
 ISSUE_PENDING_INVITES: Final = "pending_invites"
 # eufy lists a station whose P2P id local connections do not accept; it is left out.
 ISSUE_STATION_P2P_ID_UNSUPPORTED: Final = "station_p2p_id_unsupported"
+# eufy lists a station the eufy app reaches only over WebRTC; it and its devices are left out.
+ISSUE_STATION_WEBRTC_ONLY: Final = "station_webrtc_only"
 # eufy lists a device whose serial is not letters and digits; it is left out.
 ISSUE_DEVICE_SERIAL_UNSUPPORTED: Final = "device_serial_unsupported"
 
