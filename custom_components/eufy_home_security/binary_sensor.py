@@ -217,8 +217,7 @@ def _async_add_state_binary_sensors(
         for device in coordinator.station.devices
         if device.device_sn
         for description in DEVICE_FIELD_BINARY_SENSORS
-        if not description.battery
-        or coordinator.station.has_battery(device.device_sn) is not False
+        if not description.battery or coordinator.station.has_battery(device.device_sn) is not False
     )
     async_add_when_reported(entry, coordinator, candidates, async_add_entities)
 
