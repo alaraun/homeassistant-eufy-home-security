@@ -66,7 +66,7 @@ async def async_setup_entry(
     )
     for coordinator in entry.runtime_data.coordinators.values():
         for device_sn in detections.paired_device_kinds(coordinator.station):
-            if not detections.has_preset_entities(device_sn):
+            if not detections.has_preset_entities(coordinator.station, device_sn):
                 continue
             _add_camera_slots(hass, entry, coordinator, device_sn, manager, async_add_entities)
 

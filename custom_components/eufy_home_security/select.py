@@ -80,7 +80,7 @@ async def async_setup_entry(
         EufyDefaultPresetSelect(coordinator, device_sn)
         for coordinator in entry.runtime_data.coordinators.values()
         for device_sn in detections.paired_device_kinds(coordinator.station)
-        if detections.has_preset_entities(device_sn)
+        if detections.has_preset_entities(coordinator.station, device_sn)
     )
     streams = runtime.streaming(entry)
     if streams is not None:
@@ -88,7 +88,8 @@ async def async_setup_entry(
             EufyLivePresetSelect(coordinator, device_sn)
             for coordinator in entry.runtime_data.coordinators.values()
             for device_sn in detections.paired_device_kinds(coordinator.station)
-            if detections.has_preset_entities(device_sn) and streams.has_camera(device_sn)
+            if detections.has_preset_entities(coordinator.station, device_sn)
+            and streams.has_camera(device_sn)
         )
     async_add_entities(entities)
 

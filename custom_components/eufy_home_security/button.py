@@ -135,25 +135,26 @@ async def async_setup_entry(
         EufyRefreshPresetsButton(coordinator, device_sn, preset_manager)
         for coordinator in entry.runtime_data.coordinators.values()
         for device_sn in detections.paired_device_kinds(coordinator.station)
-        if detections.has_preset_entities(device_sn)
+        if detections.has_preset_entities(coordinator.station, device_sn)
     )
     entities.extend(
         EufyPanTiltButton(coordinator, device_sn, key, direction)
         for coordinator in entry.runtime_data.coordinators.values()
         for device_sn in detections.paired_device_kinds(coordinator.station)
-        if detections.has_pan_tilt_control(device_sn)
+        if detections.has_pan_tilt_control(coordinator.station, device_sn)
         for key, direction in PAN_TILT_BUTTONS
     )
     entities.extend(
         EufySaveViewButton(coordinator, device_sn, preset_manager)
         for coordinator in entry.runtime_data.coordinators.values()
         for device_sn in detections.paired_device_kinds(coordinator.station)
-        if detections.has_pan_tilt_control(device_sn) and detections.has_preset_entities(device_sn)
+        if detections.has_pan_tilt_control(coordinator.station, device_sn)
+        and detections.has_preset_entities(coordinator.station, device_sn)
     )
     async_add_entities(entities)
     for coordinator in entry.runtime_data.coordinators.values():
         for device_sn in detections.paired_device_kinds(coordinator.station):
-            if detections.has_preset_entities(device_sn):
+            if detections.has_preset_entities(coordinator.station, device_sn):
                 _add_preset_capture_buttons(
                     hass, entry, coordinator, device_sn, preset_manager, async_add_entities
                 )

@@ -120,7 +120,7 @@ async def _ws_preset_image(
     try:
         entry, station, device_sn = _camera(hass, msg[ATTR_ENTITY_ID])
         serial = redact_serial(device_sn)
-        if not detections.has_preset_entities(device_sn):
+        if not detections.has_preset_entities(station, device_sn):
             raise errors.presets_unsupported()
         if index not in presets.enabled_indexes(station, device_sn):
             _LOGGER.debug("Picture for preset %d of %s refused: slot not set", index, serial)

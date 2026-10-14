@@ -54,7 +54,7 @@ async def async_setup_entry(
             EufyLiveZoomNumber(coordinator, device_sn)
             for coordinator in entry.runtime_data.coordinators.values()
             for device_sn in detections.paired_device_kinds(coordinator.station)
-            if detections.has_zoom(device_sn) and streams.has_camera(device_sn)
+            if detections.has_zoom(coordinator.station, device_sn) and streams.has_camera(device_sn)
         )
     async_add_entities(entities)
 

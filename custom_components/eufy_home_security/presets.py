@@ -275,7 +275,7 @@ class PresetManager:
                 "Capture preset %d of %s pressed, ignored: preset manager stopped", index, serial
             )
             return
-        if not detections.has_preset_entities(device_sn):
+        if not detections.has_preset_entities(station, device_sn):
             _LOGGER.debug(
                 "Capture preset %d of %s refused: the model has no presets", index, serial
             )

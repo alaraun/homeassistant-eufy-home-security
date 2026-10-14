@@ -224,6 +224,8 @@ Browser support: [network.md](network.md#browsers). Adding devices:
 
 ## Pan/tilt cameras
 
+Which cameras get these: [devices.md](devices.md#pan-tilt-presets-and-zoom).
+
 | Entity or action | Effect |
 |---|---|
 | **Refresh presets** button | Reads the camera's presets and captures each one. Press it on a fresh install and after changing presets in the eufy app |
@@ -251,6 +253,8 @@ Browser support: [network.md](network.md#browsers). Adding devices:
 - The actions target the camera entity, for camera cards with PTZ controls.
 - A camera without presets (T8410) gets only the pan/tilt buttons and `pan_tilt`; the
   preset actions are refused, and `zoom` on a camera without zoom too. Nothing is sent.
+- A camera that cannot save a view (T8173) refuses **Save current view** and
+  `save_preset`. Nothing is sent.
 
 ## Standalone battery cameras
 

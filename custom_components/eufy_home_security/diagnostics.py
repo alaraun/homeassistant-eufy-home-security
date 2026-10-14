@@ -55,7 +55,7 @@ def _preset_figures(station: Station) -> dict[str, dict[str, Any] | None]:
     figures: dict[str, dict[str, Any] | None] = {}
     for device in station.devices:
         serial = device.device_sn
-        if not serial or not detections.has_preset_entities(serial):
+        if not serial or not detections.has_preset_entities(station, serial):
             continue
         slots = station.presets(serial)
         figures[redact_serial(serial)] = (

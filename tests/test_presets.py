@@ -2136,6 +2136,7 @@ async def test_a_save_while_a_capture_holds_the_camera_is_refused(
         (CommandRejectedError(1700, 1), {}, "preset_not_saved"),
         (DeviceTimeoutError("no answer"), {}, "on_demand_unreachable"),
         (UnsupportedError("no slot 8"), {"preset": 8}, "preset_slot_unknown"),
+        (UnsupportedError("declares no store"), {}, "preset_save_unsupported"),
         (CommandUnsupportedError(1700, -108), {"preset": 4}, "ptz_command_not_handled"),
     ],
 )
@@ -2601,7 +2602,7 @@ async def test_a_picture_for_another_entity_or_a_camera_without_presets_is_refus
     reply = await _send_picture(hass, hass_ws_client, 1, _JPEG_B64, entity_id="camera.elsewhere")
     assert reply["error"]["code"] == "not_found"
 
-    monkeypatch.setattr(detections, "has_preset_entities", lambda sn: False)
+    monkeypatch.setattr(detections, "has_preset_entities", lambda station, sn: False)
     reply = await _send_picture(hass, hass_ws_client, 1, _JPEG_B64)
     assert reply["error"]["translation_key"] == "presets_unsupported"
     assert entry.runtime_data.presets.image_for(SN, 1) is None

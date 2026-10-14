@@ -362,6 +362,9 @@
     "preset_slot_unknown": {
       "message": "This camera has no preset slot {index}, so nothing was sent."
     },
+    "preset_save_unsupported": {
+      "message": "This camera cannot save a view as a preset, so nothing was sent."
+    },
     "preset_image_invalid": {
       "message": "The preset picture is not a JPEG image of at most {max_mb} MB, so it was not stored."
     },

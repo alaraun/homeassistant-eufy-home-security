@@ -80,9 +80,9 @@ async def test_the_t8410_has_live_video_and_pan_tilt_but_no_presets_or_zoom(
     entry = await set_up_warm(hass, seed_warm_cache)
     station = entry.runtime_data.coordinators[SN].station
     assert detections.has_live_stream(station, SN) is True
-    assert detections.has_pan_tilt_control(SN) is True
-    assert detections.has_preset_entities(SN) is False
-    assert detections.has_zoom(SN) is False
+    assert detections.has_pan_tilt_control(station, SN) is True
+    assert detections.has_preset_entities(station, SN) is False
+    assert detections.has_zoom(station, SN) is False
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

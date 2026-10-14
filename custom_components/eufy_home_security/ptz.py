@@ -183,7 +183,7 @@ async def async_save_preset(
     except UnsupportedError as err:
         _LOGGER.debug("Save to %s of %s refused: %s", target, serial, type(err).__name__)
         if preset is None:
-            raise errors.pan_tilt_unsupported() from err
+            raise errors.preset_save_unsupported() from err
         raise errors.preset_slot_unknown(preset) from err
     except PresetSlotsFullError as err:
         _LOGGER.debug(

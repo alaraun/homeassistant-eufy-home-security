@@ -265,7 +265,7 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
 
     async def async_pan_tilt(self, direction: str) -> None:
         """The ``pan_tilt`` action: one step, as the step buttons."""
-        if not detections.has_pan_tilt_control(self._serial):
+        if not detections.has_pan_tilt_control(self.coordinator.station, self._serial):
             raise errors.pan_tilt_unsupported()
         await ptz.async_pan_tilt(
             self.coordinator, self._serial, _DIRECTIONS[direction], SERVICE_PAN_TILT
@@ -320,18 +320,18 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
 
     def _require_presets(self) -> None:
         """Refuse a preset action on a model without pan/tilt control or presets."""
-        if not detections.has_pan_tilt_control(self._serial):
+        if not detections.has_pan_tilt_control(self.coordinator.station, self._serial):
             raise errors.pan_tilt_unsupported()
-        if not detections.has_preset_entities(self._serial):
+        if not detections.has_preset_entities(self.coordinator.station, self._serial):
             raise errors.presets_unsupported()
 
     async def async_zoom(self, direction: str) -> None:
         """The ``zoom`` action: the live-view zoom one step in or out, within 1x-12x."""
         streams = runtime.streaming(self.coordinator.config_entry)
-        if not detections.has_pan_tilt_control(self._serial):
+        if not detections.has_pan_tilt_control(self.coordinator.station, self._serial):
             raise errors.pan_tilt_unsupported()
         if (
-            not detections.has_zoom(self._serial)
+            not detections.has_zoom(self.coordinator.station, self._serial)
             or streams is None
             or not streams.has_camera(self._serial)
         ):

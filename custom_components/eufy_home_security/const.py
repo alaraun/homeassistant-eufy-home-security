@@ -288,6 +288,7 @@ EXC_PRESET_SAVED_NOT_DEFAULT: Final = "preset_saved_not_default"
 EXC_PRESET_NOT_DELETED: Final = "preset_not_deleted"
 # A slot index the camera does not have; nothing was sent.
 EXC_PRESET_SLOT_UNKNOWN: Final = "preset_slot_unknown"
+EXC_PRESET_SAVE_UNSUPPORTED: Final = "preset_save_unsupported"
 # A preset picture from the card that is no JPEG or too large; nothing was stored.
 EXC_PRESET_IMAGE_INVALID: Final = "preset_image_invalid"
 # The record action: one capture per camera at a time; nothing was started.

@@ -91,6 +91,7 @@ from .const import (
     EXC_PRESET_NOT_DELETED,
     EXC_PRESET_NOT_SAVED,
     EXC_PRESET_NOT_SET,
+    EXC_PRESET_SAVE_UNSUPPORTED,
     EXC_PRESET_SAVED_NOT_DEFAULT,
     EXC_PRESET_SLOT_UNKNOWN,
     EXC_PRESETS_FULL,
@@ -792,6 +793,13 @@ def preset_slot_unknown(index: int) -> ServiceValidationError:
         translation_domain=DOMAIN,
         translation_key=EXC_PRESET_SLOT_UNKNOWN,
         translation_placeholders={"index": str(index)},
+    )
+
+
+def preset_save_unsupported() -> ServiceValidationError:
+    """A save to a free slot on a camera whose model cannot store a preset; nothing sent."""
+    return ServiceValidationError(
+        translation_domain=DOMAIN, translation_key=EXC_PRESET_SAVE_UNSUPPORTED
     )
 
 

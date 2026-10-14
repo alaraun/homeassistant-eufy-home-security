@@ -53,12 +53,28 @@ model list (declared from eufy's own model data):
 
 | Kind | Entities |
 |---|---|
-| Camera, doorbell | camera with stills, detection sensors and event, **Capture live image** and **Refresh event image** buttons; a doorbell also its ring event. Live video where the library sends the live open the eufy app uses for that model on its station (declared from the eufy app, not tested); no presets or pan/tilt |
+| Camera, doorbell | camera with stills, detection sensors and event, **Capture live image** and **Refresh event image** buttons; a doorbell also its ring event. Live video where the library sends the live open the eufy app uses for that model on its station; pan/tilt, presets and zoom as [below](#pan-tilt-presets-and-zoom) (declared from the eufy app, not tested) |
 | HomeBase, keypad, lock, sensor, other | none of a camera |
 
 No live video yet: cameras behind a HomeBase 4, NVR or other recorder station, dual-lens
 cameras, cameras the eufy app streams only over WebRTC, and a camera the library opens
 only as a standalone camera (such as the T8410) when it is paired to a HomeBase. The card then shows `No live view for this model`.
+
+### Pan, tilt, presets and zoom
+
+A camera gets the [pan/tilt entities](usage.md#pantilt-cameras) the library sends for
+its model on its station, as the model's eufy app handler does. Declared from the eufy
+app, not tested, except the T8170 [above](#tested-models):
+
+| Offered | Models |
+|---|---|
+| pan/tilt, presets, zoom | T8416, T8425, T8E00; T8172 behind a HomeBase only |
+| pan/tilt, presets | T8115, T8171, T8173, T817L, T8417, T8419, T8426, T86P2, T8W11, T8W11C |
+| pan/tilt only | T8401, T8410, T8411, T8414 |
+| presets only | T8423 |
+
+A T8173 cannot save a view as a preset (its eufy app has none). The station matters
+too: behind a HomeBase 4 only the T8115 gets these entities, behind an NVR none.
 
 Every device also gets:
 

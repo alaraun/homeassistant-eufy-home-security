@@ -1037,7 +1037,7 @@ wheels = [
 
 [[package]]
 name = "eufy-home-security"
-version = "0.3.15"
+version = "0.3.16"
 source = { editable = "../python-eufy_home_security" }
 dependencies = [
     { name = "aiohttp" },

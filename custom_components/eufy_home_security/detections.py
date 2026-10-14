@@ -42,7 +42,6 @@ from eufy_home_security.devices import (
     DeviceKind,
     Support,
     model_for_serial,
-    profile_for_serial,
 )
 
 from .const import (
@@ -202,35 +201,34 @@ def has_detection_entities(kind: DeviceKind | None) -> bool:
     return kind in DETECTION_ENTITY_KINDS
 
 
-def has_preset_entities(serial: str) -> bool:
-    """Whether the camera ``serial`` gets the pan/tilt preset entities.
+def has_preset_entities(station: Station, serial: str) -> bool:
+    """Whether the camera ``serial`` on ``station`` gets the pan/tilt preset entities.
 
-    The same test the library's own preset channel lookup applies: the model's
-    profile supports ``Capability.PTZ_PRESETS`` other than ``UNKNOWN``, so the
-    integration offers exactly what the library accepts. Never a serial prefix.
+    ``Station.ptz_support`` grades ``Capability.PTZ_PRESETS`` other than ``UNKNOWN``:
+    the library sends the preset actions to this model behind this station. A pure
+    lookup, safe on the event loop. Never a serial prefix.
     """
-    profile = profile_for_serial(serial)
-    return profile is not None and profile.support(Capability.PTZ_PRESETS) is not Support.UNKNOWN
+    return _ptz_supported(station, serial, Capability.PTZ_PRESETS)
 
 
-def has_pan_tilt_control(serial: str) -> bool:
-    """Whether the camera ``serial`` gets the pan/tilt step buttons.
+def has_pan_tilt_control(station: Station, serial: str) -> bool:
+    """Whether the camera ``serial`` on ``station`` gets the pan/tilt step buttons.
 
-    The library's own test for ``Station.async_pan_tilt``: the model's profile
-    supports ``Capability.PTZ_CONTROL`` other than ``UNKNOWN``.
+    ``Station.ptz_support`` grades ``Capability.PTZ_CONTROL`` other than ``UNKNOWN``.
     """
-    profile = profile_for_serial(serial)
-    return profile is not None and profile.support(Capability.PTZ_CONTROL) is not Support.UNKNOWN
+    return _ptz_supported(station, serial, Capability.PTZ_CONTROL)
 
 
-def has_zoom(serial: str) -> bool:
-    """Whether the camera ``serial`` gets the live-view zoom.
+def has_zoom(station: Station, serial: str) -> bool:
+    """Whether the camera ``serial`` on ``station`` gets the live-view zoom.
 
-    The library's own test for ``Station.async_set_zoom``: the model's profile
-    supports ``Capability.PTZ_ZOOM`` other than ``UNKNOWN``.
+    ``Station.ptz_support`` grades ``Capability.PTZ_ZOOM`` other than ``UNKNOWN``.
     """
-    profile = profile_for_serial(serial)
-    return profile is not None and profile.support(Capability.PTZ_ZOOM) is not Support.UNKNOWN
+    return _ptz_supported(station, serial, Capability.PTZ_ZOOM)
+
+
+def _ptz_supported(station: Station, serial: str, capability: Capability) -> bool:
+    return station.ptz_support(serial, capability).support is not Support.UNKNOWN
 
 
 def zoom_signal(entry_id: str, device_sn: str) -> SignalType[()]:

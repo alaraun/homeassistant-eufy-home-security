@@ -43,6 +43,7 @@ from custom_components.eufy_home_security.const import (
     LIVE_ZOOM_KEY,
     MODEL_KEY,
     MOTION_DETECTED_KEY,
+    PAN_LEFT_KEY,
     PERSON_DETECTED_KEY,
     PET_DETECTED_KEY,
     REFRESH_IMAGE_KEY,
@@ -60,6 +61,8 @@ DOORBELL_SN: Final = "T8210P0000000001"
 GENERIC_CAMERA_SN: Final = "T8113P0000000001"
 # An Indoor Cam 2K Pan & Tilt: a live open only as a standalone camera.
 INDOOR_PT_SN: Final = "T8410P0000000001"
+# A Floodlight Cam E340: pan/tilt, presets and zoom from its eufy-app handler.
+FLOODLIGHT_PTZ_SN: Final = "T8425P0000000001"
 # A HomeBase 2 with the synthetic station's tail, so its key derivation is the fake's.
 HOMEBASE_2_SN: Final = "T8010" + SYNTHETIC.station_sn[5:]
 
@@ -242,3 +245,21 @@ async def test_a_camera_whose_open_the_library_lacks_behind_its_station_gets_no_
     assert streams is not None
     assert not streams.has_camera(INDOOR_PT_SN)
     assert streams.has_camera(SYNTHETIC.camera_sn)
+
+
+async def test_a_camera_whose_handler_declares_pan_tilt_presets_and_zoom_gets_their_entities(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A T8425 behind a HomeBase 3: step buttons, preset selects and the live zoom."""
+    _pair(fake_station, fake_cloud, FLOODLIGHT_PTZ_SN)
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    station = entry.runtime_data.coordinators[fake_station.serial].station
+    for capability in (Capability.PTZ_CONTROL, Capability.PTZ_PRESETS, Capability.PTZ_ZOOM):
+        assert station.ptz_support(FLOODLIGHT_PTZ_SN, capability).support is Support.DECLARED
+    keys = {key for _, key in _entities_of(hass, FLOODLIGHT_PTZ_SN)}
+    assert _PTZ_KEYS | {PAN_LEFT_KEY} <= keys
