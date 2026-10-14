@@ -5,6 +5,18 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.3.10](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.9...v0.3.10) (2026-10-14)
+
+
+### Features
+
+* pan/tilt, presets and zoom for every camera model whose eufy app declares them (library 0.3.16) ([b337fd0](https://github.com/alaraun/homeassistant-eufy-home-security/commit/b337fd0ff07440cadcf9c9caaa98e74d496432f1))
+
+
+### Bug Fixes
+
+* Home Assistant 2026.10.0 or newer is required ([e0164d0](https://github.com/alaraun/homeassistant-eufy-home-security/commit/e0164d0cf13096ba13626d9f17778edab9432ba4))
+
 ## [0.3.9](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.8...v0.3.9) (2026-10-14)
 
 
