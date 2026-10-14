@@ -25,7 +25,7 @@ import binascii
 import logging
 from typing import TYPE_CHECKING, Any, Final
 
-import voluptuous as vol
+import probatio as vol
 from homeassistant.components import websocket_api
 from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
 from homeassistant.config_entries import ConfigEntryState

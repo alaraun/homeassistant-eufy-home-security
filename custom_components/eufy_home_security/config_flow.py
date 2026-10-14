@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
 
-import voluptuous as vol
+import probatio as vol
 from homeassistant.config_entries import (
     SOURCE_RECONFIGURE,
     SOURCE_USER,

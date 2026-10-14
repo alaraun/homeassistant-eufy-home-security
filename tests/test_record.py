@@ -15,8 +15,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
 
+import probatio as vol
 import pytest
-import voluptuous as vol
 from conftest import (
     SYNTHETIC,
     entity_id_for,

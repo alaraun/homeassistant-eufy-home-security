@@ -2176,7 +2176,7 @@ async def test_a_failed_save_says_why(
 async def test_the_save_preset_action_refuses_a_slot_outside_the_range(
     hass: HomeAssistant, fake_cloud, seed_warm_cache, built_clients, fake_station
 ):
-    import voluptuous as vol
+    import probatio as vol
 
     entry = await set_up_warm(hass, seed_warm_cache)
 
@@ -2193,7 +2193,7 @@ async def test_a_preset_action_refuses_a_slot_outside_the_range_before_the_slots
     hass: HomeAssistant, fake_cloud, seed_warm_cache, built_clients, fake_station, action
 ):
     """Slots 0-9 only, by the schema: an unread camera is never turned to slot 10."""
-    import voluptuous as vol
+    import probatio as vol
 
     entry = await set_up_warm(hass, seed_warm_cache)
 

@@ -10,8 +10,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import probatio as vol
 import pytest
-import voluptuous as vol
 from conftest import (
     configure_options,
     set_up_warm,

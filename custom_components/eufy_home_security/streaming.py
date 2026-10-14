@@ -281,8 +281,8 @@ def stream_url(hass: HomeAssistant, device_sn: str) -> str:
     run's secret under ``auth``, a key HA's stream component redacts when it logs a
     source URL. ``https`` when that server has a certificate, since its one port then
     speaks only TLS; the certificate names another host, so the reader must not verify
-    it (go2rtc skips verification for an IP host, the stream worker is told so by
-    ``camera.EufyCamera.async_create_stream``).
+    it (go2rtc skips verification for an IP host; HA's stream worker verifies only for a
+    camera whose stream options set ``verify_ssl``).
     """
     api = hass.config.api
     scheme = "https" if api is not None and api.use_ssl else "http"

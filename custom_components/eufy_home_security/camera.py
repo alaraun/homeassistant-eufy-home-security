@@ -46,7 +46,7 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, override
 
-import voluptuous as vol
+import probatio as vol
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.core import HomeAssistant, ServiceResponse, SupportsResponse, callback
 from homeassistant.helpers import config_validation as cv
@@ -111,8 +111,6 @@ from .presets import PresetManager
 from .snapshots import SnapshotManager
 
 if TYPE_CHECKING:
-    from homeassistant.components.stream import Stream
-
     from .runtime import EufyConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
@@ -255,19 +253,6 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
         if not self.supported_features & CameraEntityFeature.STREAM:
             return None
         return streaming.stream_url(self.hass, self._serial)
-
-    @override
-    async def async_create_stream(self) -> Stream | None:
-        """Home Assistant's stream of this camera, told not to verify a TLS certificate.
-
-        Over ``https`` the certificate names Home Assistant's host, never 127.0.0.1, and
-        FFmpeg 9 verifies by default. ``stream_options`` cannot carry the flag: the
-        stream component's schema refuses it.
-        """
-        stream = await super().async_create_stream()
-        if stream is not None and stream.source.startswith("https:"):
-            stream.pyav_options.setdefault("tls_verify", "0")
-        return stream
 
     async def async_capture_preset(self, preset: int) -> None:
         """The ``capture_preset`` action: start the preset capture and return at once.

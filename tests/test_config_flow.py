@@ -654,7 +654,7 @@ async def test_reconfigure_is_offered_on_the_entry_menu_and_opening_it_spends_no
     seed_warm_cache: Callable[..., None],
 ) -> None:
     """The menu offers Reconfigure; opening it sends nothing."""
-    import voluptuous as vol
+    import probatio as vol
 
     entry = await set_up_warm(hass, seed_warm_cache)
     result = await entry.start_reconfigure_flow(hass)

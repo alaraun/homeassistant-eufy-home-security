@@ -34,7 +34,7 @@ Assistant installs automatically. Library bugs that show without Home Assistant 
 
 ## Requirements
 
-- Home Assistant **2026.9.0** or newer, with ffmpeg (included in Home Assistant OS
+- Home Assistant **2026.10.0** or newer, with ffmpeg (included in Home Assistant OS
   and the official container) for 4K stills.
 - Home Assistant on the **same LAN segment** as the HomeBase (host networking in
   Docker). Firewall, reverse proxy and browsers:

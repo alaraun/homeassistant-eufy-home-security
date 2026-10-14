@@ -272,7 +272,7 @@ async def test_the_stream_worker_does_not_verify_the_loopback_certificate(
     monkeypatch: pytest.MonkeyPatch,
     use_ssl: bool,
 ) -> None:
-    """HA's certificate names its domain, not 127.0.0.1; FFmpeg 9 verifies by default."""
+    """HA's certificate names its domain, not 127.0.0.1: the stream worker must not verify it."""
     entry = await set_up_warm(hass, seed_warm_cache)
     assert hass.config.api is not None
     monkeypatch.setattr(hass.config.api, "use_ssl", use_ssl)
@@ -281,8 +281,7 @@ async def test_the_stream_worker_does_not_verify_the_loopback_certificate(
     stream = await camera.async_create_stream()
 
     assert stream is not None
-    # Home Assistant 2026.10 sets "0" itself; 2026.9 sets nothing, which is fine over http.
-    assert stream.pyav_options.get("tls_verify", "0") == "0"
+    assert stream.pyav_options["tls_verify"] == "0"
     await _unload(hass, entry)
 
 

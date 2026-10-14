@@ -413,6 +413,7 @@ def test_hacs_and_test_harness_pin_the_same_core() -> None:
     _PHCC_RELEASE_TO_HA_SERIES = {
         "0.13.355": (2026, 8),
         "0.13.365": (2026, 9),
+        "0.13.372": (2026, 10),
     }
 
     hacs_floor = _load_hacs()["homeassistant"]

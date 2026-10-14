@@ -392,7 +392,7 @@ def _find_coordinator_push_feeds(tree: ast.AST) -> list[int]:
 def test_no_module_in_the_package_feeds_the_poll_coordinator_a_push(tmp_path: Path) -> None:
     """Pushes go through a background task and the dispatcher, never here.
 
-    In Home Assistant 2026.9.2 ``async_set_updated_data`` cancels and
+    In Home Assistant 2026.10.1 ``async_set_updated_data`` cancels and
     reschedules the coordinator's poll timer, so routing detection traffic
     through it would postpone the guard-mode poll for as long as a street is
     busy. An AST scan, not a grep: a docstring may name the call in order to
