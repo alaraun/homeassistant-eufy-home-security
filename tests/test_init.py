@@ -207,8 +207,8 @@ async def test_station_and_its_sub_devices_are_devices_under_the_station(
     assert camera.identifiers == {(DOMAIN, SYNTHETIC.camera_sn)}
     assert camera.via_device_id == station.id
     assert station.via_device_id is None
-    assert entry.entry_id in station.config_entries
-    assert entry.entry_id in camera.config_entries
+    assert station.config_entry_id == entry.entry_id
+    assert camera.config_entry_id == entry.entry_id
     assert camera.serial_number == SYNTHETIC.camera_sn
     # The model from the library's catalogue, for the station and its camera alike.
     assert (station.manufacturer, station.model, station.model_id) == (

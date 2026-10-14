@@ -10,23 +10,23 @@ requires-python = ">=3.14.2"
 [tool.uv]
 # A Home Assistant custom integration, never built or installed: uv manages the dev venv only.
 package = false
-# Home Assistant 2026.9.2 pins protobuf==6.32.0 (package_constraints.txt); the library
+# Home Assistant 2026.10.1 pins protobuf==7.36.0 (package_constraints.txt); the library
 # asks only protobuf>=5. Raise in lockstep with the HA pin; tests/test_library_boundary.py
 # checks it, since a plain `uv lock` keeps a locked version after the constraint is gone.
-constraint-dependencies = ["protobuf==6.32.0"]
+constraint-dependencies = ["protobuf==7.36.0"]
 
 [dependency-groups]
-# pytest-homeassistant-custom-component pins one Home Assistant release (0.13.365: HA
-# 2026.9.2); bump it with hacs.json's floor. pytest, pytest-asyncio and cryptography come
+# pytest-homeassistant-custom-component pins one Home Assistant release (0.13.372: HA
+# 2026.10.1, what production runs); bump it with hacs.json's floor. pytest, pytest-asyncio and cryptography come
 # with it; a second floor here would fight its pins.
 dev = [
     # Also brings pytest-xdist and pytest-timeout, which the pytest options below use.
-    "pytest-homeassistant-custom-component==0.13.365",
+    "pytest-homeassistant-custom-component==0.13.372",
     # The test harness installs no component requirements: HA's camera component imports
-    # turbojpeg and `stream` imports PyAV. Same pins as HA 2026.9.2's manifests; test-only,
+    # turbojpeg and `stream` imports PyAV. Same pins as HA 2026.10.1's manifests; test-only,
     # Home Assistant brings both itself.
     "PyTurboJPEG==1.8.3",
-    "av==17.0.1",
+    "av==19.0.0",
     # The library, at the manifest's pin. Editable from the sibling checkout via
     # [tool.uv.sources]; CI installs the PyPI release instead (.github/workflows/ci.yml).
     "eufy-home-security==0.3.15",
