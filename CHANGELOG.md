@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.3.9](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.8...v0.3.9) (2026-10-14)
+
+
+### Bug Fixes
+
+* a HomeBase camera's live view opens without broken first frames (library 0.3.15) ([db02bc1](https://github.com/alaraun/homeassistant-eufy-home-security/commit/db02bc14afd50eeb3e1656ad93c349caf2c01b51))
+
 ## [0.3.8](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.7...v0.3.8) (2026-10-13)
 
 
