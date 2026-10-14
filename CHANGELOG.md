@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.3.11](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.10...v0.3.11) (2026-10-14)
+
+
+### Bug Fixes
+
+* live view of a HomeBase 2 camera no longer freezes when a keyframe arrives in parts (library 0.3.17) ([fe913c2](https://github.com/alaraun/homeassistant-eufy-home-security/commit/fe913c26eb51264fb00a87e989970f4d6686102e))
+
 ## [0.3.10](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.9...v0.3.10) (2026-10-14)
 
 
