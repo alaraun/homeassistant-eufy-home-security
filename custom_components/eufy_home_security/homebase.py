@@ -121,7 +121,7 @@ _DEBOUNCE_S: Final = 0.5
 _CODE_PREFIX: Final = "code_"
 
 # The features the integration writes: the guard mode (select, panel), the mode tables
-# and delays (``mode_table/set`` and the per-mode entities) and the arming groups.
+# and delays (``mode_table/set``) and the arming groups.
 _WRITTEN_FEATURES: Final = frozenset(
     {
         StationFeature.GUARD_MODE,

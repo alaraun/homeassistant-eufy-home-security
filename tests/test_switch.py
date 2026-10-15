@@ -1,9 +1,7 @@
-"""Bool settings, flags members and the named bits of per-mode action masks as switches.
+"""Bool settings and flags members as switches.
 
 A bool switch writes True or False; the library renders the device's own code, so an
-inverted setting (wire 0 = on) needs nothing here. An action-bit switch writes ONE bit
-through the library, which reads the mask, keeps every other bit and confirms the
-mode's table by read-back.
+inverted setting (wire 0 = on) needs nothing here.
 """
 
 from __future__ import annotations
@@ -20,8 +18,7 @@ from conftest import (
     setting_param,
     state_of,
 )
-from eufy_home_security import DeviceTimeoutError, EufySecurity, entity_unique_id
-from eufy_home_security.devices import MODE_ACTION_FLAGS, Scope
+from eufy_home_security import EufySecurity, entity_unique_id
 from eufy_home_security.devices.model_settings import settings_of
 from eufy_home_security.testing import SYNTHETIC, FakeStation
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
@@ -37,7 +34,6 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.eufy_home_security.const import DOMAIN
 
@@ -50,11 +46,7 @@ _AUDIO_RECORDING: Final = "audio_recording_on_off"
 
 _CAMERA_CHANNEL: Final = 0
 _NOT_APPLIED: Final = "setting_not_applied"
-_MODE_TABLE_REFUSED: Final = "setting_mode_table_refused"
 _UNCONFIRMED: Final = "setting_unconfirmed"
-
-_AWAY_ACTION: Final = "camera_action_away"
-_ACTION_FLAGS: Final[dict[str, int]] = dict(MODE_ACTION_FLAGS[Scope.CAMERA])
 
 
 async def set_switch(hass: HomeAssistant, entity_id: str, on: bool) -> None:
@@ -75,16 +67,6 @@ def _param(station: FakeStation, key: str) -> Any:
 def _switch_id(hass: HomeAssistant, key: str) -> str:
     """The synthetic camera's switch for ``key``."""
     return entity_id_for(hass, SWITCH_DOMAIN, SYNTHETIC.camera_sn, key)
-
-
-async def _enable_action_switches(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-    """Enable the Away action-bit switches (registered disabled) and reload the entry."""
-    registry = er.async_get(hass)
-    for flag in _ACTION_FLAGS:
-        entity_id = _switch_id(hass, f"{_AWAY_ACTION}_{flag}")
-        registry.async_update_entity(entity_id, disabled_by=None)
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
 
 
 async def test_switches_follow_the_station_including_inverted_ones(
@@ -293,138 +275,6 @@ async def test_a_shared_bit_switch_keeps_the_other_bits_of_its_parameter(
     await hass.async_block_till_done()
     assert fake_station.received[-1]["payload"] == {"arm_push_mode": 208}
     assert state_of(hass, entity_id) == STATE_OFF
-
-    assert await hass.config_entries.async_unload(entry.entry_id)
-    await hass.async_block_till_done()
-
-
-# ── per-mode actions: one switch per (mode, flag) ────────────────────────────
-
-
-async def test_mode_action_bits_are_config_switches_registered_disabled(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-) -> None:
-    """Each named bit of each action mask is a switch, translated, registered off."""
-    entry = await set_up_warm(hass, seed_warm_cache)
-    registry = er.async_get(hass)
-    assert _ACTION_FLAGS
-    for mode in ("home", "away", "custom_1", "custom_2", "custom_3"):
-        for flag in _ACTION_FLAGS:
-            key = f"camera_action_{mode}_{flag}"
-            unique_id = entity_unique_id(SYNTHETIC.camera_sn, key)
-            entity_id = registry.async_get_entity_id(SWITCH_DOMAIN, DOMAIN, unique_id)
-            assert entity_id is not None, key
-            registered = registry.async_get(entity_id)
-            assert registered is not None
-            assert registered.translation_key == key
-            assert registered.disabled_by is er.RegistryEntryDisabler.INTEGRATION, key
-            assert registered.entity_category is EntityCategory.CONFIG, key
-    # The mask itself is never an entity.
-    for platform in ("number", "sensor"):
-        unique_id = entity_unique_id(SYNTHETIC.camera_sn, _AWAY_ACTION)
-        assert registry.async_get_entity_id(platform, DOMAIN, unique_id) is None
-
-    assert await hass.config_entries.async_unload(entry.entry_id)
-    await hass.async_block_till_done()
-
-
-async def test_a_mode_action_switch_writes_one_bit_through_the_mode_table(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-) -> None:
-    """ "Away: camera siren" sets one bit of the Away mask; every other bit is kept."""
-    record = _ACTION_FLAGS["record"]
-    notification = _ACTION_FLAGS["notification"]
-    siren = _ACTION_FLAGS["camera_siren"]
-    unnamed = 0x100  # a bit no flag names
-    seed_setting(fake_station, _AWAY_ACTION, record | notification | unnamed)
-    entry = await set_up_warm(hass, seed_warm_cache)
-    await _enable_action_switches(hass, entry)
-
-    siren_id = _switch_id(hass, f"{_AWAY_ACTION}_camera_siren")
-    record_id = _switch_id(hass, f"{_AWAY_ACTION}_record")
-    assert state_of(hass, siren_id) == STATE_OFF
-    assert state_of(hass, record_id) == STATE_ON
-
-    await set_switch(hass, siren_id, True)
-    await hass.async_block_till_done()
-
-    assert len(fake_station.mode_tables_received) == 1, "no mode table reached the station"
-    assert _param(fake_station, _AWAY_ACTION) == str(record | notification | siren | unnamed)
-    assert state_of(hass, siren_id) == STATE_ON
-    assert state_of(hass, record_id) == STATE_ON
-
-    await set_switch(hass, record_id, False)
-    await hass.async_block_till_done()
-
-    assert _param(fake_station, _AWAY_ACTION) == str(notification | siren | unnamed)
-    assert state_of(hass, record_id) == STATE_OFF
-    assert state_of(hass, siren_id) == STATE_ON
-
-    assert await hass.config_entries.async_unload(entry.entry_id)
-    await hass.async_block_till_done()
-
-
-async def test_a_mode_action_write_that_times_out_shows_unknown_until_the_next_state(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A timed-out action-bit write may still apply: unknown, then the next state's value."""
-    record = _ACTION_FLAGS["record"]
-    seed_setting(fake_station, _AWAY_ACTION, record)
-    entry = await set_up_warm(hass, seed_warm_cache)
-    await _enable_action_switches(hass, entry)
-    siren_id = _switch_id(hass, f"{_AWAY_ACTION}_camera_siren")
-    assert state_of(hass, siren_id) == STATE_OFF
-    coordinator = entry.runtime_data.coordinators[SYNTHETIC.station_sn]
-
-    async def timed_out(*args: object, **kwargs: object) -> int:
-        raise DeviceTimeoutError("no answer")
-
-    monkeypatch.setattr(coordinator.station, "async_set_mode_action", timed_out)
-    with pytest.raises(HomeAssistantError) as raised:
-        await set_switch(hass, siren_id, True)
-    assert raised.value.translation_key == _UNCONFIRMED
-    assert state_of(hass, siren_id) == STATE_UNKNOWN
-
-    seed_setting(fake_station, _AWAY_ACTION, record | _ACTION_FLAGS["camera_siren"])
-    await coordinator.async_refresh()
-    await hass.async_block_till_done()
-    assert state_of(hass, siren_id) == STATE_ON
-
-    assert await hass.config_entries.async_unload(entry.entry_id)
-    await hass.async_block_till_done()
-
-
-async def test_a_mode_action_switch_with_no_mask_reported_shows_unknown_and_sends_nothing(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    short_readback: None,
-) -> None:
-    """With no mask reported the bits say nothing, and a write is refused unsent: the
-    library has no table to change for that mode."""
-    entry = await set_up_warm(hass, seed_warm_cache)
-    await _enable_action_switches(hass, entry)
-    siren_id = _switch_id(hass, f"{_AWAY_ACTION}_camera_siren")
-    assert state_of(hass, siren_id) == STATE_UNKNOWN
-
-    with pytest.raises(HomeAssistantError) as raised:
-        await set_switch(hass, siren_id, True)
-    await hass.async_block_till_done()
-
-    assert raised.value.translation_key == _MODE_TABLE_REFUSED
-    assert fake_station.mode_tables_received == []
-    assert state_of(hass, siren_id) == STATE_UNKNOWN
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

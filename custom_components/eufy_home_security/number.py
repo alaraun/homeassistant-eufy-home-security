@@ -75,13 +75,10 @@ class EufySettingNumber(EufySettingEntity, NumberEntity):
         )
         if setting.unit is SettingUnit.SECONDS:
             self._attr_device_class = NumberDeviceClass.DURATION
-        # The library's control; a per-mode delay carries none and is a duration box.
-        if setting.control is SettingControl.SLIDER:
-            self._attr_mode = NumberMode.SLIDER
-        elif setting.control is SettingControl.BOX or spec.translated:
-            self._attr_mode = NumberMode.BOX
-        else:
-            self._attr_mode = NumberMode.SLIDER
+        # The library's control; a range without one is a slider.
+        self._attr_mode = (
+            NumberMode.BOX if setting.control is SettingControl.BOX else NumberMode.SLIDER
+        )
 
     @property
     @override

@@ -68,7 +68,7 @@ from .coordinator import StationCoordinator
 from .events import EventRouter
 from .presets import PresetManager
 from .runtime import EufyConfigEntry
-from .settings import offered_only_without_parent, setting_specs
+from .settings import is_per_mode_entity, offered_only_without_parent, setting_specs
 from .snapshots import SnapshotManager, camera_image_mode
 from .storage import StorageCoordinator
 from .streaming import StreamManager
@@ -497,6 +497,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     _async_forget_moved_setting_entities(hass, entry, coordinators.values())
     _async_forget_dropped_setting_entities(hass, entry, coordinators.values())
     _async_forget_parentless_setting_entities(hass, entry, coordinators.values())
+    _async_forget_per_mode_entities(hass, entry)
     _async_forget_battery_entities(hass, entry, coordinators.values())
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     for serial, storage_coordinator in storage.items():
@@ -725,6 +726,20 @@ def _async_forget_parentless_setting_entities(
         if registered.domain not in _SETTING_DOMAINS or unique_id in built:
             continue
         if any(offered_only_without_parent(unique_id, serial) for serial in paired):
+            registry.async_remove(registered.entity_id)
+
+
+def _async_forget_per_mode_entities(hass: HomeAssistant, entry: EufyConfigEntry) -> None:
+    """Forget the per-mode delay and action-bit rows of earlier releases.
+
+    The HomeBase card edits a mode's device actions and delays
+    (``settings.is_per_mode``); no setup builds these entities, so a row left would stay
+    as an unavailable orphan. Only this entry's rows on the setting platforms, matched by
+    unique-id key (``settings.is_per_mode_entity``).
+    """
+    registry = er.async_get(hass)
+    for registered in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if registered.domain in _SETTING_DOMAINS and is_per_mode_entity(registered.unique_id):
             registry.async_remove(registered.entity_id)
 
 

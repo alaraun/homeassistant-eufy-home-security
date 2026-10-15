@@ -13,58 +13,42 @@ from dataclasses import dataclass
 
 from homeassistant.const import Platform
 
-from eufy_home_security import GuardMode, Station, entity_unique_id
+from eufy_home_security import MODES_SECTION, Station, entity_unique_id
 from eufy_home_security.devices import (
     MODE_ACTION_FLAGS,
+    Scope,
     Setting,
     SettingControl,
     SettingKind,
-    mode_action_flags,
 )
-from eufy_home_security.devices.model_settings import PARENTLESS_ONLY
+from eufy_home_security.devices.model_settings import PARENTLESS_ONLY, mode_table_settings
+
+# The per-mode delays every paired camera or sensor carries, one per guard mode.
+_DELAY_KEYS: frozenset[str] = frozenset(s.key for s in mode_table_settings(Scope.SUB_DEVICE))
+# The per-mode delays and action masks: the station's mode table, which the HomeBase card
+# shows and writes (``homebase/mode_table/set``). None of them is an entity.
+_PER_MODE_KEYS: frozenset[str] = frozenset(
+    s.key for scope in Scope for s in mode_table_settings(scope)
+)
+# The keys of the per-mode entities earlier releases built: a number (a sensor when
+# read-only) per delay and a switch per named bit of an action mask.
+_PER_MODE_ENTITY_KEYS: frozenset[str] = _DELAY_KEYS | frozenset(
+    f"{s.key}_{flag}"
+    for scope, flags in MODE_ACTION_FLAGS.items()
+    for s in mode_table_settings(scope)
+    if s.key not in _DELAY_KEYS
+    for flag in flags
+)
 
 
-@dataclass(frozen=True, slots=True)
-class ModeAction:
-    """A per-mode action mask: its guard mode and the bits the library names."""
-
-    mode: GuardMode
-    flags: Mapping[str, int]
+def is_per_mode(setting: Setting) -> bool:
+    """Whether ``setting`` is a per-mode delay or action mask, edited on the HomeBase card."""
+    return setting.section == MODES_SECTION and setting.key in _PER_MODE_KEYS
 
 
-def mode_action(setting: Setting, device_type: int | None = None) -> ModeAction | None:
-    """The mode and named bits of a per-mode action mask (``camera_action_away``), else None.
-
-    The bits are the library's for the device's cloud ``device_type`` (a sensor that is
-    no motion sensor has no respond bit); None means the scope's full set.
-    """
-    for scope in MODE_ACTION_FLAGS:
-        prefix = f"{scope}_action_"
-        if setting.key.startswith(prefix):
-            try:
-                return ModeAction(
-                    mode=GuardMode.parse(setting.key.removeprefix(prefix)),
-                    flags=mode_action_flags(scope, device_type),
-                )
-            except ValueError:
-                return None
-    return None
-
-
-_DELAY_PREFIXES: tuple[str, ...] = ("alarm_delay_", "leaving_delay_")
-# A per-mode delay by key prefix: the entry (alarm) delay and the leaving delay.
-_DELAY_KINDS: Mapping[str, str] = {"alarm_delay_": "entry", "leaving_delay_": "leaving"}
-
-
-def mode_delay(setting: Setting) -> tuple[str, GuardMode] | None:
-    """``("entry" | "leaving", mode)`` of a per-mode delay (``alarm_delay_away``), else None."""
-    for prefix, kind in _DELAY_KINDS.items():
-        if setting.key.startswith(prefix):
-            try:
-                return kind, GuardMode.parse(setting.key.removeprefix(prefix))
-            except ValueError:
-                return None
-    return None
+def is_per_mode_entity(unique_id: str) -> bool:
+    """Whether ``unique_id`` (``<serial>_<key>``) is a per-mode delay or action-bit entity."""
+    return unique_id.partition("_")[2] in _PER_MODE_ENTITY_KEYS
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,16 +59,14 @@ class SettingEntitySpec:
     setting: Setting
     device_sn: str | None
     """A paired device's serial; ``None`` is the station itself."""
-    action: ModeAction | None = None
-    """Set for one named bit of a per-mode action mask."""
     flag: str | None = None
-    """The bit of ``action`` this entity switches, or the member of a ``FLAGS`` setting."""
+    """The member of a ``FLAGS`` setting this switch turns on and off."""
     variant: bool = False
     """The library names another setting the app uses in this one's place (``variant_of``)."""
 
     @property
     def key(self) -> str:
-        """The key of the unique id: the setting key, plus the flag for a mask bit."""
+        """The key of the unique id: the setting key, plus the member for a ``FLAGS`` switch."""
         if self.flag is None:
             return self.setting.key
         return f"{self.setting.key}_{self.flag}"
@@ -92,30 +74,7 @@ class SettingEntitySpec:
     @property
     def member(self) -> str | None:
         """The ``FLAGS`` member this switch turns on and off; None for any other entity."""
-        return self.flag if self.action is None else None
-
-    @property
-    def translated(self) -> bool:
-        """Whether the entity is named by a translation key of ours.
-
-        Only the per-mode delays and action bits, whose keys are the library's own on
-        every model. Every other setting is keyed by the vendor identifier and named
-        from ``Setting.name``.
-        """
-        return self.action is not None or self.setting.key.startswith(_DELAY_PREFIXES)
-
-    @property
-    def writes_mode_table(self) -> bool:
-        """Whether a write replaces a guard mode's whole table (refused as a sentence)."""
-        return self.translated
-
-    @property
-    def mode(self) -> GuardMode | None:
-        """The guard mode of a per-mode action bit or delay; None for any other setting."""
-        if self.action is not None:
-            return self.action.mode
-        delay = mode_delay(self.setting)
-        return None if delay is None else delay[1]
+        return self.flag
 
     @property
     def is_control(self) -> bool:
@@ -124,20 +83,13 @@ class SettingEntitySpec:
 
     @property
     def enabled_by_default(self) -> bool:
-        """Controls are enabled, except the per-mode action bits; read-only values are off.
+        """Controls are enabled; read-only values are off.
 
-        Each camera or sensor carries five action masks (20 to 30 bits) whose names come
-        from the eufy app; they, the read-only values, settings the app replaces with
-        another (``Setting.variant_of``) and settings the app puts behind a warning
-        (``Setting.advanced``) stay one click away in the registry instead of crowding
-        every device page.
+        Read-only values, settings the app replaces with another (``Setting.variant_of``)
+        and settings the app puts behind a warning (``Setting.advanced``) stay one click
+        away in the registry instead of crowding every device page.
         """
-        return (
-            self.is_control
-            and self.action is None
-            and not self.variant
-            and not self.setting.advanced
-        )
+        return self.is_control and not self.variant and not self.setting.advanced
 
 
 _CONTROL_PLATFORMS: frozenset[Platform] = frozenset(
@@ -167,17 +119,14 @@ def offered_only_without_parent(unique_id: str, device_sn: str) -> bool:
 def setting_platform(setting: Setting) -> Platform | None:
     """The platform ``setting`` belongs on, or ``None`` for no entity.
 
-    - A per-mode action mask: switches, one per named bit (see ``setting_specs``).
-    - A per-mode delay: number.
+    - A per-mode delay or action mask: none, the HomeBase card edits it (``is_per_mode``).
     - A writable setting with a ``control``: its platform (switch, select, number, a
       switch per member for ``toggles``, text).
     - Otherwise, when readable: binary sensor for a bool, sensor for the rest.
     - Neither (a cloud-listed model, an app-local value): no entity, it never has a value.
     """
-    if mode_action(setting) is not None:
-        return Platform.SWITCH
-    if setting.writable and setting.key.startswith(_DELAY_PREFIXES):
-        return Platform.NUMBER
+    if is_per_mode(setting):
+        return None
     if setting.writable and setting.control is not None:
         return _CONTROLS[setting.control]
     if not setting.readable:
@@ -196,28 +145,14 @@ def setting_specs(station: Station) -> list[SettingEntitySpec]:
     entities, and a setting the station does not report shows as unknown.
     """
     specs: list[SettingEntitySpec] = []
-    targets: list[tuple[str | None, int | None]] = [(None, None)]
-    # device_type 0 is "not given" (CloudDevice.from_api)
-    targets.extend(
-        (sub.device_sn, sub.device_type or None) for sub in station.sub_devices if sub.device_sn
-    )
-    for device_sn, device_type in targets:
+    targets: list[str | None] = [None]
+    targets.extend(sub.device_sn for sub in station.sub_devices if sub.device_sn)
+    for device_sn in targets:
         for setting in station.settings_for(device_sn):
             platform = setting_platform(setting)
             if platform is None:
                 continue
-            if (action := mode_action(setting, device_type)) is not None:
-                specs.extend(
-                    SettingEntitySpec(
-                        platform=platform,
-                        setting=setting,
-                        device_sn=device_sn,
-                        action=action,
-                        flag=flag,
-                    )
-                    for flag in action.flags
-                )
-            elif setting.writable and setting.control is SettingControl.TOGGLES:
+            if setting.writable and setting.control is SettingControl.TOGGLES:
                 specs.extend(
                     SettingEntitySpec(
                         platform=platform,

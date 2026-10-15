@@ -343,10 +343,10 @@ HomeBase (version strings by parameter id; the subsystems are unnamed) and
     nothing sent, while the device does not report that value.
 - A setting it can only read is a diagnostic sensor or binary sensor, disabled until
   you enable it. A setting it can neither read nor write has no entity.
-- **Per-mode actions**: for each camera and sensor, one switch per action and guard
-  mode (Home, Away, Custom 1–3), for example `camera_action_away_record`, disabled
-  until you enable it. A toggle changes that one action; the mode's other actions
-  stay.
+- **Per-mode actions and delays** (what each camera and sensor does in Home, Away and
+  Custom 1–3, and each mode's entry and leaving delays) have no entities: the
+  [HomeBase card](homebase-card.md) edits them. Their switches, numbers and sensors
+  from an older release are removed at the next start.
 - A write shows the written value at once.
   - The device rejects it: error *setting not applied*; the entity keeps the value
     last reported.

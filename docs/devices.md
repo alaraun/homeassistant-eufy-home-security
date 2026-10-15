@@ -23,13 +23,15 @@ library release adds models and controls; update the integration to get them.
 A device paired to a HomeBase gets no time zone, clock format, switching
 notification or NAS storage settings: the eufy app offers those only for a device
 without a HomeBase. Their entities from an older release are removed at the next start.
+A paired camera's or sensor's per-mode actions and delays are edited on the
+[HomeBase card](homebase-card.md), not through entities.
 Details: [usage.md](usage.md#device-settings).
 
 ## Tested models
 
 | Model | Device | Tested on hardware |
 |---|---|---|
-| T8030 | HomeBase 3 (S380) | guard mode, status, storage, detections, event history, stills, settings (clock format; entry and leaving delays of Home, Away and Custom 1) |
+| T8030 | HomeBase 3 (S380) | guard mode, status, storage, detections, event history, stills, settings (clock format), entry and leaving delays of Home, Away and Custom 1 |
 | T8160 | eufyCam 3 (S330), on a HomeBase | detections, stills, live video and audio, settings (detection sensitivity, trigger interval, clip length, speaker volume, streaming quality, night vision, working mode) |
 | T8170 | Battery SoloCam, standalone | guard mode, status, live video, presets, pan/tilt, zoom, settings (detection sensitivity, motion detection, status LED, night vision, record audio, AI tracking, streaming quality, privacy zones, spotlight, lighting) |
 | T8910 | Motion sensor, on a HomeBase | battery and signal only |

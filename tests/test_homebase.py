@@ -1,5 +1,5 @@
 """The settings layout, HomeBase, mode-table and arming-group websocket commands, the
-security-mode select and the per-mode entities' availability, on the real library with its
+security-mode select and the clean-up of stale setting rows, on the real library with its
 FakeCloud and FakeStation."""
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from conftest import (
     seed_setting,
     set_guard_mode,
     set_up_warm,
+    setting_param,
     setup_entry,
     state_of,
 )
@@ -41,8 +42,7 @@ from homeassistant.components.alarm_control_panel import DOMAIN as ALARM_DOMAIN
 from homeassistant.components.number import DOMAIN as NUMBER_DOMAIN
 from homeassistant.components.select import ATTR_OPTION, ATTR_OPTIONS, SERVICE_SELECT_OPTION
 from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
-from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
-from homeassistant.const import ATTR_ENTITY_ID, STATE_UNAVAILABLE, EntityCategory, Platform
+from homeassistant.const import ATTR_ENTITY_ID, EntityCategory, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
@@ -67,6 +67,7 @@ from custom_components.eufy_home_security.settings import setting_specs
 _HOUSE: Final = "house-1"
 _GROUP: Final = "group-1"
 _CAMERA_ACTION_AWAY: Final = "camera_action_away"
+_CAMERA_CHANNEL: Final = 0
 _ALARM_VOLUME: Final = "alarm_volume_value"
 
 
@@ -131,7 +132,8 @@ async def test_the_layout_lists_a_cameras_setting_entities_by_library_section_in
     seed_warm_cache: Callable[..., None],
 ) -> None:
     """Sections in the library's order with its headings; entity ids in ``settings_for``
-    order, disabled ones (per-mode bits) included, entities without a section left out."""
+    order, disabled ones included, entities without a section left out. The camera's
+    Modes section holds only per-mode settings, which have no entities: not listed."""
     entry = await set_up_warm(hass, seed_warm_cache)
     station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
     camera_id = _device_id(hass, SYNTHETIC.camera_sn)
@@ -144,7 +146,7 @@ async def test_the_layout_lists_a_cameras_setting_entities_by_library_section_in
     known = [s.id for s in SETTING_SECTIONS]
     ids = [s["id"] for s in sections]
     assert ids == sorted(ids, key=known.index)
-    assert "modes" in ids
+    assert "modes" not in ids
     for section in sections:
         info = setting_section(section["id"])
         assert (section["heading"], section["order"]) == (info.heading, info.order)
@@ -160,9 +162,12 @@ async def test_the_layout_lists_a_cameras_setting_entities_by_library_section_in
             )
     assert {s["id"]: s["entity_ids"] for s in sections} == by_section
     listed = [entity_id for section in sections for entity_id in section["entity_ids"]]
-    mode_bit = entity_id_for(hass, SWITCH_DOMAIN, SYNTHETIC.camera_sn, "camera_action_away_record")
-    assert registry.async_get(mode_bit).disabled_by is er.RegistryEntryDisabler.INTEGRATION  # type: ignore[union-attr]
-    assert mode_bit in next(s for s in sections if s["id"] == "modes")["entity_ids"]
+    disabled = [
+        e
+        for e in listed
+        if registry.async_get(e).disabled_by is not None  # type: ignore[union-attr]
+    ]
+    assert disabled, "a disabled setting entity is listed"
     camera_entity = entity_id_for(hass, "camera", SYNTHETIC.camera_sn, "camera")
     assert camera_entity not in listed
     _no_serial(result)
@@ -601,8 +606,10 @@ async def test_a_mode_table_write_is_one_table_and_answers_the_new_payload(
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """Actions and the entry delay by HA device id, sent as one Away table; the answer
-    carries the table read back and a new revision."""
+    """Actions and the entry delay by HA device id, sent as one Away table that keeps the
+    mask's unnamed bits; the answer carries the table read back and a new revision."""
+    unnamed = 0x100  # a mask bit no flag names
+    seed_setting(fake_station, _CAMERA_ACTION_AWAY, 9 | unnamed)
     entry = await set_up_warm(hass, seed_warm_cache)
     client = await hass_ws_client(hass)
     camera_id = _device_id(hass, SYNTHETIC.camera_sn)
@@ -619,6 +626,9 @@ async def test_a_mode_table_write_is_one_table_and_answers_the_new_payload(
     assert reply["success"], reply
     result = reply["result"]
     assert len(fake_station.mode_tables_received) == 1
+    camera_params = fake_station.params[_CAMERA_CHANNEL]
+    assert camera_params[setting_param(_CAMERA_ACTION_AWAY)] == str(9 | 2 | unnamed)
+    assert camera_params[setting_param("alarm_delay_away")] == "30"
     away = result["mode_tables"]["away"]["devices"][camera_id]
     assert away["flags"]["camera_siren"] is True
     assert away["flags"]["record"] is True
@@ -743,44 +753,6 @@ async def test_a_non_admin_cannot_write_a_mode_table(
 
     assert reply["error"]["code"] == "unauthorized"
     assert fake_station.mode_tables_received == []
-    assert await hass.config_entries.async_unload(entry.entry_id)
-
-
-# ── per-mode entities follow the defined modes ───────────────────────────────
-
-
-async def test_per_mode_entities_of_an_undefined_mode_are_unavailable_until_it_is_defined(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-) -> None:
-    """Custom 1 defined, Custom 2 not: Custom 2's delay and action switch are unavailable,
-    Custom 1's are not; once the station lists Custom 2 they come back."""
-    define_custom_modes(fake_station, {3: _NIGHT})
-    for mode in ("custom_1", "custom_2"):
-        seed_setting(fake_station, f"alarm_delay_{mode}", 0)
-        seed_setting(fake_station, f"camera_action_{mode}", 9)
-    entry = await set_up_warm(hass, seed_warm_cache)
-    registry = er.async_get(hass)
-    switch_2 = entity_id_for(
-        hass, SWITCH_DOMAIN, SYNTHETIC.camera_sn, "camera_action_custom_2_record"
-    )
-    registry.async_update_entity(switch_2, disabled_by=None)
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
-    delay_1 = entity_id_for(hass, NUMBER_DOMAIN, SYNTHETIC.camera_sn, "alarm_delay_custom_1")
-    delay_2 = entity_id_for(hass, NUMBER_DOMAIN, SYNTHETIC.camera_sn, "alarm_delay_custom_2")
-
-    assert state_of(hass, delay_1) == "0"
-    assert state_of(hass, delay_2) == STATE_UNAVAILABLE
-    assert state_of(hass, switch_2) == STATE_UNAVAILABLE
-
-    define_custom_modes(fake_station, {3: _NIGHT, 4: "Late"})
-    await advance_to_poll(hass, POLL_INTERVAL_SECONDS + 1)
-
-    assert state_of(hass, delay_2) == "0"
-    assert state_of(hass, switch_2) == "on"
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 

@@ -287,9 +287,6 @@
     "setting_device_unavailable": {
       "message": "The device {target} belongs to cannot be addressed, so nothing was sent and the entity still shows the value the HomeBase last reported. eufy's device list does not pair it to this HomeBase, or names no slot for it. If the device was removed or re-paired, reload the integration; otherwise check that it is still paired in the eufy app."
     },
-    "setting_mode_table_refused": {
-      "message": "The HomeBase's table for this guard mode cannot be written back unchanged, so nothing was sent and {target} still shows the value the HomeBase last reported. A paired device does not report its settings for the mode, a device is of a kind this integration cannot keep unchanged, or devices hold different delays for the mode. Check the mode's settings in the eufy app."
-    },
     "setting_unconfirmed": {
       "message": "The device did not confirm the change to {target} in time. It may still apply: the entity shows unknown until the next update shows the value in force."
     },
@@ -398,36 +395,6 @@
   },
   "entity": {
     "number": {
-      "alarm_delay_home": {
-        "name": "Entry delay (Home)"
-      },
-      "alarm_delay_away": {
-        "name": "Entry delay (Away)"
-      },
-      "alarm_delay_custom_1": {
-        "name": "Entry delay (Custom 1)"
-      },
-      "alarm_delay_custom_2": {
-        "name": "Entry delay (Custom 2)"
-      },
-      "alarm_delay_custom_3": {
-        "name": "Entry delay (Custom 3)"
-      },
-      "leaving_delay_home": {
-        "name": "Leaving delay (Home)"
-      },
-      "leaving_delay_away": {
-        "name": "Leaving delay (Away)"
-      },
-      "leaving_delay_custom_1": {
-        "name": "Leaving delay (Custom 1)"
-      },
-      "leaving_delay_custom_2": {
-        "name": "Leaving delay (Custom 2)"
-      },
-      "leaving_delay_custom_3": {
-        "name": "Leaving delay (Custom 3)"
-      },
       "live_zoom": {
         "name": "Live view zoom"
       }
@@ -499,158 +466,7 @@
         "name": "Security mode"
       }
     },
-    "switch": {
-      "camera_action_away_record": {
-        "name": "Away: record"
-      },
-      "camera_action_away_camera_siren": {
-        "name": "Away: camera siren"
-      },
-      "camera_action_away_station_alarm": {
-        "name": "Away: HomeBase alarm"
-      },
-      "camera_action_away_notification": {
-        "name": "Away: notification"
-      },
-      "camera_action_away_report_monitor_center": {
-        "name": "Away: report to monitoring center"
-      },
-      "camera_action_away_light_alarm": {
-        "name": "Away: light alarm"
-      },
-      "camera_action_home_record": {
-        "name": "Home: record"
-      },
-      "camera_action_home_camera_siren": {
-        "name": "Home: camera siren"
-      },
-      "camera_action_home_station_alarm": {
-        "name": "Home: HomeBase alarm"
-      },
-      "camera_action_home_notification": {
-        "name": "Home: notification"
-      },
-      "camera_action_home_report_monitor_center": {
-        "name": "Home: report to monitoring center"
-      },
-      "camera_action_home_light_alarm": {
-        "name": "Home: light alarm"
-      },
-      "camera_action_custom_1_record": {
-        "name": "Custom 1: record"
-      },
-      "camera_action_custom_1_camera_siren": {
-        "name": "Custom 1: camera siren"
-      },
-      "camera_action_custom_1_station_alarm": {
-        "name": "Custom 1: HomeBase alarm"
-      },
-      "camera_action_custom_1_notification": {
-        "name": "Custom 1: notification"
-      },
-      "camera_action_custom_1_report_monitor_center": {
-        "name": "Custom 1: report to monitoring center"
-      },
-      "camera_action_custom_1_light_alarm": {
-        "name": "Custom 1: light alarm"
-      },
-      "camera_action_custom_2_record": {
-        "name": "Custom 2: record"
-      },
-      "camera_action_custom_2_camera_siren": {
-        "name": "Custom 2: camera siren"
-      },
-      "camera_action_custom_2_station_alarm": {
-        "name": "Custom 2: HomeBase alarm"
-      },
-      "camera_action_custom_2_notification": {
-        "name": "Custom 2: notification"
-      },
-      "camera_action_custom_2_report_monitor_center": {
-        "name": "Custom 2: report to monitoring center"
-      },
-      "camera_action_custom_2_light_alarm": {
-        "name": "Custom 2: light alarm"
-      },
-      "camera_action_custom_3_record": {
-        "name": "Custom 3: record"
-      },
-      "camera_action_custom_3_camera_siren": {
-        "name": "Custom 3: camera siren"
-      },
-      "camera_action_custom_3_station_alarm": {
-        "name": "Custom 3: HomeBase alarm"
-      },
-      "camera_action_custom_3_notification": {
-        "name": "Custom 3: notification"
-      },
-      "camera_action_custom_3_report_monitor_center": {
-        "name": "Custom 3: report to monitoring center"
-      },
-      "camera_action_custom_3_light_alarm": {
-        "name": "Custom 3: light alarm"
-      },
-      "sensor_action_away_station_alarm": {
-        "name": "Away: HomeBase alarm"
-      },
-      "sensor_action_away_notification": {
-        "name": "Away: notification"
-      },
-      "sensor_action_away_motion_sensor_respond": {
-        "name": "Away: sensor response"
-      },
-      "sensor_action_away_report_monitor_center": {
-        "name": "Away: report to monitoring center"
-      },
-      "sensor_action_home_station_alarm": {
-        "name": "Home: HomeBase alarm"
-      },
-      "sensor_action_home_notification": {
-        "name": "Home: notification"
-      },
-      "sensor_action_home_motion_sensor_respond": {
-        "name": "Home: sensor response"
-      },
-      "sensor_action_home_report_monitor_center": {
-        "name": "Home: report to monitoring center"
-      },
-      "sensor_action_custom_1_station_alarm": {
-        "name": "Custom 1: HomeBase alarm"
-      },
-      "sensor_action_custom_1_notification": {
-        "name": "Custom 1: notification"
-      },
-      "sensor_action_custom_1_motion_sensor_respond": {
-        "name": "Custom 1: sensor response"
-      },
-      "sensor_action_custom_1_report_monitor_center": {
-        "name": "Custom 1: report to monitoring center"
-      },
-      "sensor_action_custom_2_station_alarm": {
-        "name": "Custom 2: HomeBase alarm"
-      },
-      "sensor_action_custom_2_notification": {
-        "name": "Custom 2: notification"
-      },
-      "sensor_action_custom_2_motion_sensor_respond": {
-        "name": "Custom 2: sensor response"
-      },
-      "sensor_action_custom_2_report_monitor_center": {
-        "name": "Custom 2: report to monitoring center"
-      },
-      "sensor_action_custom_3_station_alarm": {
-        "name": "Custom 3: HomeBase alarm"
-      },
-      "sensor_action_custom_3_notification": {
-        "name": "Custom 3: notification"
-      },
-      "sensor_action_custom_3_motion_sensor_respond": {
-        "name": "Custom 3: sensor response"
-      },
-      "sensor_action_custom_3_report_monitor_center": {
-        "name": "Custom 3: report to monitoring center"
-      }
-    },
+    "switch": {},
     "binary_sensor": {
       "motion_detected": {
         "name": "Motion"

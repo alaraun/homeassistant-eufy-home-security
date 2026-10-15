@@ -10,7 +10,6 @@ from typing import Final
 import pytest
 from conftest import (
     _STATION_BLOCK,
-    define_custom_modes,
     entity_id_for,
     record_states,
     seed_setting,
@@ -296,11 +295,6 @@ _CAMERA_NUMBERS: Final = frozenset(
     }
 )
 _STATION_NUMBERS: Final = frozenset({"alarm_volume_value", "prompt_volume_value"})
-_DELAY_NUMBERS: Final = frozenset(
-    f"{kind}_{mode}"
-    for kind in ("alarm_delay", "leaving_delay")
-    for mode in ("home", "away", "custom_1", "custom_2", "custom_3")
-)
 
 
 def _number_unique_ids(hass: HomeAssistant, entry: MockConfigEntry) -> set[str]:
@@ -318,11 +312,11 @@ async def test_numbers_exist_for_every_writable_range_setting(
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """Every writable range setting and every per-mode delay is a number; a mask never is."""
+    """Every writable range setting is a number; a per-mode delay or mask never is."""
     entry = await set_up_warm(hass, seed_warm_cache)
 
     expected = {
-        *(entity_unique_id(SYNTHETIC.camera_sn, key) for key in _CAMERA_NUMBERS | _DELAY_NUMBERS),
+        *(entity_unique_id(SYNTHETIC.camera_sn, key) for key in _CAMERA_NUMBERS),
         *(entity_unique_id(SYNTHETIC.station_sn, key) for key in _STATION_NUMBERS),
     }
     assert _number_unique_ids(hass, entry) == expected
@@ -347,13 +341,11 @@ async def test_numbers_take_bounds_step_and_mode_from_the_library(
 ) -> None:
     """Bounds, step and slider or box are the library's; seconds make a duration.
 
-    The clip length is a slider in seconds (the app's control); a per-mode delay carries
-    no control and is a duration box.
+    The clip length is a slider in seconds (the app's control).
 
     The state is the library's own integer: "60", not "60.0".
     """
     seed_setting(fake_station, _CLIP_LENGTH, 60)
-    seed_setting(fake_station, "alarm_delay_away", 30)
     seed_setting(fake_station, _ALARM_VOLUME, 10, channel=_STATION_BLOCK)
     entry = await set_up_warm(hass, seed_warm_cache)
 
@@ -374,15 +366,6 @@ async def test_numbers_take_bounds_step_and_mode_from_the_library(
     assert volume.state == "10"
     assert volume.attributes[NumberEntityCapabilityAttribute.MODE] == "slider"
     assert ATTR_UNIT_OF_MEASUREMENT not in volume.attributes
-
-    delay_id = entity_id_for(hass, NUMBER_DOMAIN, SYNTHETIC.camera_sn, "alarm_delay_away")
-    delay = hass.states.get(delay_id)
-    assert delay is not None
-    assert delay.state == "30"
-    assert delay.attributes[ATTR_UNIT_OF_MEASUREMENT] == "s"
-    assert delay.attributes[ATTR_DEVICE_CLASS] == "duration"
-    assert delay.attributes[NumberEntityCapabilityAttribute.MODE] == "box"
-    assert delay.attributes[ATTR_MAX] == 300
 
     registered = er.async_get(hass).async_get(clip_id)
     assert registered is not None
@@ -567,122 +550,6 @@ async def test_a_station_number_neither_the_dump_nor_the_cloud_carries_shows_the
     assert state is not None
     assert float(state.state) == default
     assert state.attributes["value_source"] == "app_default"
-
-    assert await hass.config_entries.async_unload(entry.entry_id)
-    await hass.async_block_till_done()
-
-
-# ── the per-mode delays: one value per mode, written as the mode's table ─────
-
-_ALARM_DELAY_AWAY: Final = "alarm_delay_away"
-_CAMERA_ACTION_AWAY: Final = "camera_action_away"
-_MODE_TABLE_REFUSED: Final = "setting_mode_table_refused"
-
-
-async def test_an_alarm_delay_number_writes_through_the_mode_table_with_read_back(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-) -> None:
-    """ "Entry delay (Away)" is a box in whole seconds, written as Away's whole table.
-
-    The library sends the mode's table (``SET_ALL_ACTION``) and confirms it by read-back.
-    """
-    seed_setting(fake_station, _ALARM_DELAY_AWAY, 0)
-    # The table the write replaces carries every device's action for the mode.
-    seed_setting(fake_station, _CAMERA_ACTION_AWAY, 9)
-    entry = await set_up_warm(hass, seed_warm_cache)
-
-    entity_id = entity_id_for(hass, NUMBER_DOMAIN, SYNTHETIC.camera_sn, _ALARM_DELAY_AWAY)
-    registered = er.async_get(hass).async_get(entity_id)
-    assert registered is not None
-    assert registered.disabled_by is None
-    assert registered.entity_category is EntityCategory.CONFIG
-    state = hass.states.get(entity_id)
-    assert state is not None
-    assert state.state == "0"
-    assert state.attributes[NumberEntityCapabilityAttribute.MODE] == "box"
-    assert state.attributes[ATTR_UNIT_OF_MEASUREMENT] == "s"
-
-    await set_number(hass, entity_id, 30)
-    await hass.async_block_till_done()
-
-    assert len(fake_station.mode_tables_received) == 1, "no mode table reached the station"
-    command_id = setting_param(_ALARM_DELAY_AWAY)
-    assert fake_station.params[_CAMERA_CHANNEL][command_id] == "30"
-    assert state_of(hass, entity_id) == "30"
-
-    assert await hass.config_entries.async_unload(entry.entry_id)
-    await hass.async_block_till_done()
-
-
-async def test_a_delay_write_the_mode_table_cannot_carry_is_refused_as_a_sentence(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-) -> None:
-    """A table the library will not write back unchanged is a translated refusal.
-
-    The camera reports no Away action, so the library cannot rebuild Away's table
-    and refuses before sending anything (``UnsupportedError``). That is a state of
-    the HomeBase a user can meet by pressing the control, so it must arrive as a
-    translated message naming the entity, with nothing sent and the value unchanged.
-    """
-    seed_setting(fake_station, _ALARM_DELAY_AWAY, 0)
-    entry = await set_up_warm(hass, seed_warm_cache)
-    entity_id = entity_id_for(hass, NUMBER_DOMAIN, SYNTHETIC.camera_sn, _ALARM_DELAY_AWAY)
-
-    with pytest.raises(HomeAssistantError) as caught:
-        await set_number(hass, entity_id, 30)
-    await hass.async_block_till_done()
-
-    assert caught.value.translation_key == _MODE_TABLE_REFUSED
-    assert caught.value.translation_domain == DOMAIN
-    assert fake_station.mode_tables_received == []
-    assert state_of(hass, entity_id) == "0"
-
-    assert await hass.config_entries.async_unload(entry.entry_id)
-    await hass.async_block_till_done()
-
-
-_MODE_ACTION: Final[dict[str, str]] = {
-    "home": "camera_action_home",
-    "away": "camera_action_away",
-    "custom_1": "camera_action_custom_1",
-    "custom_2": "camera_action_custom_2",
-    "custom_3": "camera_action_custom_3",
-}
-
-
-@pytest.mark.parametrize("key", sorted(_DELAY_NUMBERS))
-async def test_every_per_mode_delay_is_an_enabled_number_written_as_its_table(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    key: str,
-) -> None:
-    """Each delay is an enabled config number with a translated name; a write is a table."""
-    mode = key.split("_delay_", 1)[1]
-    define_custom_modes(fake_station, {3: "Night", 4: "Late", 5: "Trip"})
-    seed_setting(fake_station, key, 0)
-    seed_setting(fake_station, _MODE_ACTION[mode], 9)
-    entry = await set_up_warm(hass, seed_warm_cache)
-    registry = er.async_get(hass)
-    entity_id = entity_id_for(hass, NUMBER_DOMAIN, SYNTHETIC.camera_sn, key)
-    registered = registry.async_get(entity_id)
-    assert registered is not None
-    assert registered.translation_key == key
-    assert registered.disabled_by is None
-    assert registered.entity_category is EntityCategory.CONFIG
-
-    await set_number(hass, entity_id, 45)
-    await hass.async_block_till_done()
-    assert len(fake_station.mode_tables_received) == 1
-    assert fake_station.params[_CAMERA_CHANNEL][setting_param(key)] == "45"
-    assert state_of(hass, entity_id) == "45"
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

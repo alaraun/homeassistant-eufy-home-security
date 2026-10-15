@@ -4,7 +4,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.15-1';
+const CARD_VERSION = '2026.10.15-2';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -113,7 +113,7 @@ const ROW_DOMAINS = ['select', 'number', 'switch'];
 // The integration's settings layout of a device: { sections: [{ id, heading, order, entity_ids }] }. Settings tabs,
 // their names and order come only from it; an entity in no section goes under More.
 const LAYOUT_WS = 'eufy_home_security/settings_layout';
-// The section of the per-mode delays and device actions (the HomeBase's): a row only when `settings_include` names it
+// The section of the guard-mode settings (the HomeBase card's): a row only when `settings_include` names it
 const MODES_SECTION = 'modes';
 // The section whose tab also shows the power readings
 const POWER_SECTION = 'power';

@@ -23,9 +23,13 @@ from conftest import (
     setup_entry,
     state_of,
 )
-from eufy_home_security import EufySecurity, Station, entity_unique_id
+from eufy_home_security import MODES_SECTION, EufySecurity, Station, entity_unique_id
 from eufy_home_security.devices import MODE_ACTION_FLAGS, Scope, SettingControl, SettingKind
-from eufy_home_security.devices.model_settings import mode_table_settings, settings_of
+from eufy_home_security.devices.model_settings import (
+    bundled_codes,
+    mode_table_settings,
+    settings_of,
+)
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
 from homeassistant.components.alarm_control_panel import DOMAIN as ALARM_DOMAIN
 from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
@@ -35,7 +39,8 @@ from homeassistant.helpers import entity_registry as er
 
 from custom_components.eufy_home_security.const import DOMAIN, FIRMWARE_KEY
 from custom_components.eufy_home_security.settings import (
-    mode_action,
+    is_per_mode,
+    is_per_mode_entity,
     setting_platform,
     setting_specs,
 )
@@ -79,95 +84,91 @@ def test_every_bundled_setting_maps_to_the_platform_its_control_and_access_give(
             assert platform is Platform.SENSOR, setting.key
 
 
-def test_mode_action_masks_become_one_switch_per_named_bit() -> None:
-    """A per-mode action mask is never a number: its named bits are switches."""
-    masks = [s for s in _MODE_TABLE if s.key.split("_action_")[0] in MODE_ACTION_FLAGS]
-    assert masks
-    for setting in masks:
-        action = mode_action(setting)
-        assert action is not None, setting.key
-        assert setting_platform(setting) is Platform.SWITCH
-        scope = setting.key.split("_action_")[0]
-        assert dict(action.flags) == dict(MODE_ACTION_FLAGS[Scope(scope)])
-    delays = [s for s in _MODE_TABLE if "_delay_" in s.key]
-    assert delays
-    for setting in delays:
-        assert mode_action(setting) is None
-        assert setting_platform(setting) is Platform.NUMBER
+def test_per_mode_delays_and_action_masks_get_no_entity() -> None:
+    """Every per-mode delay and action mask is in the Modes section and maps to no platform."""
+    assert _MODE_TABLE
+    for setting in _MODE_TABLE:
+        assert setting.section == MODES_SECTION, setting.key
+        assert is_per_mode(setting), setting.key
+        assert setting_platform(setting) is None, setting.key
 
 
-def test_only_a_motion_sensor_gets_the_respond_switch() -> None:
-    """A sensor's bits follow its cloud device type; an unknown type keeps the full set."""
-    masks = [s for s in _MODE_TABLE if s.key.startswith(f"{Scope.SENSOR}_action_")]
-    assert masks
-    for setting in masks:
-        for device_type, respond in ((10, True), (127, True), (2, False), (None, True)):
-            action = mode_action(setting, device_type)
-            assert action is not None, setting.key
-            assert ("motion_sensor_respond" in action.flags) is respond, (setting.key, device_type)
+def test_other_modes_section_settings_keep_their_entities() -> None:
+    """A bundled Modes-section setting outside the mode table follows the platform rule
+    (the keypad's access-code switch stays a switch)."""
+    seen: dict[str, Platform | None] = {}
+    for code in bundled_codes():
+        for setting in settings_of(code).values():
+            if setting.section == MODES_SECTION:
+                assert not is_per_mode(setting), (code, setting.key)
+                seen.setdefault(setting.key, setting_platform(setting))
+    assert seen["hb_keypad_switch_mode_with_access_code_switch"] is Platform.SWITCH
+    assert seen["hb_keypad_is_password_set"] is Platform.BINARY_SENSOR
 
 
-def test_setting_specs_give_each_paired_sensor_the_bits_of_its_device_type() -> None:
-    """The specs read each paired device's cloud type; 0 (not given) keeps the full set."""
-    sensor_settings = [s for s in _MODE_TABLE if s.key.startswith(f"{Scope.SENSOR}_action_")]
+def test_setting_specs_leave_out_every_paired_devices_per_mode_settings() -> None:
+    """A paired camera or sensor gets specs for its other settings only."""
+    other = settings_of("T8160")["trigger_interval_time"]
     subs = [
-        SimpleNamespace(device_sn="T8900P0000000001", device_type=2),
+        SimpleNamespace(device_sn="T8160P0000000001", device_type=1),
         SimpleNamespace(device_sn="T8910P0000000001", device_type=10),
-        SimpleNamespace(device_sn="T8900P0000000002", device_type=0),
     ]
     station = SimpleNamespace(
         sub_devices=subs,
-        settings_for=lambda device_sn: sensor_settings if device_sn else [],
+        settings_for=lambda device_sn: [*_MODE_TABLE, other] if device_sn else [],
     )
 
-    flags = {
-        sub.device_sn: {s.flag for s in setting_specs(station) if s.device_sn == sub.device_sn}  # type: ignore[arg-type]
-        for sub in subs
-    }
+    specs = setting_specs(station)  # type: ignore[arg-type]
 
-    assert "motion_sensor_respond" not in flags["T8900P0000000001"]
-    assert "motion_sensor_respond" in flags["T8910P0000000001"]
-    assert "motion_sensor_respond" in flags["T8900P0000000002"]
+    assert [(spec.device_sn, spec.key) for spec in specs] == [
+        (sub.device_sn, "trigger_interval_time") for sub in subs
+    ]
+
+
+def test_the_per_mode_entity_keys_are_each_delay_and_each_named_action_bit() -> None:
+    """``<serial>_<delay>`` and ``<serial>_<mask>_<flag>`` match; the mask alone and other
+    keys do not."""
+    serial = SYNTHETIC.camera_sn
+    delays = [s.key for s in mode_table_settings(Scope.SUB_DEVICE)]
+    bits = [
+        f"{s.key}_{flag}"
+        for scope, flags in MODE_ACTION_FLAGS.items()
+        for s in mode_table_settings(scope)
+        if s.key not in delays
+        for flag in flags
+    ]
+    assert (len(delays), len(bits)) == (10, 50)
+    for key in (*delays, *bits):
+        assert is_per_mode_entity(entity_unique_id(serial, key)), key
+    for key in ("camera_action_away", "hb_keypad_is_password_set", "trigger_interval_time"):
+        assert not is_per_mode_entity(entity_unique_id(serial, key)), key
 
 
 def test_unique_id_keys_do_not_collide_within_a_platform() -> None:
     """One device's entities of one platform have distinct keys (largest set: a camera)."""
     for model in _MODELS:
         keys_by_platform: dict[Platform, list[str]] = {}
-        settings = [*settings_of(model).values(), *mode_table_settings(Scope.CAMERA)]
-        for setting in settings:
+        for setting in settings_of(model).values():
             platform = setting_platform(setting)
             if platform is None:
                 continue
-            action = mode_action(setting)
-            keys = keys_by_platform.setdefault(platform, [])
-            if action is not None:
-                keys.extend(f"{setting.key}_{flag}" for flag in action.flags)
-            else:
-                keys.append(setting.key)
+            keys_by_platform.setdefault(platform, []).append(setting.key)
         for platform, keys in keys_by_platform.items():
             duplicates = sorted({key for key in keys if keys.count(key) > 1})
             assert not duplicates, (model, platform, duplicates)
 
 
 @pytest.mark.parametrize("path", [_STRINGS_PATH, _EN_PATH], ids=lambda p: p.name)
-def test_every_translated_setting_key_has_a_name(path: Path) -> None:
-    """The per-mode delays and action bits have translated names; nothing else does."""
+def test_no_per_mode_entity_keeps_a_translation(path: Path) -> None:
+    """Setting entities are named by the library: no entity translation for a per-mode key."""
     document: Any = json.loads(path.read_text())
-    missing: list[str] = []
-    for setting in _MODE_TABLE:
-        action = mode_action(setting)
-        platform = str(setting_platform(setting))
-        keys = (
-            [f"{setting.key}_{flag}" for flag in action.flags]
-            if action is not None
-            else [setting.key]
-        )
-        for key in keys:
-            name = document["entity"].get(platform, {}).get(key, {}).get("name")
-            if not isinstance(name, str) or not name.strip():
-                missing.append(f"entity.{platform}.{key}.name")
-    assert not missing, missing
+    left = [
+        f"entity.{platform}.{key}"
+        for platform, entities in document["entity"].items()
+        for key in entities
+        if is_per_mode_entity(entity_unique_id(SYNTHETIC.camera_sn, key))
+    ]
+    assert not left, left
 
 
 # ── end to end ───────────────────────────────────────────────────────────────
@@ -179,10 +180,7 @@ def _expected_keys(station: Station, device_sn: str | None) -> list[str]:
     for setting in station.settings_for(device_sn):
         if setting_platform(setting) is None:
             continue
-        action = mode_action(setting)
-        if action is not None:
-            keys.extend(f"{setting.key}_{flag}" for flag in action.flags)
-        elif setting.writable and setting.control is SettingControl.TOGGLES:
+        if setting.writable and setting.control is SettingControl.TOGGLES:
             keys.extend(f"{setting.key}_{member}" for member in setting.flags)
         else:
             keys.append(setting.key)
@@ -231,8 +229,8 @@ async def test_controls_are_config_and_enabled_read_only_values_are_diagnostic_a
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """Category and default enablement follow the platform; action bits, variants and
-    settings the app puts behind a warning (``advanced``) start off."""
+    """Category and default enablement follow the platform; variants and settings the app
+    puts behind a warning (``advanced``) start off."""
     entry = await set_up_warm(hass, seed_warm_cache)
     registry = er.async_get(hass)
     station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
@@ -254,7 +252,7 @@ async def test_controls_are_config_and_enabled_read_only_values_are_diagnostic_a
             assert entity.entity_category is EntityCategory.CONFIG, spec.key
         else:
             assert entity.entity_category is EntityCategory.DIAGNOSTIC, spec.key
-        if spec.is_control and spec.action is None and not spec.variant:
+        if spec.is_control and not spec.variant:
             if spec.setting.advanced:
                 advanced.append(spec.key)
                 assert entity.disabled_by is er.RegistryEntryDisabler.INTEGRATION, spec.key
@@ -269,13 +267,13 @@ async def test_controls_are_config_and_enabled_read_only_values_are_diagnostic_a
     await hass.async_block_till_done()
 
 
-async def test_a_vendor_setting_is_named_by_the_library_and_a_delay_by_our_translation(
+async def test_a_vendor_setting_is_named_by_the_library(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """Vendor identifiers carry the library's name; per-mode keys carry a translation key."""
+    """Vendor identifiers carry the library's name, never a translation key."""
     seed_setting(fake_station, "trigger_interval_time", 30)
     entry = await set_up_warm(hass, seed_warm_cache)
     registry = er.async_get(hass)
@@ -287,12 +285,6 @@ async def test_a_vendor_setting_is_named_by_the_library_and_a_delay_by_our_trans
     assert vendor.translation_key is None
     assert vendor.original_name == settings_of("T8160")["trigger_interval_time"].name
     assert state_of(hass, vendor.entity_id) == "30"
-
-    delay = registry.async_get(
-        entity_id_for(hass, Platform.NUMBER, SYNTHETIC.camera_sn, "alarm_delay_away")
-    )
-    assert delay is not None
-    assert delay.translation_key == "alarm_delay_away"
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
@@ -425,6 +417,61 @@ async def test_a_paired_device_loses_its_rows_of_settings_offered_only_without_a
         assert registry.async_get_entity_id(domain, DOMAIN, unique_id) is None, unique_id
     assert registry.async_get(own.entity_id) is not None
     assert registry.async_get(foreign.entity_id) is not None
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_per_mode_rows_are_forgotten_and_other_modes_rows_stay(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Setup forgets this entry's per-mode delay numbers and sensors and action-bit
+    switches; the station's Modes-section setting row and another entry's row stay."""
+    seed_warm_cache()
+    entry = add_entry(hass)
+    other = add_entry(hass, email="other@example.com", unique_id="other@example.com")
+    registry = er.async_get(hass)
+    camera = SYNTHETIC.camera_sn
+    stale = [
+        (Platform.SWITCH, entity_unique_id(camera, "camera_action_away_record")),
+        (Platform.SWITCH, entity_unique_id(camera, "camera_action_custom_3_light_alarm")),
+        (Platform.SWITCH, entity_unique_id(SENSOR_SN, "sensor_action_home_motion_sensor_respond")),
+        (Platform.NUMBER, entity_unique_id(camera, "alarm_delay_away")),
+        (Platform.NUMBER, entity_unique_id(camera, "leaving_delay_custom_1")),
+        (Platform.SENSOR, entity_unique_id(camera, "alarm_delay_custom_2")),
+    ]
+    for domain, unique_id in stale:
+        registry.async_get_or_create(
+            domain,
+            DOMAIN,
+            unique_id,
+            config_entry=entry,
+            translation_key=unique_id.partition("_")[2],
+            entity_category=EntityCategory.CONFIG,
+        )
+    keypad_uid = entity_unique_id(SYNTHETIC.station_sn, "hb_keypad_is_password_set")
+    keypad = registry.async_get_or_create(
+        Platform.BINARY_SENSOR, DOMAIN, keypad_uid, config_entry=entry
+    )
+    foreign = registry.async_get_or_create(
+        Platform.NUMBER, DOMAIN, entity_unique_id(camera, "alarm_delay_home"), config_entry=other
+    )
+
+    assert await setup_entry(hass, entry)
+
+    for domain, unique_id in stale:
+        assert registry.async_get_entity_id(domain, DOMAIN, unique_id) is None, unique_id
+    assert registry.async_get(foreign.entity_id) is not None
+    assert registry.async_get_entity_id(Platform.BINARY_SENSOR, DOMAIN, keypad_uid) == (
+        keypad.entity_id
+    )
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+    keypad_setting = next(
+        s for s in station.settings_for(None) if s.key == "hb_keypad_is_password_set"
+    )
+    assert keypad_setting.section == MODES_SECTION
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 

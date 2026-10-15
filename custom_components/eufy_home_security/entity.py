@@ -223,11 +223,8 @@ class EufySettingEntity(EufyDeviceEntity):
     def __init__(self, coordinator: StationCoordinator, spec: SettingEntitySpec) -> None:
         super().__init__(coordinator, spec.device_sn, spec.key)
         self._spec = spec
-        if spec.translated:
-            self._attr_translation_key = spec.key
-        else:
-            # Vendor identifiers carry no translation of ours; the library names them.
-            self._attr_name = spec.setting.name
+        # Vendor identifiers carry no translation of ours; the library names them.
+        self._attr_name = spec.setting.name
         self._attr_assumed_state = not spec.setting.readable
         self._attr_entity_category = (
             EntityCategory.CONFIG if spec.is_control else EntityCategory.DIAGNOSTIC
@@ -294,21 +291,8 @@ class EufySettingEntity(EufyDeviceEntity):
     @property
     @override
     def available(self) -> bool:
-        """Unavailable, besides the device's own reasons, while the setting does not apply
-        or its guard mode is not one the station has (``StationConfig.is_defined``)."""
-        return super().available and self.setting_applies and self.mode_defined
-
-    @property
-    def mode_defined(self) -> bool:
-        """False only for a per-mode setting whose mode the station's configuration lacks.
-
-        True for every other setting and before the station's configuration is known.
-        """
-        mode = self._spec.mode
-        if mode is None:
-            return True
-        config = self.coordinator.station_config
-        return config is None or config.is_defined(mode)
+        """Unavailable, besides the device's own reasons, while the setting does not apply."""
+        return super().available and self.setting_applies
 
     @property
     def setting_applies(self) -> bool:
@@ -390,9 +374,8 @@ class EufySettingEntity(EufyDeviceEntity):
                 self._write_target(),
                 on_demand=self.coordinator.station.connects_on_demand,
             ) from err
-        except UnsupportedError as err:
-            if self._spec.writes_mode_table:
-                raise errors.setting_mode_table_refused(self._write_target()) from err
+        except UnsupportedError:
+            # A write the library does not send: a programming error, not the device's answer.
             raise
         except DeviceTimeoutError as err:
             self._unsettled = True
@@ -406,41 +389,6 @@ class EufySettingEntity(EufyDeviceEntity):
             ) from err
         self._async_show_written(value)
         await self._async_restart_stream_if_picture_changed()
-
-    async def async_write_mode_action(self, on: bool) -> None:
-        """Turn this entity's action bit on or off for its guard mode; other bits are kept.
-
-        The library reads the current mask, changes the one bit and confirms the table
-        by read-back. A timed-out write shows unknown until the next state, as in
-        ``async_write_setting``.
-        """
-        action, flag, device_sn = self._spec.action, self._spec.flag, self._spec.device_sn
-        if action is None or flag is None or device_sn is None:
-            raise UnsupportedError(f"{self._spec.key} is not a per-mode action bit")
-        self._require_addressable()
-        try:
-            await self.coordinator.station.async_set_mode_action(
-                action.mode, flag, on, device_sn=device_sn
-            )
-        except CommandError as err:
-            raise errors.setting_write_failed(
-                err,
-                self._write_target(),
-                on_demand=self.coordinator.station.connects_on_demand,
-            ) from err
-        except UnsupportedError as err:
-            raise errors.setting_mode_table_refused(self._write_target()) from err
-        except DeviceTimeoutError as err:
-            self._unsettled = True
-            self.async_write_ha_state()
-            raise errors.setting_write_unconfirmed(self._write_target()) from err
-        except EufySecurityError as err:
-            raise errors.setting_write_failed(
-                err,
-                self._write_target(),
-                on_demand=self.coordinator.station.connects_on_demand,
-            ) from err
-        self._async_show_written(None)
 
     async def async_write_flag(self, on: bool) -> None:
         """Turn this entity's member of a ``FLAGS`` setting on or off; other bits are kept.

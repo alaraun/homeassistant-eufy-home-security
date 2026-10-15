@@ -232,10 +232,6 @@ EXC_SETTING_NOT_APPLIED: Final = "setting_not_applied"
 # not pair it to this station, or its cloud record names no slot. Both are ordinary
 # runtime states rather than programming errors, so both are named.
 EXC_SETTING_DEVICE_UNAVAILABLE: Final = "setting_device_unavailable"
-# A per-mode action or delay write the library refused before sending anything: the
-# mode's whole table cannot be written back unchanged (a device reports no action for
-# the mode, is of no known kind, or devices hold different delays for it).
-EXC_SETTING_MODE_TABLE_REFUSED: Final = "setting_mode_table_refused"
 # A setting write that timed out: it may still apply, the next poll shows whether it did.
 EXC_SETTING_UNCONFIRMED: Final = "setting_unconfirmed"
 # A setting value the library refused before sending (off its step, outside its domain).

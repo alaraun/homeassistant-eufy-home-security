@@ -6,8 +6,8 @@ One websocket command, registered once per Home Assistant instance:
   sensor, a standalone camera) answers ``{device_id, sections}``: each section with at
   least one registered entity, as ``{id, heading, order, entity_ids}``. Sections, headings
   and order are the library's (``Setting.section_info``, ``SETTING_SECTIONS``); entity ids
-  follow ``Station.settings_for()``, a ``toggles`` setting's members and a per-mode mask's
-  bits in the library's order where the setting sits. Disabled registry entries are
+  follow ``Station.settings_for()``, a ``toggles`` setting's members in the library's
+  order where the setting sits. Disabled registry entries are
   listed. The integration's own pan/tilt selects (default and live-view preset) are added
   to ``ptz``. Entities without a section (camera, battery, buttons) are not listed.
 

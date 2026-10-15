@@ -37,7 +37,7 @@ auto_live: timed                 # optional: start live view when the dashboard 
 history_folder: Front_door       # optional: the camera's history folder, when it differs from the device name
 layout: auto                     # optional: auto | compact | regular
 settings_include:                # optional: more of the camera's entities in Settings (entity ids)
-  - number.front_door_entry_delay_away
+  - switch.front_door_status_led
 settings_exclude:                # optional: controls to leave out of Settings (entity ids)
   - switch.front_door_silent_firmware_updates
 settings_groups:                 # optional: Settings tabs to show, in this order (default: all, in the integration's order)
@@ -116,9 +116,10 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     rows first, switches after). The layout is asked when the card first draws and again when the device's
     entities change in HA. Until the first answer Settings shows `Loading settings` in the tabs' place; when it
     fails, `Settings did not load` with Retry. A later failure keeps the last tabs.
-  - The per-mode entry and leaving delays and device actions (the Modes section) belong to the HomeBase and are
-    left out; `settings_include` adds one back under Modes. An entity in no section (a `settings_include` extra,
-    another configuration control of the device) is under More, the last tab.
+  - The Modes section (guard-mode settings) belongs to the HomeBase and is left out; `settings_include` adds one
+    of its entities back under Modes. A camera's per-mode actions and entry and leaving delays have no entities:
+    the [HomeBase card](homebase-card.md) edits them. An entity in no section (a `settings_include` extra, another
+    configuration control of the device) is under More, the last tab.
   - On a narrow card only the open tab shows its name; when even that does not fit, the tabs are icons and the
     open tab's name is on a line under them.
   - `settings_groups` lists the tab ids to show, in that order. The ids are the integration's section ids:

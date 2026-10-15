@@ -62,7 +62,7 @@ name: House                                  # optional: the header name (defaul
     and is listed greyed.
   - **Settings:** the HomeBase's settings in tabs. Tabs, their names and their order come from the integration's
     settings layout (websocket `eufy_home_security/settings_layout`), so a new setting needs no card change; the
-    Modes section is left out (its per-mode entities are what Devices edits). Detection also shows the
+    Modes section is left out (per-mode device actions and delays are on Devices). Detection also shows the
     cross-camera tracking cameras and groups, read only, when the HomeBase reports them.
   - **Status:** disk and internal storage use, model and firmware (and `Update x.y` when an update is offered; it
     opens the update entity), every paired device with its model and battery or `Offline`.

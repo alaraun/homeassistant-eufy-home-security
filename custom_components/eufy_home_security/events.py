@@ -12,8 +12,8 @@ shows or what the user must be told:
   that station. It arrives from a dump the station pushes unasked and from the
   read-back of a confirmed setting write.
 - ``StationConfigChanged`` makes the coordinator rebuild ``station_config`` and notify
-  its entities (``StationCoordinator.async_apply_config_changed``): the per-mode
-  entities follow the modes the station has.
+  its entities (``StationCoordinator.async_apply_config_changed``): the security-mode
+  select and the HomeBase card follow the modes the station has.
 - ``StorageChanged`` replaces the station's storage record
   (``StorageCoordinator.async_apply_storage``). It arrives after every storage read,
   when a format finishes and when another client reads the record.

@@ -106,7 +106,6 @@ from .const import (
     EXC_SECURITY_MODE_NOT_SETTABLE,
     EXC_SESSION_REPLACED_SEE_REPAIRS,
     EXC_SETTING_DEVICE_UNAVAILABLE,
-    EXC_SETTING_MODE_TABLE_REFUSED,
     EXC_SETTING_NOT_APPLIED,
     EXC_SETTING_UNCONFIRMED,
     EXC_SETTING_VALUE_INVALID,
@@ -320,8 +319,8 @@ def setting_write_failed(
     ``target`` is the only placeholder: the entity's translated name, or its catalog
     key when it has none; never a serial, an owner account id or the library's text.
     A plain ``UnsupportedError`` does not arrive here: the caller maps it to
-    :func:`setting_device_unavailable` or :func:`setting_mode_table_refused`, or lets
-    a catalog-shape programming error propagate.
+    :func:`setting_device_unavailable`, or lets a catalog-shape programming error
+    propagate.
     """
     if is_session_replaced_failure(err):
         key = EXC_SESSION_REPLACED_SEE_REPAIRS
@@ -357,23 +356,6 @@ def setting_device_unavailable(target: str) -> HomeAssistantError:
     return HomeAssistantError(
         translation_domain=DOMAIN,
         translation_key=EXC_SETTING_DEVICE_UNAVAILABLE,
-        translation_placeholders={"target": target},
-    )
-
-
-def setting_mode_table_refused(target: str) -> HomeAssistantError:
-    """A per-mode action or delay write the library refused, nothing sent.
-
-    These settings are written as their mode's whole table, and the library refuses
-    with ``UnsupportedError`` when that table cannot be written back unchanged: a
-    paired device reports no action for the mode, a device is of no known kind (a
-    siren accessory whose triggers the table would clear), or devices hold different
-    values for a delay the table carries as one. A retry cannot fix it. ``target`` is
-    the entity's translated name, never a serial; no library text.
-    """
-    return HomeAssistantError(
-        translation_domain=DOMAIN,
-        translation_key=EXC_SETTING_MODE_TABLE_REFUSED,
         translation_placeholders={"target": target},
     )
 

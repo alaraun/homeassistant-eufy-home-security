@@ -4,7 +4,7 @@
 // (`eufy_home_security/homebase`, `.../subscribe`, `settings_layout`, `arming_groups/*`); every write is staged
 // under one ✕ / Set in the title line, and alarm-affecting writes are listed for a confirm first.
 
-const CARD_VERSION = '2026.10.15-1';
+const CARD_VERSION = '2026.10.15-2';
 
 const DOMAIN = 'eufy_home_security';
 const WS = {
@@ -884,7 +884,7 @@ class EufyHomebaseCard extends HTMLElement {
     out.push(['status', 'information-outline', 'Status']);
     return out;
   }
-  _setSecs() { return (this._lay || []).filter(s => s.id !== 'modes' && s.entity_ids.some(e => this._st(e))); }
+  _setSecs() { return (this._lay || []).filter(s => s.entity_ids.some(e => this._st(e))); }
   _secOf(k) {
     if (/^(t|dv|dd)\|/.test(k)) return 'devices';
     if (/^(ga|gu|gd)\||^gn$/.test(k)) return 'groups';
