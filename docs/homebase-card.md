@@ -68,7 +68,8 @@ name: House                                  # optional: the header name (defaul
   - **Schedule:** the week (one row per day, 24 h, each slot a bar in its mode's colour; the mode outside the
     slots fills the rest), **Outside the slots** (the default mode), and one slot form under the week: the slot
     list (**New slot** or an existing slot; pressing a bar picks it too), the days, start, end and mode, and
-    **Add** / **Save** / **Delete**. Times follow the HA profile's time format. A slot that overlaps another on
+    **Add** / **Save** / **Delete**. Times follow the HA profile's time format; a slot that runs to midnight ends
+    at `24:00` (the last End choice). A slot that overlaps another on
     one of its days, or ends before it starts, is refused in the form (Add stays off and the line under it names
     the slot it overlaps). Each change stages the whole schedule; Set sends it in one write. When the HomeBase
     refuses it, the line under the form shows `Not applied:` with the HomeBase's reason.
@@ -78,15 +79,28 @@ name: House                                  # optional: the header name (defaul
     and is listed greyed.
   - **Settings:** the HomeBase's settings in tabs. Tabs, their names and their order come from the integration's
     settings layout (websocket `eufy_home_security/settings_layout`), so a new setting needs no card change.
-    Detection also holds cross-camera tracking when the HomeBase reports it: the cameras it follows (chips;
-    **All cameras** = every camera; the last chosen camera stays chosen), the tracking
-    groups (each a row of camera chips to toggle, a bin to remove it, **+ Group** to add one; the list scrolls
-    inside a fixed box) and the tracking time.
+    Detection also holds cross-camera tracking when the HomeBase reports it: the devices it follows (chips for
+    the devices the integration lists as eligible, cameras and doorbells and other paired devices the eufy app
+    offers, never sensors; **All cameras** = every eligible device), the tracking groups (each a row of chips to
+    toggle, a bin to remove it, **+ Group** to add one; the list scrolls inside a fixed box) and the tracking time.
+    A choice needs at least the integration's minimum (`min_cameras`, 2): at the minimum the chosen chips stay
+    chosen and the line under them says `At least 2 cameras`; with fewer eligible devices than that the chips
+    and **All cameras** are off and the line says why. A staged choice that falls under the minimum (a device
+    left the eligible list) keeps Set off, with the reason on that line and in Set's label.
   - **Status:** disk and internal storage use, model and firmware (and `Update x.y` when an update is offered; it
-    opens the update entity), every paired device with its model and battery or `Offline`.
+    opens the update entity), the last alarm (`Last alarm 12.10 21:05`: the alarm's own time, else when the
+    integration saw it; in the HA profile's time format), every paired device with its model and battery or
+    `Offline`.
 - **Support per model:** the integration grades each part per HomeBase model. A part graded unknown is left out
   (its section, toggle or menu items); a declared part shows `Not tested on this model` in its section; a verified
   one shows plainly. A part the integration cannot write is shown read only.
+- **Lists** (a setting with many options, the schedule's slots, times and modes, the device picker) open inside
+  the card: 5 to 8 rows (all when fewer), downward when they fit below the field, else upward, else the card grows
+  while the list is open and shrinks back when it closes. Long labels end in `…` (the full text is in the option's
+  label for screen readers and shows on keyboard focus). A list of more than 12 options (the timezone) has a
+  filter field at the top: typing narrows the list, Enter picks the first match. Keys: arrows, Home, End,
+  Page Up/Down, Enter, Escape, and typing a name's first letters jumps to it. The current value is scrolled into
+  view. A pick is staged like every other change.
 - **Delays** offer the choices the integration lists (`delay_choices`: 0, 15, 30, 45, 60, 180, 300 s); without
   them the delays show but cannot be changed.
 
@@ -99,8 +113,8 @@ name: House                                  # optional: the header name (defaul
 | a setting | `switch.turn_on`/`turn_off`, `number.set_value`, `select.select_option` on its entity | Set |
 | arming groups | websocket `eufy_home_security/arming_groups/create`, `update`, `delete`, `activate` | Set |
 | custom modes | websocket `eufy_home_security/homebase/custom_mode/create` `{name}`, `rename` `{mode, name}`, `delete` `{mode}`, each with `expect_revision` | Set |
-| schedule | websocket `eufy_home_security/homebase/schedule/set`: the whole schedule (`slots` with weekday 0 = Sunday, `start`, `end`, `mode`; `default` when changed) and `expect_revision` | Set |
-| cross-camera tracking | websocket `eufy_home_security/homebase/cross_camera/set`: `cameras` (`null` = every camera) and/or `groups`, with `expect_revision`; one call for both | Set |
+| schedule | websocket `eufy_home_security/homebase/schedule/set`: the whole schedule (`slots` with weekday 0 = Sunday, `start`, `end` (`24:00` = midnight), `mode`; `default` when changed) and `expect_revision` | Set |
+| cross-camera tracking | websocket `eufy_home_security/homebase/cross_camera/set`: `cameras` (device ids from `cross_camera.eligible`, at least `min_cameras`; `null` = every eligible device) and/or `groups`, with `expect_revision`; one call for both | Set |
 | sound / stop the alarm | websocket `eufy_home_security/homebase/alarm` `{action: sound, seconds: 30}` / `{action: stop}` | Set |
 | restart | websocket `eufy_home_security/homebase/restart` | Set |
 | Stop alarm (header) | websocket `eufy_home_security/homebase/alarm` `{action: stop}` | at once, only while the alarm sounds |
@@ -130,7 +144,7 @@ name: House                                  # optional: the header name (defaul
 
 | command | use |
 |---|---|
-| `eufy_home_security/homebase` `{device_id}` | the HomeBase: modes with names and select options, support per part (with what affects the alarm), action flags, delay choices, devices, mode tables, schedule, cross-camera tracking, alarm state, status, revision |
+| `eufy_home_security/homebase` `{device_id}` | the HomeBase: modes with names and select options, support per part (with what affects the alarm), action flags, delay choices, devices, mode tables, schedule, cross-camera tracking (picks, groups, `eligible` devices, `min_cameras`), alarm state and last alarm, status, revision |
 | `eufy_home_security/homebase/subscribe` `{device_id}` | the same payload on every change; the card unsubscribes when it leaves the page |
 | `eufy_home_security/settings_layout` `{device_id}` | Settings tabs: section ids, headings, order, entity ids, which of them affect the alarm |
 | `eufy_home_security/arming_groups/list` / `logs` | the groups, their members and candidates; a group's last activations |
@@ -144,6 +158,6 @@ devices of its own.
 - The card needs an admin user for its websocket writes (the integration's rule).
 - A new custom mode gets the HomeBase's own starting table (cameras record and notify, sensors notify); change it
   in Devices after Set.
-- A schedule slot ends at 23:59 at the latest; a slot over midnight is two slots.
+- A schedule slot ends at midnight (`24:00`) at the latest; a slot over midnight is two slots.
 - A tracking-group member Home Assistant does not know shows as `Unknown camera`; a group edit sent from the card
   leaves it out.

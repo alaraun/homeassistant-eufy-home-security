@@ -5,7 +5,7 @@
 // every write is staged under one ✕ / Set in the title line, and alarm-affecting writes (as the payload marks them)
 // are listed for a confirm first. While the alarm sounds, Disarm and Stop alarm act at once.
 
-const CARD_VERSION = '2026.10.15-3';
+const CARD_VERSION = '2026.10.15-4';
 
 const DOMAIN = 'eufy_home_security';
 const WS = {
@@ -24,9 +24,11 @@ const SIREN_S = 30;
 // Custom modes: name length and how many a station holds (the library's rules)
 const MODE_NAME_MAX = 30;
 const CUSTOM_MAX = 3;
-// Schedule editor: time choices every SLOT_STEP minutes; a slot ends at DAY_END at the latest (an end is exclusive)
+// Schedule editor: time choices every SLOT_STEP minutes; a slot ends at DAY_END (midnight) at the latest (an end is exclusive)
 const SLOT_STEP = 15;
-const DAY_END = '23:59';
+const DAY_END = '24:00';
+// Cross-camera tracking: the fewest cameras a choice may hold when the payload names none (the library's MIN_TRACKING_CAMERAS)
+const XC_MIN = 2;
 // Modes a schedule slot or its default can name besides the custom ones (the library's SCHEDULE_MODES)
 const SCHED_BUILTIN = ['away', 'home', 'disarmed'];
 // Ring capacity of the drawing: devices per page below / from this card width
@@ -46,6 +48,13 @@ const MODE_ICON = { away: 'shield-lock', home: 'shield-home', disarmed: 'shield-
 const KIND_ICON = { camera: 'cctv', sensor: 'motion-sensor', doorbell: 'doorbell-video', other: 'devices' };
 // A refused write's message shows over the picture this long
 const TOAST_MS = 6000;
+// Dropdown lists: rows shown (at least DD_MIN_ROWS, all when fewer, up to DD_ROWS), a filter field above more than
+// DD_FILTER options, the narrowest list (px) where the card has room, type-ahead reset (ms)
+const DD_ROWS = 8;
+const DD_MIN_ROWS = 5;
+const DD_FILTER = 12;
+const DD_MIN_W = 300;
+const DD_TYPE_MS = 700;
 const SCHED_COLORS = ['var(--teal-color, #009688)', 'var(--blue-color, #2196f3)', 'var(--purple-color, #926bc7)', 'var(--amber-color, #ffc107)',
   'var(--pink-color, #e91e63)', 'var(--brown-color, #795548)'];
 const SEC_ICON = { alarm: 'alarm-light', notifications: 'bell', detection: 'cctv', system: 'cog', storage: 'harddisk', network: 'wifi' };
@@ -94,7 +103,11 @@ const clockTime = (hass, d) => {
   if (loc.time_format === '24') o.hourCycle = 'h23';
   return d.toLocaleTimeString(lang, o);
 };
-const hhmm = (hass, s) => { const [h, m] = String(s || '0:0').split(':').map(Number); return clockTime(hass, new Date(2000, 0, 1, h || 0, m || 0)); };
+const hhmm = (hass, s) => {
+  const [h, m] = String(s || '0:0').split(':').map(Number), t = clockTime(hass, new Date(2000, 0, 1, h || 0, m || 0));
+  // a slot end at midnight: 24:00 where the clock shows 00:00
+  return h === 24 ? t.replace(/^0?0(?=\D)/, '24') : t;
+};
 const minutes = (s, end) => { const [h, m] = String(s || '0:0').split(':').map(Number); const v = (h || 0) * 60 + (m || 0); return end && v === 0 ? 1440 : v; };
 const hm = v => `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
 // Short weekday name (0 = Sunday) in the HA language
@@ -124,6 +137,8 @@ class EufyHomebaseCard extends HTMLElement {
     this._gview = null;     // group being edited ('new' for a new one)
     this._dsel = {};        // device id -> { mode, which } chosen delay cell
     this._dd = null;        // open dropdown key
+    this._ddq = '';         // its filter text
+    this._ddt = { s: '', t: 0 }; // type-ahead buffer
     this._menu = false;
     this._confirm = false;
     this._medit = false;    // custom modes editor over the picture
@@ -161,7 +176,7 @@ class EufyHomebaseCard extends HTMLElement {
       if (!this._menu && !this._dd) return;
       const p = e.composedPath();
       if (this._menu && !p.includes(this.shadowRoot.querySelector('.bwrap'))) { this._menu = false; this._render(); }
-      else if (this._dd && !p.some(n => n.classList && n.classList.contains('ddw'))) { this._dd = null; this._render(); }
+      else if (this._dd && !p.some(n => n.classList && n.classList.contains('ddw'))) { this._dd = null; this._ddq = ''; this._render(); }
     };
     document.addEventListener('pointerdown', this._outside, true);
     if (this._hass && this._devId() && this._hb && !this._unsub) this._subscribe();
@@ -344,7 +359,13 @@ class EufyHomebaseCard extends HTMLElement {
   _overlap(slots, c, skip = -1) { return slots.find((x, i) => i !== skip && x.weekday === c.weekday && minutes(x.start) < minutes(c.end, true) && minutes(c.start) < minutes(x.end, true)) || null; }
   _slotText(x) { return `${dayName(this._hass, x.weekday)} ${hhmm(this._hass, x.start)}–${hhmm(this._hass, x.end)} · ${this._mname(x.mode)}`; }
   _xcLive() { const c = this._hb.cross_camera || {}; return { cams: c.cameras === undefined ? null : c.cameras, groups: c.groups || [] }; }
-  _xcCams() { return this._devs().filter(d => d.device_id && (d.kind === 'camera' || d.kind === 'doorbell')); }
+  // Devices cross-camera tracking can follow: the payload's eligible list, in its order
+  _xcCams() { const devs = this._devs(); return ((this._hb.cross_camera || {}).eligible || []).map(id => devs.find(d => d.device_id === id)).filter(Boolean); }
+  _xcMin() { const m = (this._hb.cross_camera || {}).min_cameras; return typeof m === 'number' ? m : XC_MIN; }
+  // A camera choice (null = every eligible one) that holds fewer than the minimum
+  _xcShort(v) { const ids = this._xcCams().map(d => d.device_id); return (v === null ? ids.length : v.filter(id => ids.includes(id)).length) < this._xcMin(); }
+  // Why Set is refused ('' = it is not): a staged camera choice below the minimum
+  _setBlock() { const e = this._stg.get('xc|cams'); return e && this._xcShort(e.value) ? `Choose at least ${this._xcMin()} cameras to track` : ''; }
   _stateKey() {
     if (!this._hb || !this._hass) return '';
     const S = this._hass.states, ids = [this._hb.alarm_panel, this._hb.security_mode, this._hb.status && this._hb.status.update];
@@ -462,7 +483,7 @@ class EufyHomebaseCard extends HTMLElement {
 
   // ---------- Set ----------
   _set(confirmed) {
-    if (!this._stg.size) return;
+    if (!this._stg.size || this._setBlock()) return;
     if (!confirmed && this._alarmEntries().length) { this._confirm = true; this._fk = 'cf-set'; this._render(); return; }
     this._confirm = false; this._note = null; this._mnew = false;
     const entries = [...this._stg.entries()];
@@ -631,6 +652,8 @@ class EufyHomebaseCard extends HTMLElement {
       });
       r.addEventListener('change', () => this._rangeStage(r));
     });
+    const df = R.querySelector('input[data-ddf]');
+    if (df) df.addEventListener('input', () => { this._ddq = df.value; this._ddApply(); });
     const gn = R.querySelector('input[data-gname]');
     if (gn) gn.addEventListener('change', () => { this._stageGroup({ name: gn.value.trim() }); this._fk = 'g-name'; this._render(); });
     R.querySelectorAll('input[data-mren], input[data-mnew]').forEach((inp) => {
@@ -667,7 +690,8 @@ class EufyHomebaseCard extends HTMLElement {
       const live = this._xcLive().cams, cur = this._val('xc|cams', live), ids = this._xcCams().map(d => d.device_id);
       let next;
       if (ds.xall !== undefined) next = cur === null ? ids : null;
-      else { const l = cur === null ? ids : [...cur]; next = l.includes(ds.xcam) ? l.filter(x => x !== ds.xcam) : [...l, ds.xcam]; if (!next.length) return; }
+      else { const l = cur === null ? ids : cur.filter(x => ids.includes(x)); next = l.includes(ds.xcam) ? l.filter(x => x !== ds.xcam) : [...l, ds.xcam]; }
+      if (this._xcShort(next)) return;
       this._stageX('xc|cams', 'xcams', next, live, 'cross_camera'); this._fk = fk; return this._render();
     }
     if (ds.xg || ds.xgdel !== undefined || ds.xgadd !== undefined) {
@@ -695,9 +719,9 @@ class EufyHomebaseCard extends HTMLElement {
     if (ds.stab) { this._stab = ds.stab; this._dd = null; this._fk = fk; return this._render(); }
     if (ds.tg) { const s = this._st(ds.tg); const cur = this._val(`e|${ds.tg}`, s && s.state); this._stageEnt(ds.tg, cur === 'on' ? 'off' : 'on', this._secOfEnt(ds.tg)); this._fk = fk; return this._render(); }
     if (ds.opt !== undefined && ds.ent) { this._stageEnt(ds.ent, ds.opt, this._secOfEnt(ds.ent)); this._fk = fk; return this._render(); }
-    if (ds.dd) { this._dd = this._dd === ds.dd ? null : ds.dd; this._menu = false; this._fk = this._dd ? `ddo-${ds.dd}-cur` : fk; return this._render(); }
+    if (ds.dd) { this._dd = this._dd === ds.dd ? null : ds.dd; this._ddq = ''; this._menu = false; this._fk = this._dd ? `ddo-${ds.dd}-cur` : fk; return this._render(); }
     if (ds.ddo !== undefined) {
-      const key = this._dd; this._dd = null;
+      const key = this._dd; this._dd = null; this._ddq = '';
       if (key === 'devpick') { this._pick(ds.ddo); this._fk = 'dd-devpick'; }
       else if (key === 'slotpick') { this._loadSlot(ds.ddo === 'new' ? null : Number(ds.ddo)); this._fk = 'dd-slotpick'; }
       else if (key === 'sf|def') { this._stageSched({ ...this._schedVal(), default: ds.ddo }); this._fk = `dd-${key}`; }
@@ -751,15 +775,34 @@ class EufyHomebaseCard extends HTMLElement {
     if (e.key === 'Escape' && (this._menu || this._confirm || this._dd || this._medit)) {
       e.preventDefault();
       // the topmost layer closes: a list, the confirm, the modes editor, the menu
-      if (this._dd) { this._fk = `dd-${this._dd}`; this._dd = null; } else if (this._confirm) { this._confirm = false; this._fk = 'act-set'; } else if (this._medit) { this._medit = false; this._mnew = false; this._fk = 'menu'; } else { this._menu = false; this._fk = 'menu'; }
+      if (this._dd) { this._fk = `dd-${this._dd}`; this._dd = null; this._ddq = ''; } else if (this._confirm) { this._confirm = false; this._fk = 'act-set'; } else if (this._medit) { this._medit = false; this._mnew = false; this._fk = 'menu'; } else { this._menu = false; this._fk = 'menu'; }
       this._render(); return;
     }
+    // a list's filter field: Down goes to the first match, Enter picks it
+    if (t.matches('input[data-ddf]')) {
+      const first = t.closest('.ddl').querySelector('[role=option]:not([hidden])');
+      if (e.key === 'ArrowDown' || e.key === 'PageDown') { e.preventDefault(); if (first) first.focus(); }
+      if (e.key === 'Enter') { e.preventDefault(); if (first) first.click(); }
+      return;
+    }
     const list = t.closest('[role=menu],[role=listbox]');
-    if (list && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End')) {
+    if (list && ['ArrowDown', 'ArrowUp', 'Home', 'End', 'PageDown', 'PageUp'].includes(e.key)) {
       e.preventDefault();
-      const it = [...list.querySelectorAll('[role^=menuitem]:not([aria-disabled=true]),[role=option]')]; const i = it.indexOf(t);
-      const j = e.key === 'Home' ? 0 : e.key === 'End' ? it.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : it.length - 1)) % it.length;
+      const it = [...list.querySelectorAll('[role^=menuitem]:not([aria-disabled=true]),[role=option]:not([hidden])')]; const i = it.indexOf(t);
+      const f = list.parentElement.querySelector('.ddf');
+      if (f && e.key === 'ArrowUp' && i === 0) { f.focus(); return; }
+      const j = e.key === 'Home' ? 0 : e.key === 'End' ? it.length - 1 : e.key === 'PageDown' ? Math.min(it.length - 1, i + DD_ROWS - 1)
+        : e.key === 'PageUp' ? Math.max(0, i - DD_ROWS + 1) : (i + (e.key === 'ArrowDown' ? 1 : it.length - 1)) % it.length;
       if (it[j]) it[j].focus();
+      return;
+    }
+    // type-ahead: the next option whose text starts with the typed letters
+    if (list && list.getAttribute('role') === 'listbox' && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== ' ') {
+      const now = Date.now(), b = this._ddt; b.s = now - b.t > DD_TYPE_MS ? e.key.toLowerCase() : b.s + e.key.toLowerCase(); b.t = now;
+      const it = [...list.querySelectorAll('[role=option]:not([hidden])')], i = it.indexOf(t);
+      const order = [...it.slice(i + (b.s.length > 1 ? 0 : 1)), ...it.slice(0, i + (b.s.length > 1 ? 0 : 1))];
+      const hit = order.find(o => (o.getAttribute('aria-label') || '').toLowerCase().startsWith(b.s));
+      if (hit) { e.preventDefault(); hit.focus(); }
       return;
     }
     const tabs = t.closest('[role=tablist]');
@@ -828,7 +871,7 @@ class EufyHomebaseCard extends HTMLElement {
   _focus(k) {
     const R = this.shadowRoot;
     const find = key => { const el = R.querySelector(`[data-focus="${cssEsc(key)}"]`); return el && !el.disabled && !el.closest('[hidden-pane],[inert]') ? el : null; };
-    let el = k === 'mi-first' ? (R.querySelector('.menu .mi.cur') || R.querySelector('.menu .mi:not([aria-disabled=true])')) : k.endsWith('-cur') && k.startsWith('ddo-') ? (R.querySelector('.ddl [aria-selected=true]') || R.querySelector('.ddl [role=option]')) : find(k);
+    let el = k === 'mi-first' ? (R.querySelector('.menu .mi.cur') || R.querySelector('.menu .mi:not([aria-disabled=true])')) : k.endsWith('-cur') && k.startsWith('ddo-') ? (R.querySelector('.ddl .ddf') || R.querySelector('.ddl [aria-selected=true]') || R.querySelector('.ddl [role=option]')) : find(k);
     if (!el && (k === 'act-set' || k === 'act-cancel' || k === 'cf-set' || k === 'cf-back')) el = find('menu');
     if (!el && k.startsWith('pg-')) el = find('pg-next') || find('pg-prev');
     if (el) el.focus({ preventScroll: true });
@@ -840,13 +883,37 @@ class EufyHomebaseCard extends HTMLElement {
     const m = R.querySelector('.menu');
     if (m) { const r = m.getBoundingClientRect(); m.style.maxHeight = `${Math.max(80, Math.floor(cr.bottom - r.top - 8))}px`; }
     const l = R.querySelector('.ddl');
-    if (l) {
-      const br = l.parentElement.getBoundingClientRect(), h = l.scrollHeight;
-      const below = cr.bottom - br.bottom - 6, above = br.top - cr.top - 6;
-      if (h > below && above > below) { l.classList.add('up'); l.style.maxHeight = `${Math.max(64, Math.floor(Math.min(h, above)))}px`; }
-      else l.style.maxHeight = `${Math.max(64, Math.floor(Math.min(h, below)))}px`;
-      const sel = l.querySelector('[aria-selected=true]'); if (sel) l.scrollTop = Math.max(0, sel.offsetTop - l.clientHeight / 2);
-    }
+    if (l) { this._ddApply(); this._ddPlace(l, cr); }
+  }
+  // An open list: DD_MIN_ROWS..DD_ROWS rows (all when fewer) inside the card; downward when that fits below the field,
+  // else upward when it fits above, else downward with the card grown by the missing height while the list is open
+  _ddPlace(l, cr) {
+    const ii = l.querySelector('.ddi'), br = l.parentElement.getBoundingClientRect();
+    const w = Math.min(Math.max(br.width, DD_MIN_W), cr.width - 16), left = Math.min(Math.max(br.right - w, cr.left + 8), cr.right - 8 - w);
+    Object.assign(l.style, { left: `${Math.round(left - br.left)}px`, right: 'auto', width: `${Math.round(w)}px`, maxHeight: 'none', height: 'auto' });
+    const opts = [...ii.querySelectorAll('[role=option]')], n = opts.length, o1 = opts.find(o => !o.hidden), row = (o1 ? o1.offsetHeight : 34) + 1;
+    const chrome = l.offsetHeight - ii.offsetHeight;
+    const full = chrome + row * Math.min(n, DD_ROWS) - 1, need = chrome + row * Math.min(n, DD_MIN_ROWS) - 1;
+    const below = Math.floor(cr.bottom - br.bottom - 8), above = Math.floor(br.top - cr.top - 8);
+    let H = full, up = false, grow = 0;
+    if (below >= full) H = full;
+    else if (above >= full) up = true;
+    else if (below >= need && below >= above) H = below;
+    else if (above >= need) { up = true; H = above; }
+    else grow = full - below;
+    l.classList.toggle('up', up);
+    // a filtered list keeps its height while the matches change
+    l.style[l.classList.contains('filt') ? 'height' : 'maxHeight'] = `${H}px`;
+    if (grow) { const g = document.createElement('div'); g.className = 'ddgrow'; g.style.height = `${grow}px`; this.shadowRoot.querySelector('.cc').appendChild(g); }
+    const sel = ii.querySelector('[aria-selected=true]:not([hidden])'); if (sel) ii.scrollTop = Math.max(0, sel.offsetTop - (ii.clientHeight - sel.offsetHeight) / 2);
+  }
+  // The filter text hides the options that do not contain it
+  _ddApply() {
+    const R = this.shadowRoot, ii = R.querySelector('.ddl .ddi'); if (!ii) return;
+    const q = this._ddq.trim().toLowerCase();
+    let shown = 0;
+    ii.querySelectorAll('[role=option]').forEach((o) => { const h = !!q && !(o.getAttribute('aria-label') || '').toLowerCase().includes(q); o.hidden = h; if (!h) shown += 1; });
+    ii.querySelector('.ddn').hidden = shown > 0;
   }
   _shell(msg, retry) {
     const nm = this._config.name || 'HomeBase';
@@ -887,7 +954,8 @@ class EufyHomebaseCard extends HTMLElement {
     if (trig && hb.alarm_panel) acts.push(`<button class="btn alarm${dIcon ? ' icon' : ''}" type="button" data-act="disarm" data-focus="disarm" aria-label="Disarm the HomeBase now"${dp && dp.status === 'pending' ? ' disabled' : ''}>${icon('shield-off')}${dIcon ? '' : '<span>Disarm</span>'}</button>`);
     if (n) {
       acts.push(`<button class="btn icon" type="button" data-act="cancel" data-focus="act-cancel" aria-label="Cancel the changes">${icon('close')}</button>`);
-      acts.push(`<button class="btn primary${this._alarmEntries().length ? ' warn' : ''}" type="button" data-act="set" data-focus="act-set" aria-label="${esc(`Set: ${[...this._stg.entries()].map(x => this._effect(x)[1]).join('; ')}`)}">Set<span class="cnt${n > 1 ? '' : ' none'}" aria-hidden="true">${n > 1 ? n : 0}</span></button>`);
+      const blk = this._setBlock();
+      acts.push(`<button class="btn primary${this._alarmEntries().length ? ' warn' : ''}" type="button" data-act="set" data-focus="act-set" aria-label="${esc(blk ? `Set refused: ${blk}` : `Set: ${[...this._stg.entries()].map(x => this._effect(x)[1]).join('; ')}`)}"${blk ? ' disabled' : ''}>Set<span class="cnt${n > 1 ? '' : ' none'}" aria-hidden="true">${n > 1 ? n : 0}</span></button>`);
     }
     return `<div class="hdr${n ? ' staging' : ''}${trig ? ' trig' : ''}${stop ? (wide ? ' stopw' : ' stop') : ''}${dIcon ? ' dicon' : ''}"><div class="tline"><div class="title">
       <div class="bwrap"><button type="button" class="mbtn m-${btnFam}${ms ? ' staged' : ''}${mp && mp.status === 'failed' ? ' failed' : ''}${trig ? ' alarm' : ''}" data-menu data-focus="menu" aria-haspopup="menu" aria-expanded="${this._menu}" aria-label="${esc(label)}">${icon(trig ? 'bell-ring' : ms ? this._micon(ms.value) : this._micon(g === 'schedule' || g === 'geofencing' ? (eff || 'home') : g))}${badge}</button>${this._menu ? this._menuHtml() : ''}</div>
@@ -1177,7 +1245,7 @@ class EufyHomebaseCard extends HTMLElement {
     const room = Math.min(W, 560) - 20 - 18 - 18 - 18 - 8 * 4 - textW(d.name, this._font(600, 14)) - (!on ? 62 : bat < 30 ? 64 : 0);
     const model = d.model && textW(d.model, this._font(400, this._fs())) <= room ? d.model : '';
     const devs = this._devs();
-    const list = open ? `<div class="ddl" role="listbox" aria-label="Devices">${devs.map(x => `<button type="button" role="option" class="ddo${this._online(x) ? '' : ' off'}" data-ddo="${esc(x.device_id)}" data-focus="ddo-devpick-${esc(x.device_id)}" aria-selected="${x.device_id === d.device_id}" aria-label="${esc(`${x.name}${this._online(x) ? '' : ', offline'}`)}">${icon(this._kindIcon(x.kind))}<span>${esc(x.name)}</span>${x.device_id === d.device_id ? icon('check', 'chk') : this._online(x) ? '' : '<span class="later">Offline</span>'}</button>`).join('')}</div>` : '';
+    const list = open ? this._ddList('devpick', 'Devices', devs.length, `${devs.map(x => `<button type="button" role="option" class="ddo${this._online(x) ? '' : ' off'}" data-ddo="${esc(x.device_id)}" data-focus="ddo-devpick-${esc(x.device_id)}" aria-selected="${x.device_id === d.device_id}" aria-label="${esc(`${x.name}${this._online(x) ? '' : ', offline'}`)}">${icon(this._kindIcon(x.kind))}<span>${esc(x.name)}</span>${x.device_id === d.device_id ? icon('check', 'chk') : this._online(x) ? '' : '<span class="later">Offline</span>'}</button>`).join('')}`) : '';
     return `<div class="dhead ddw"><button type="button" class="dpick" ${vis ? 'data-dd="devpick" data-focus="dd-devpick"' : 'tabindex="-1"'} aria-haspopup="listbox" aria-expanded="${open}" aria-label="${esc(`Device: ${d.name}, ${d.model || ''}${on ? '' : ', offline'}. Choose another device (${devs.length})`)}">${icon(this._kindIcon(d.kind))}<span class="dn">${esc(d.name)}</span>${model ? `<span class="dm">${esc(model)}</span>` : ''}${!on ? '<span class="chip off">Offline</span>' : bat < 30 ? `<span class="chip lo">${icon('battery-20')}${bat} %</span>` : ''}${icon(open ? 'chevron-up' : 'chevron-down', 'ddc')}</button>${list}</div>`;
   }
   _matrix(d, modes, pm, cw, vis, showFlags, showDelays) {
@@ -1333,7 +1401,7 @@ class EufyHomebaseCard extends HTMLElement {
         if (!unk) val = '';
       } else {
         const k = `sel|${eid}`, open = vis && this._dd === k;
-        const list = open ? `<div class="ddl" role="listbox" aria-label="${esc(name)}">${opts.map((o, i) => `<button type="button" role="option" class="ddo" data-ddo="${esc(o)}" data-focus="ddo-${esc(k)}-${i}" aria-selected="${o === v}" aria-label="${esc(this._fmt(eid, o))}"><span>${esc(this._fmt(eid, o))}</span>${o === v ? icon('check', 'chk') : ''}</button>`).join('')}</div>` : '';
+        const list = open ? this._ddList(k, name, opts.length, opts.map((o, i) => `<button type="button" role="option" class="ddo" data-ddo="${esc(o)}" data-focus="ddo-${esc(k)}-${i}" aria-selected="${o === v}" aria-label="${esc(this._fmt(eid, o))}"><span>${esc(this._fmt(eid, o))}</span>${o === v ? icon('check', 'chk') : ''}</button>`).join('')) : '';
         ctl = `<div class="ddw"><button type="button" class="dd" data-dd="${esc(k)}" data-focus="${fx}dd-${esc(k)}"${ti} aria-haspopup="listbox" aria-expanded="${open}" aria-label="${esc(`${name}: ${unk ? 'not reported' : this._fmt(eid, v)}`)}"${na ? ' disabled' : ''}><span>${esc(unk ? 'Not reported' : this._fmt(eid, v))}</span>${icon(open ? 'chevron-up' : 'chevron-down')}</button>${list}</div>`;
         val = '';
       }
@@ -1346,13 +1414,18 @@ class EufyHomebaseCard extends HTMLElement {
     if (!c || !this._shows('cross_camera')) return '';
     const L = this._xcLive(), cams = this._xcCams(), ti = vis ? '' : ' tabindex="-1"', fx = vis ? '' : 'z-';
     const cv = this._val('xc|cams', L.cams), canC = this._can('cross_camera');
-    const chip = (attr, key, on, label, dis, aria) => `<button type="button" class="xchip" ${attr} data-focus="${fx}${esc(key)}"${ti} aria-pressed="${on}" aria-label="${esc(aria || label)}"${dis ? ' disabled' : ''}>${icon(on ? 'check' : 'cctv')}<span>${esc(label)}</span></button>`;
-    const camChips = [chip('data-xall', 'xc-all', cv === null, 'All cameras', !canC),
+    const min = this._xcMin(), ids = cams.map(d => d.device_id), base = cv === null ? ids : cv.filter(x => ids.includes(x));
+    const chip = (attr, key, on, label, dis, aria, ic) => `<button type="button" class="xchip" ${attr} data-focus="${fx}${esc(key)}"${ti} aria-pressed="${on}" aria-label="${esc(aria || label)}"${dis ? ' disabled' : ''}>${icon(on ? 'check' : ic || 'cctv')}<span>${esc(label)}</span></button>`;
+    const allNo = this._xcShort(cv === null ? ids : null);
+    // a chip that would leave fewer than the minimum cannot change the choice
+    const camChips = [chip('data-xall', 'xc-all', cv === null, 'All cameras', !canC || allNo, `All cameras${allNo ? `: tracking needs at least ${min}` : ''}`),
       ...cams.map((d) => {
-        const on = cv === null || cv.includes(d.device_id), last = cv !== null && on && cv.length === 1;
-        return chip(`data-xcam="${esc(d.device_id)}"`, `xc-${d.device_id}`, on, d.name, !canC || last, `${d.name}${last ? ': the last chosen camera stays' : ''}`);
+        const on = base.includes(d.device_id), lock = this._xcShort(on ? base.filter(x => x !== d.device_id) : [...base, d.device_id]);
+        return chip(`data-xcam="${esc(d.device_id)}"`, `xc-${d.device_id}`, on, d.name, !canC || lock, `${d.name}${lock ? `: tracking needs at least ${min} cameras` : ''}`, this._kindIcon(d.kind));
       })].join('');
-    const stat = (keys) => { const p = keys.map(k => this._pend.get(k)).find(Boolean); return p && p.status === 'failed' ? ['err', `Not applied${p.msg ? `: ${p.msg}` : ''}`] : p ? ['', 'sending'] : ['', '']; };
+    // status: a write's outcome, else a staged choice Set refuses, else why chips are locked
+    const blk = this._setBlock(), short = ids.length < min;
+    const stat = (keys) => { const p = keys.map(k => this._pend.get(k)).find(Boolean); return p && p.status === 'failed' ? ['err', `Not applied${p.msg ? `: ${p.msg}` : ''}`] : p ? ['', 'sending'] : blk ? ['warn', blk] : short ? ['', `Tracking needs ${min} cameras; ${ids.length} can be tracked`] : canC && base.length <= min ? ['', `At least ${min} cameras`] : ['', '']; };
     let groups = '';
     if (this._shows('cross_camera_groups')) {
       const gv = this._val('xc|groups', L.groups), canG = this._can('cross_camera_groups');
@@ -1405,14 +1478,19 @@ class EufyHomebaseCard extends HTMLElement {
           <button type="button" class="btn sm primary" data-sact="${f.idx === null ? 'add' : 'save'}" data-focus="sf-add" aria-label="${esc(f.idx === null ? 'Add the slot' : 'Save the slot')}${why ? `: ${esc(why)}` : ''}"${can && !why ? '' : ' disabled'}>${icon(f.idx === null ? 'plus' : 'check')}<span>${f.idx === null ? 'Add' : 'Save'}</span></button></div>
       </div></div>${this._note2([['schedule', 'schedule']])}`;
   }
+  // An open dropdown list: a filter field above a long list, the options (labels ellipsize; aria-label has the full text)
+  _ddList(k, aria, n, options) {
+    const f = n > DD_FILTER ? `<input class="ddf" type="text" data-ddf data-focus="ddf-${esc(k)}" value="${esc(this._ddq)}" placeholder="Filter" autocomplete="off" spellcheck="false" aria-label="${esc(`Filter ${aria}`)}">` : '';
+    return `<div class="ddl${f ? ' filt' : ''}">${f}<div class="ddi" role="listbox" aria-label="${esc(aria)}">${options}<div class="ddn" hidden>No matches</div></div></div>`;
+  }
   // An in-card dropdown: opts [[value, text]]
   _ddHtml(k, text, opts, cur, aria, dis) {
     const open = this._dd === k;
-    const list = open ? `<div class="ddl" role="listbox" aria-label="${esc(aria)}">${opts.map(([v, t], i) => `<button type="button" role="option" class="ddo" data-ddo="${esc(v)}" data-focus="ddo-${esc(k)}-${i}" aria-selected="${v === cur}" aria-label="${esc(t)}"><span>${esc(t)}</span>${v === cur ? icon('check', 'chk') : ''}</button>`).join('')}</div>` : '';
+    const list = open ? this._ddList(k, aria, opts.length, opts.map(([v, t], i) => `<button type="button" role="option" class="ddo" data-ddo="${esc(v)}" data-focus="ddo-${esc(k)}-${i}" aria-selected="${v === cur}" aria-label="${esc(t)}"><span>${esc(t)}</span>${v === cur ? icon('check', 'chk') : ''}</button>`).join('')) : '';
     return `<div class="ddw"><button type="button" class="dd" data-dd="${esc(k)}" data-focus="dd-${esc(k)}" aria-haspopup="listbox" aria-expanded="${open}" aria-label="${esc(`${aria}: ${text}`)}"${dis ? ' disabled' : ''}><span>${esc(text)}</span>${icon(open ? 'chevron-up' : 'chevron-down')}</button>${list}</div>`;
   }
 
-  // ----- Status: storage, firmware, the paired devices -----
+  // ----- Status: storage, firmware, the last alarm, the paired devices -----
   _statusHtml() {
     const hb = this._hb, s = hb.status || {}, sto = s.storage || {};
     const bar = (ic, label, x) => {
@@ -1424,13 +1502,17 @@ class EufyHomebaseCard extends HTMLElement {
     const up = this._st(s.update), upOn = up && up.state === 'on';
     const fw = s.firmware ? `<span>${icon('chip')}<span>${esc(`${hb.model || 'HomeBase'} · ${s.firmware}`)}</span></span>` : '';
     const upd = upOn ? `<button type="button" class="link" data-more="${esc(s.update)}" data-focus="upd" aria-label="${esc(`Update available: ${up.attributes.latest_version || ''}. Open`)}">${icon('update')}<span>${esc(`Update ${up.attributes.latest_version || 'available'}`)}</span></button>` : '';
+    // the last alarm transition (its start while the alarm sounds): the alarm push's own time, else when the integration saw it
+    const la = (hb.alarm && hb.alarm.last) || null, lt = la ? new Date(la.event_time || la.at) : null;
+    const lang = this._hass.locale && this._hass.locale.language;
+    const last = lt && !isNaN(lt) ? `<span class="slast">${icon('bell-ring')}<span>${esc(`${this._triggered() ? 'Alarm since' : 'Last alarm'} ${lt.toLocaleDateString(lang, { day: '2-digit', month: '2-digit' })} ${clockTime(this._hass, lt)}`)}</span></span>` : '';
     const devs = this._devs().map((d) => {
       const on = this._online(d), b = typeof d.battery === 'number' ? d.battery : null;
       const bi = b == null ? '' : `<span class="bat ${b >= 70 ? 'hi' : b >= 30 ? 'mid' : 'lo'}" role="img" aria-label="${esc(`Battery ${b} %`)}">${icon(b >= 95 ? 'battery' : `battery-${Math.max(10, Math.round(b / 10) * 10)}`)}<span>${b} %</span></span>`;
       return `<div class="drow2${on ? '' : ' off'}">${icon(this._kindIcon(d.kind), 'ki')}<div class="dn"><span class="rn">${esc(d.name)}</span><span class="dsub">${esc(d.model || '')}</span></div>${on ? bi : `<span class="offw">${icon('wifi-off')}<span>Offline</span></span>`}</div>`;
     }).join('');
     return `<div class="stl">${bar('harddisk', 'Disk', sto.disk)}${bar('memory', 'Internal storage', sto.emmc)}
-      <div class="sline">${fw}${upd}</div><div class="dlist">${devs}</div></div>`;
+      <div class="sline">${fw}${upd}${last}</div><div class="dlist">${devs}</div></div>`;
   }
 }
 
@@ -1536,6 +1618,7 @@ const CSS = `
   .btn:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
   .btn.primary { border-color: transparent; background: var(--cc-sel); color: var(--cc-accent-text); }
   .btn.primary.warn { box-shadow: inset 0 0 0 1.5px var(--cc-warn); }
+  .btn.primary:disabled { background: var(--cc-track); color: var(--cc-sub); box-shadow: none; cursor: default; }
   .btn.alarm { border-color: transparent; background: var(--m-triggered); color: var(--cc-on-accent); font-weight: 600; padding: 0 12px; }
   .btn.icon { width: 32px; padding: 0; justify-content: center; }
   .btn ha-icon { display: flex; line-height: 0; --mdc-icon-size: 18px; }
@@ -1719,10 +1802,19 @@ const CSS = `
   .chip.lo { background: color-mix(in srgb, var(--cc-bat-lo) 14%, transparent); color: color-mix(in srgb, var(--cc-bat-lo) 60%, var(--cc-text)); }
   .chip.lo ha-icon { color: inherit; }
   .ddw { position: relative; }
-  .ddl { position: absolute; left: 0; right: 0; top: calc(100% + 2px); z-index: 7; display: grid; gap: 1px; padding: 4px; border-radius: 10px; overflow-y: auto;
-    background: var(--cc-bg); box-shadow: 0 4px 16px var(--cc-shadow); border: 1px solid var(--cc-line); box-sizing: border-box; }
+  .ddl { position: absolute; left: 0; right: 0; top: calc(100% + 2px); z-index: 7; display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: 10px;
+    overflow: hidden; background: var(--cc-bg); box-shadow: 0 4px 16px var(--cc-shadow); border: 1px solid var(--cc-line); box-sizing: border-box; }
   .ddl.up { top: auto; bottom: calc(100% + 2px); }
-  .ddo { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 8px; border: 0; border-radius: 7px; cursor: pointer;
+  .ddi { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 1px; overflow-x: hidden; overflow-y: auto; }
+  .ddf { flex: none; height: 32px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--cc-field-line); background: var(--cc-field); color: var(--cc-text);
+    font: inherit; font-size: var(--fs-sm); box-sizing: border-box; min-width: 0; }
+  .ddf:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -1px; }
+  .ddn { padding: 8px; font-size: var(--fs-xs); color: var(--cc-sub); }
+  .ddo > span:not(.later) { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ddo:focus-visible > span:not(.later) { white-space: normal; overflow-wrap: anywhere; padding: 4px 0; }
+  .ddo[hidden] { display: none; }
+  .ddgrow { flex: none; }
+  .ddo { display: flex; align-items: center; gap: 8px; min-height: 34px; min-width: 0; padding: 0 8px; border: 0; border-radius: 7px; cursor: pointer;
     background: transparent; color: var(--cc-text); font-size: var(--fs-sm); text-align: left; --mdc-icon-size: 16px; }
   .ddo ha-icon { display: flex; line-height: 0; color: var(--cc-sub); }
   .ddo.off span:first-of-type { color: var(--cc-dim); }
@@ -1866,6 +1958,7 @@ const CSS = `
   .xtime { display: inline-flex; align-items: center; gap: 5px; --mdc-icon-size: 14px; white-space: nowrap; }
   .xtime ha-icon { display: flex; line-height: 0; }
   .xst.err { color: var(--cc-error-text); font-weight: 500; }
+  .xst.warn { color: var(--cc-warn-text); font-weight: 500; }
 
   /* Schedule section: the week, the default, one slot form */
   .schw { display: grid; gap: 8px; margin: 0 auto; max-width: 560px; padding: 0 2px; border-radius: 10px; }
