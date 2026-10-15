@@ -121,6 +121,36 @@ class StreamRegistry:
     view_registered: bool = False
     # The stream URL's secret: random per Home Assistant run, never stored or logged.
     secret: str = field(default_factory=lambda: secrets.token_urlsafe(32))
+    # Viewers that have received data, by camera serial: the camera entity's Streaming state.
+    watching: dict[str, int] = field(default_factory=dict)
+    # Called with a serial when its camera gains its first viewer or loses its last.
+    on_watch_change: Callable[[str], None] | None = None
+
+    def watched(self, device_sn: str) -> bool:
+        """Whether a viewer is receiving the camera's live stream."""
+        return self.watching.get(device_sn, 0) > 0
+
+    def watch(self, device_sn: str, delta: int) -> None:
+        """Count a viewer in (``+1``) or out (``-1``); report a change of ``watched``."""
+        before = self.watched(device_sn)
+        count = self.watching.get(device_sn, 0) + delta
+        if count > 0:
+            self.watching[device_sn] = count
+        else:
+            self.watching.pop(device_sn, None)
+        if self.watched(device_sn) != before and self.on_watch_change is not None:
+            self.on_watch_change(device_sn)
+
+
+def streaming_signal(device_sn: str) -> str:
+    """The dispatcher signal sent when a camera's live stream gains or loses its viewers."""
+    return f"{DOMAIN}_streaming_{device_sn}"
+
+
+def is_watched(hass: HomeAssistant, device_sn: str) -> bool:
+    """Whether a viewer is receiving ``device_sn``'s live stream on this instance."""
+    registry = hass.data.get(STREAMS)
+    return registry is not None and registry.watched(device_sn)
 
 
 def stream_registry(hass: HomeAssistant) -> StreamRegistry:
@@ -223,10 +253,14 @@ class EufyStreamView(HomeAssistantView):
                     )
                     return web.Response(status=HTTPStatus.SERVICE_UNAVAILABLE)
                 await response.prepare(request)
+                watched = False
                 try:
                     if first is not None:
                         await response.write(first)
                         chunks += 1
+                        # Streaming from the first chunk the viewer received until it leaves.
+                        self._registry.watch(device_sn, 1)
+                        watched = True
                         async for chunk in stream:
                             await response.write(chunk)
                             chunks += 1
@@ -234,6 +268,9 @@ class EufyStreamView(HomeAssistantView):
                     # The viewer went away mid-write. Not an error, and not this module's to
                     # report: leaving the loop has already unsubscribed.
                     pass
+                finally:
+                    if watched:
+                        self._registry.watch(device_sn, -1)
         except asyncio.CancelledError:
             # Home Assistant cancels the request when the viewer disconnects.
             _LOGGER.debug(
@@ -269,6 +306,12 @@ def async_register_view(hass: HomeAssistant) -> None:
     if registry.view_registered:
         return
     registry.view_registered = True
+
+    @callback
+    def _watch_changed(device_sn: str) -> None:
+        async_dispatcher_send(hass, streaming_signal(device_sn))
+
+    registry.on_watch_change = _watch_changed
     hass.http.register_view(EufyStreamView(registry))
     _LOGGER.debug("The live stream view is registered for this Home Assistant instance")
 
