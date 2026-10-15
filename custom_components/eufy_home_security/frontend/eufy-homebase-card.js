@@ -1,22 +1,34 @@
 // eufy HomeBase card: a tile-style header with the security mode, a drawing of the HomeBase with its paired
 // devices around it (what each does in a mode), and sections for the devices' actions per mode, arming groups,
 // the station's settings and its status. Data comes from the integration's websocket commands
-// (`eufy_home_security/homebase`, `.../subscribe`, `settings_layout`, `arming_groups/*`); every write is staged
-// under one ✕ / Set in the title line, and alarm-affecting writes are listed for a confirm first.
+// (`eufy_home_security/homebase`, `.../subscribe`, `settings_layout`, `arming_groups/*`, the station-config writes);
+// every write is staged under one ✕ / Set in the title line, and alarm-affecting writes (as the payload marks them)
+// are listed for a confirm first. While the alarm sounds, Disarm and Stop alarm act at once.
 
-const CARD_VERSION = '2026.10.15-2';
+const CARD_VERSION = '2026.10.15-3';
 
 const DOMAIN = 'eufy_home_security';
 const WS = {
   hb: `${DOMAIN}/homebase`, sub: `${DOMAIN}/homebase/subscribe`, table: `${DOMAIN}/homebase/mode_table/set`,
-  restart: `${DOMAIN}/homebase/restart`, layout: `${DOMAIN}/settings_layout`,
+  restart: `${DOMAIN}/homebase/restart`, alarm: `${DOMAIN}/homebase/alarm`, layout: `${DOMAIN}/settings_layout`,
+  mcreate: `${DOMAIN}/homebase/custom_mode/create`, mrename: `${DOMAIN}/homebase/custom_mode/rename`,
+  mdelete: `${DOMAIN}/homebase/custom_mode/delete`, sched: `${DOMAIN}/homebase/schedule/set`,
+  xcam: `${DOMAIN}/homebase/cross_camera/set`,
   glist: `${DOMAIN}/arming_groups/list`, gcreate: `${DOMAIN}/arming_groups/create`, gupdate: `${DOMAIN}/arming_groups/update`,
   gdelete: `${DOMAIN}/arming_groups/delete`, gact: `${DOMAIN}/arming_groups/activate`, glogs: `${DOMAIN}/arming_groups/logs`,
 };
 // A write is pending until the payload or the entity reports the sent value; Not applied after this
 const PENDING_MS = 30000;
-// Entry / leaving delay choices (s) when the payload names none: the eufy app's values
-const DELAY_STEPS = [0, 15, 30, 45, 60, 180, 300];
+// Sound alarm length (s): the library's SOUND_ALARM_SECONDS
+const SIREN_S = 30;
+// Custom modes: name length and how many a station holds (the library's rules)
+const MODE_NAME_MAX = 30;
+const CUSTOM_MAX = 3;
+// Schedule editor: time choices every SLOT_STEP minutes; a slot ends at DAY_END at the latest (an end is exclusive)
+const SLOT_STEP = 15;
+const DAY_END = '23:59';
+// Modes a schedule slot or its default can name besides the custom ones (the library's SCHEDULE_MODES)
+const SCHED_BUILTIN = ['away', 'home', 'disarmed'];
 // Ring capacity of the drawing: devices per page below / from this card width
 const NARROW_W = 460;
 const CAP_NARROW = 6;
@@ -25,8 +37,6 @@ const CAP_WIDE = 8;
 const HUB_R = 38;
 const ROW_H = 92;
 const LENS_H = 44;
-// Action flags that make something sound or flash: alarm-affecting unless a flag says otherwise
-const ALARM_FLAGS = new Set(['camera_siren', 'station_alarm', 'light_alarm']);
 // Looks only (names always come from the integration)
 const FLAG_ICON = { record: 'record-rec', camera_siren: 'bullhorn', station_alarm: 'alarm-light', notification: 'bell',
   light_alarm: 'lightbulb-on', report_monitor_center: 'face-agent', motion_sensor_respond: 'access-point', privacy: 'eye-off',
@@ -86,6 +96,12 @@ const clockTime = (hass, d) => {
 };
 const hhmm = (hass, s) => { const [h, m] = String(s || '0:0').split(':').map(Number); return clockTime(hass, new Date(2000, 0, 1, h || 0, m || 0)); };
 const minutes = (s, end) => { const [h, m] = String(s || '0:0').split(':').map(Number); const v = (h || 0) * 60 + (m || 0); return end && v === 0 ? 1440 : v; };
+const hm = v => `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
+// Short weekday name (0 = Sunday) in the HA language
+const dayName = (hass, wd) => new Date(2024, 0, 7 + wd).toLocaleDateString(hass && hass.locale && hass.locale.language, { weekday: 'short' });
+// A schedule's identity: its slots in any order and the default
+const schedKey = v => `${(v.slots || []).map(x => `${x.weekday}|${x.start}|${x.end}|${x.mode}`).sort().join(',')}#${v.default || ''}`;
+const dur = s => (s % 60 ? `${s} s` : `${s / 60} min`);
 
 let MEASURE = null;
 const textW = (t, font) => { if (!MEASURE) MEASURE = document.createElement('canvas').getContext('2d'); MEASURE.font = font; return MEASURE.measureText(String(t)).width; };
@@ -110,6 +126,10 @@ class EufyHomebaseCard extends HTMLElement {
     this._dd = null;        // open dropdown key
     this._menu = false;
     this._confirm = false;
+    this._medit = false;    // custom modes editor over the picture
+    this._mnew = false;     // its new-mode field shown
+    this._sform = null;     // schedule slot form { idx, days, start, end, mode }
+    this._inuse = {};       // mode id -> { reason, rev }: a delete the HomeBase refused (mode_in_use)
     this._note = null;      // header note: 'changed' after a config_changed refusal
     this._stg = new Map();  // staged writes, key -> entry
     this._pend = new Map(); // sent writes, key -> { entry, status: pending | failed, t, msg }
@@ -249,13 +269,8 @@ class EufyHomebaseCard extends HTMLElement {
   // The integration can write the feature today (support.<f>.available)
   _can(f) { return this._sup(f).available !== false; }
   _kindIcon(k) { return KIND_ICON[k] || 'cctv'; }
-  // The security-mode select names a mode by its name; a name two modes share carries the mode's label
-  _modeOption(id) {
-    const nm = this._mname(id), s = this._st(this._hb.security_mode), opts = (s && s.attributes.options) || [];
-    if (opts.includes(nm) && this._hb.modes.filter(m => m.name === nm).length < 2) return nm;
-    const alt = `${nm} (${human(id)})`;
-    return opts.includes(alt) ? alt : (opts.find(o => o.startsWith(`${nm} (`)) || nm);
-  }
+  // The security-mode select's option for a mode: the payload's modes[].option
+  _modeOption(id) { const m = this._mode(id); return (m && m.option) || this._mname(id); }
   _say(text) {
     if (!text) return;
     this._toast = { text, until: Date.now() + TOAST_MS };
@@ -276,9 +291,11 @@ class EufyHomebaseCard extends HTMLElement {
   _flagsOf(d) {
     const kind = this._hb.flags[d.kind] || [];
     const ids = d.flags ? d.flags.map(f => (typeof f === 'string' ? f : f.id)) : kind.map(f => f.id);
-    return ids.map(id => kind.find(f => f.id === id) || (d.flags.find(f => f.id === id)) || { id, label: human(id) });
+    return ids.map(id => kind.find(f => f.id === id) || (d.flags || []).find(f => f && f.id === id) || this._flagDef(id) || { id, label: human(id) });
   }
-  _alarmFlag(f) { return f.alarm_affecting !== undefined ? !!f.alarm_affecting : ALARM_FLAGS.has(f.id); }
+  _flagDef(id) { for (const l of Object.values(this._hb.flags || {})) { const f = (l || []).find(x => x.id === id); if (f) return f; } return null; }
+  // Alarm-affecting as the payload's flag lists say; a flag no list describes is confirmed
+  _alarmFlag(f) { const d = f.alarm_affecting !== undefined ? f : this._flagDef(f.id); return !d || d.alarm_affecting !== false; }
   _row(mode, dev) { const t = (this._hb.mode_tables || {})[mode]; return t && t.devices ? t.devices[dev] : undefined; }
   _liveFlag(mode, dev, flag) { const r = this._row(mode, dev); return r && r.flags ? r.flags[flag] : undefined; }
   _liveDelay(mode, dev, which) { const r = this._row(mode, dev); return r && typeof r[which] === 'number' ? r[which] : undefined; }
@@ -297,7 +314,8 @@ class EufyHomebaseCard extends HTMLElement {
     const l = this._liveDelay(mode, dev, which);
     return touched || !l ? (this._modeDelay(mode, which) || 0) : l;
   }
-  _steps() { const s = this._sup('mode_delays'); return Array.isArray(s.values) && s.values.length ? s.values : DELAY_STEPS; }
+  // Delay choices (s) from the payload; without them the delays show but cannot be changed
+  _steps() { const c = this._hb.delay_choices; return Array.isArray(c) ? c : []; }
   _status(key) { if (this._stg.has(key)) return 'staged'; const p = this._pend.get(key); return p ? p.status : ''; }
   _online(d) { return d.online !== false && this._hb.connected !== false; }
   _devs() { return this._hb.devices || []; }
@@ -309,6 +327,24 @@ class EufyHomebaseCard extends HTMLElement {
     return ids.includes(e) ? e : ids.includes(g) ? g : ids[0];
   }
   _schedOk() { return !!this._hb.schedule && this._shows('schedule'); }
+  // Modes a schedule slot or its default can name, in the payload's order
+  _schedModes() { return this._hb.modes.filter(m => m.custom || SCHED_BUILTIN.includes(m.id)); }
+  _liveSched() {
+    const S = this._hb.schedule;
+    return { slots: S && S.slots ? S.slots.map(x => ({ weekday: x.weekday, start: x.start, end: x.end, mode: x.mode })) : [], default: (S && S.default) || null };
+  }
+  _schedVal() { const s = this._stg.get('sched'); if (s) return s.value; const p = this._pend.get('sched'); if (p && p.status === 'pending') return p.entry.value; return this._liveSched(); }
+  // One palette colour per schedule mode (the armed modes share one HA state colour); Disarmed grey
+  _scol(id) {
+    if (id === 'disarmed' || id === 'off') return 'var(--m-disarmed)';
+    const ids = this._schedModes().map(m => m.id).filter(x => x !== 'disarmed'), i = ids.indexOf(id);
+    return SCHED_COLORS[(i < 0 ? ids.length : i) % SCHED_COLORS.length];
+  }
+  // The slot (index other than skip) that shares a minute with c on its weekday; an end is exclusive
+  _overlap(slots, c, skip = -1) { return slots.find((x, i) => i !== skip && x.weekday === c.weekday && minutes(x.start) < minutes(c.end, true) && minutes(c.start) < minutes(x.end, true)) || null; }
+  _slotText(x) { return `${dayName(this._hass, x.weekday)} ${hhmm(this._hass, x.start)}–${hhmm(this._hass, x.end)} · ${this._mname(x.mode)}`; }
+  _xcLive() { const c = this._hb.cross_camera || {}; return { cams: c.cameras === undefined ? null : c.cameras, groups: c.groups || [] }; }
+  _xcCams() { return this._devs().filter(d => d.device_id && (d.kind === 'camera' || d.kind === 'doorbell')); }
   _stateKey() {
     if (!this._hb || !this._hass) return '';
     const S = this._hass.states, ids = [this._hb.alarm_panel, this._hb.security_mode, this._hb.status && this._hb.status.update];
@@ -335,12 +371,65 @@ class EufyHomebaseCard extends HTMLElement {
   _stageDelayDev(mode, dev, which, on) {
     const l = this._liveDelay(mode, dev, which);
     this._stage(`dd|${mode}|${which}|${dev}`, { kind: 'ddev', mode, which, dev, value: on, alarm: this._affects('mode_delays') }, l === undefined ? undefined : l > 0);
-    if (on && !this._modeDelay(mode, which)) this._stageDelayValue(mode, which, this._steps().find(x => x > 0) || 30);
+    const first = this._steps().find(x => x > 0);
+    if (on && !this._modeDelay(mode, which) && first) this._stageDelayValue(mode, which, first);
   }
   _stageEnt(id, value, sec) {
     const s = this._st(id); if (!s) return;
-    const alarm = !!sec && (sec.alarm_affecting !== undefined ? !!sec.alarm_affecting : sec.id === 'alarm');
+    // alarm-affecting as the layout says: the section, or the entity among its alarm_affecting_entity_ids
+    const alarm = !!sec && (!!sec.alarm_affecting || (sec.alarm_affecting_entity_ids || []).includes(id));
     this._stage(`e|${id}`, { kind: 'ent', id, value: String(value), alarm, label: this._ename(id) }, s.state);
+  }
+  // A custom mode's name (id null: the new mode); an empty or unchanged name stages nothing
+  _stageModeName(id, name) {
+    const nm = String(name || '').trim(), alarm = this._affects('custom_modes');
+    if (id === null) { if (nm) this._stage('mc|new', { kind: 'mnew', name: nm, alarm }); else { this._stg.delete('mc|new'); this._mnew = false; } return; }
+    const m = this._mode(id); if (!m) return;
+    if (!nm) { this._stg.delete(`mc|ren|${id}`); return; }
+    this._stage(`mc|ren|${id}`, { kind: 'mren', mode: id, name: nm, value: nm, alarm }, m.name);
+  }
+  _stageModeDel(id) {
+    this._stg.delete(`mc|ren|${id}`);
+    this._toggleStage(`mc|del|${id}`, { kind: 'mdel', mode: id, alarm: this._affects('custom_modes') });
+  }
+  // The whole schedule (slots and default) as one staged write
+  _stageSched(v) {
+    if (schedKey(v) === schedKey(this._liveSched())) { this._stg.delete('sched'); this._pend.delete('sched'); this._confirm = false; return; }
+    this._stage('sched', { kind: 'sched', value: v, alarm: this._affects('schedule') });
+  }
+  _stageX(key, kind, value, live, feat) {
+    if (JSON.stringify(value) === JSON.stringify(live)) { this._stg.delete(key); this._pend.delete(key); this._confirm = false; return; }
+    this._stage(key, { kind, value, alarm: this._affects(feat) });
+  }
+  _sf() {
+    if (!this._sform) { const m = this._schedModes().find(x => x.id !== 'disarmed') || this._schedModes()[0] || { id: 'home' }; this._sform = { idx: null, days: [1], start: '08:00', end: '17:00', mode: m.id }; }
+    return this._sform;
+  }
+  _loadSlot(i) {
+    const v = this._schedVal(), x = i === null ? null : v.slots[i];
+    if (!x) { this._sform = null; this._sf(); return; }
+    this._sform = { idx: i, days: [x.weekday], start: x.start, end: x.end, mode: x.mode };
+  }
+  // Why the form's slot cannot be added or saved ('' = it can)
+  _sformCheck(v, f) {
+    if (!f.days.length) return 'Choose a day';
+    if (minutes(f.start) >= minutes(f.end, true)) return 'The slot must start before it ends';
+    for (const wd of f.days) {
+      const o = this._overlap(v.slots, { weekday: wd, start: f.start, end: f.end }, f.idx === null ? -1 : f.idx);
+      if (o) return `Overlaps ${this._slotText(o)}`;
+    }
+    return '';
+  }
+  _slotAct(a) {
+    const v = this._schedVal(), f = this._sf();
+    const mk = () => f.days.map(wd => ({ weekday: wd, start: f.start, end: f.end, mode: f.mode }));
+    if (a === 'new') { this._sform = null; this._sf(); return; }
+    if (a === 'del' && f.idx !== null) { this._stageSched({ ...v, slots: v.slots.filter((_, i) => i !== f.idx) }); this._sform = { ...f, idx: null }; return; }
+    if ((a === 'add' || a === 'save') && !this._sformCheck(v, f)) {
+      const rest = a === 'save' && f.idx !== null ? v.slots.filter((_, i) => i !== f.idx) : v.slots;
+      this._stageSched({ ...v, slots: [...rest, ...mk()] });
+      this._sform = { ...f, idx: null };
+    }
   }
   _dev2(id) { return this._devs().find(d => d.device_id === id) || { kind: 'camera', name: id }; }
   _alarmEntries() { return [...this._stg.entries()].filter(([, e]) => e.alarm); }
@@ -355,17 +444,27 @@ class EufyHomebaseCard extends HTMLElement {
     if (e.kind === 'ddev') { const d = this._dev2(e.dev); return ['timer-outline', `${mn} · ${d.name}: ${e.which === 'entry' ? 'entry delay' : 'leaving delay'} ${e.value ? 'on' : 'off'}`]; }
     if (e.kind === 'gact') { const g = this._group(e.gid); return ['account-group', `Activates ${g ? g.name : 'a group'}: ${(g ? g.members : []).map(m => `${m.name || 'a device'} → ${m.label || this._mname(m.mode)}`).join(', ')}`]; }
     if (e.kind === 'restart') return ['restart', 'Restarts the HomeBase: no alarm until it is back'];
+    if (e.kind === 'siren') return e.action === 'stop' ? ['bell-off', 'Stops the HomeBase alarm'] : ['bullhorn', `Sounds the HomeBase alarm for ${SIREN_S} s`];
+    if (e.kind === 'mnew') return ['plus', `Adds the mode ${e.name}`];
+    if (e.kind === 'mren') return ['pencil', `Renames ${this._mname(e.mode)} to ${e.name}`];
+    if (e.kind === 'mdel') return ['delete', `Deletes the mode ${this._mname(e.mode)}`];
+    if (e.kind === 'sched') {
+      const l = this._liveSched();
+      return ['calendar-clock', `Schedule: ${l.slots.length} → ${e.value.slots.length} slots${e.value.default && e.value.default !== l.default ? `; outside the slots ${this._mname(e.value.default)}` : ''}`];
+    }
+    if (e.kind === 'xcams') return ['cctv', `Cross-camera tracking: ${e.value === null ? 'all cameras' : e.value.map(id => this._dev2(id).name).join(', ')}`];
+    if (e.kind === 'xgroups') return ['cctv', `Tracking groups: ${e.value.filter(g => g.length).map(g => g.map(id => (id ? this._dev2(id).name : 'a camera')).join(' + ')).join('; ') || 'none'}`];
     if (e.kind === 'ent') { const s = this._st(e.id); return ['volume-high', `${e.label}: ${s ? this._fmt(e.id, s.state) : ''} → ${this._fmt(e.id, e.value)}`]; }
     return ['alert-circle', human(e.kind)];
   }
   _group(id) { return this._groups && this._groups.groups ? this._groups.groups.find(g => g.group_id === id) : null; }
-  _cancel() { this._stg.clear(); for (const [k, p] of [...this._pend]) if (p.status === 'failed') this._pend.delete(k); this._confirm = false; this._note = null; this._fk = 'menu'; this._render(); }
+  _cancel() { this._stg.clear(); for (const [k, p] of [...this._pend]) if (p.status === 'failed') this._pend.delete(k); this._confirm = false; this._note = null; this._mnew = false; this._sform = null; this._fk = 'menu'; this._render(); }
 
   // ---------- Set ----------
   _set(confirmed) {
     if (!this._stg.size) return;
     if (!confirmed && this._alarmEntries().length) { this._confirm = true; this._fk = 'cf-set'; this._render(); return; }
-    this._confirm = false; this._note = null;
+    this._confirm = false; this._note = null; this._mnew = false;
     const entries = [...this._stg.entries()];
     this._stg.clear();
     const t = Date.now();
@@ -375,8 +474,24 @@ class EufyHomebaseCard extends HTMLElement {
     this._send(entries);
   }
   async _send(entries) {
-    const H = this._hass, dev = this._hb.device_id;
+    const H = this._hass, dev = this._hb.device_id, sent = new Set();
     const fail = (keys, err) => { for (const k of keys) { const p = this._pend.get(k); if (p) { p.status = 'failed'; p.msg = err && err.message; } } this._say(err && err.message); this._render(); };
+    // config_changed: reload, stage again the edits not sent yet that still apply, stop
+    const changed = async () => { await this._reload(); this._restage(entries.filter(([k]) => !sent.has(k))); this._note = 'changed'; this._render(); };
+    // one station-config write answered by the fresh payload; false = stopped on config_changed
+    const cfg = async (list, req) => {
+      try {
+        const res = await H.callWS({ ...req, device_id: dev, expect_revision: this._hb.revision });
+        list.forEach(([k]) => sent.add(k));
+        if (res && res.modes) this._adopt(res); else await this._reload();
+      } catch (err) {
+        if (err && err.code === 'config_changed') { await changed(); return false; }
+        list.forEach(([k]) => sent.add(k));
+        if (err && err.code === 'mode_in_use') list.forEach(([, e]) => { if (e.mode) this._inuse[e.mode] = { reason: err.message, rev: this._hb.revision }; });
+        fail(list.map(([k]) => k), err);
+      }
+      return true;
+    };
     // 1. one mode-table write per edited mode, in the payload's mode order
     const tab = entries.filter(([, e]) => ['flag', 'dval', 'ddev'].includes(e.kind));
     const order = this._hb.modes.map(m => m.id);
@@ -394,30 +509,40 @@ class EufyHomebaseCard extends HTMLElement {
       }
       try {
         const res = await H.callWS(req);
+        mine.forEach(([k]) => sent.add(k));
         if (res && res.modes) this._adopt(res); else await this._reload();
       } catch (err) {
-        if (err && err.code === 'config_changed') {
-          await this._reload();
-          const rest = entries.filter(([, e]) => (['flag', 'dval', 'ddev'].includes(e.kind) ? modes.indexOf(e.mode) >= i : true));
-          this._restage(rest);
-          this._note = 'changed';
-          this._render();
-          return;
-        }
+        if (err && err.code === 'config_changed') { await changed(); return; }
+        mine.forEach(([k]) => sent.add(k));
         fail(mine.map(([k]) => k), err);
       }
     }
     // 2. settings, in the layout's order
     const ents = entries.filter(([, e]) => e.kind === 'ent');
     for (const [k, e] of ents) {
-      const dom = e.id.split('.')[0];
+      const dom = e.id.split('.')[0]; sent.add(k);
       try {
         if (dom === 'switch') await H.callService('switch', e.value === 'on' ? 'turn_on' : 'turn_off', { entity_id: e.id });
         else if (dom === 'number') await H.callService('number', 'set_value', { entity_id: e.id, value: Number(e.value) });
         else if (dom === 'select') await H.callService('select', 'select_option', { entity_id: e.id, option: e.value });
       } catch (err) { fail([k], err); }
     }
-    // 3. group edits, then 4. the mode, 5. activations, 6. restart
+    // 3. custom modes added and renamed, the schedule, cross-camera picks and groups (one write), modes deleted
+    const of = kind => entries.filter(([, e]) => e.kind === kind);
+    for (const x of of('mnew')) if (!await cfg([x], { type: WS.mcreate, name: x[1].name })) return;
+    for (const x of of('mren')) if (!await cfg([x], { type: WS.mrename, mode: x[1].mode, name: x[1].name })) return;
+    for (const x of of('sched')) {
+      const v = x[1].value;
+      if (!await cfg([x], { type: WS.sched, slots: v.slots, ...(v.default ? { default: v.default } : {}) })) return;
+    }
+    const xc = entries.filter(([, e]) => e.kind === 'xcams' || e.kind === 'xgroups');
+    if (xc.length) {
+      const req = { type: WS.xcam };
+      for (const [, e] of xc) { if (e.kind === 'xcams') req.cameras = e.value; else req.groups = e.value.map(g => g.filter(Boolean)).filter(g => g.length); }
+      if (!await cfg(xc, req)) return;
+    }
+    for (const x of of('mdel')) if (!await cfg([x], { type: WS.mdelete, mode: x[1].mode })) return;
+    // 4. group edits, then 5. the mode, 6. activations, 7. sound / stop the alarm, 8. restart
     const gw = entries.filter(([, e]) => ['gdel', 'gupd', 'gnew'].includes(e.kind));
     for (const [k, e] of gw) {
       const base = { device_id: dev };
@@ -440,6 +565,13 @@ class EufyHomebaseCard extends HTMLElement {
         if (this._gres[e.gid].some(x => x.outcome === 'failed')) fail([k], { message: 'Not applied' }); else this._pend.delete(k);
       } catch (err) { fail([k], err); }
     }
+    const sr = entries.find(([, e]) => e.kind === 'siren');
+    if (sr) {
+      try {
+        const r = await H.callWS({ type: WS.alarm, device_id: dev, action: sr[1].action, ...(sr[1].action === 'sound' ? { seconds: SIREN_S } : {}) });
+        this._pend.delete(sr[0]); if (r && r.modes) this._adopt(r);
+      } catch (err) { fail([sr[0]], err); }
+    }
     const rs = entries.find(([, e]) => e.kind === 'restart');
     if (rs) { try { await H.callWS({ type: WS.restart, device_id: dev }); this._pend.delete(rs[0]); } catch (err) { fail([rs[0]], err); } }
     if (entries.some(([, e]) => e.kind === 'gact')) this._loadGroups();
@@ -453,6 +585,8 @@ class EufyHomebaseCard extends HTMLElement {
       if (e.kind === 'flag') { const l = this._liveFlag(e.mode, e.dev, e.flag); if (l === undefined || l === e.value) continue; }
       if (e.kind === 'dval') { const l = this._liveModeDelay(e.mode, e.which); if (l === undefined || l === e.value) continue; }
       if (e.kind === 'ddev') { const l = this._liveDelay(e.mode, e.dev, e.which); if (l === undefined || (l > 0) === e.value) continue; }
+      if (e.kind === 'sched' && schedKey(e.value) === schedKey(this._liveSched())) continue;
+      if ((e.kind === 'mren' || e.kind === 'mdel') && !this._mode(e.mode)) continue;
       this._stg.set(k, e);
     }
   }
@@ -469,7 +603,13 @@ class EufyHomebaseCard extends HTMLElement {
       else if (e.kind === 'ddev') { const l = this._liveDelay(e.mode, e.dev, e.which); done = l !== undefined && (l > 0) === e.value; }
       else if (e.kind === 'ent') { const s = this._st(e.id); done = !!s && (s.state === e.value || (!isNaN(Number(e.value)) && Number(s.state) === Number(e.value))); }
       else if (e.kind === 'mode') { const s = this._st(this._hb.security_mode); done = this._hb.guard_mode === e.value || (!!s && s.state === this._modeOption(e.value)); }
-      else continue; // group writes and restart settle on their answer
+      else if (e.kind === 'mnew') done = this._hb.modes.some(m => m.custom && m.name === e.name);
+      else if (e.kind === 'mren') { const m = this._mode(e.mode); done = !!m && m.name === e.name; }
+      else if (e.kind === 'mdel') done = !this._mode(e.mode);
+      else if (e.kind === 'sched') { const l = this._liveSched(); done = schedKey({ ...e.value, default: e.value.default || l.default }) === schedKey(l); }
+      else if (e.kind === 'xcams') done = JSON.stringify(this._xcLive().cams) === JSON.stringify(e.value);
+      else if (e.kind === 'xgroups') done = JSON.stringify(this._xcLive().groups) === JSON.stringify(e.value.map(g => g.filter(Boolean)).filter(g => g.length));
+      else continue; // group writes, the alarm and restart settle on their answer
       if (done) this._pend.delete(k);
       else if (now - p.t >= PENDING_MS) { p.status = 'failed'; p.msg = null; }
       else next = Math.min(next, p.t + PENDING_MS);
@@ -493,6 +633,10 @@ class EufyHomebaseCard extends HTMLElement {
     });
     const gn = R.querySelector('input[data-gname]');
     if (gn) gn.addEventListener('change', () => { this._stageGroup({ name: gn.value.trim() }); this._fk = 'g-name'; this._render(); });
+    R.querySelectorAll('input[data-mren], input[data-mnew]').forEach((inp) => {
+      inp.addEventListener('change', () => { this._stageModeName(inp.dataset.mren === undefined ? null : inp.dataset.mren, inp.value); this._fk = inp.dataset.focus; this._commit = inp.dataset.focus; this._render(); });
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } });
+    });
   }
   _rangeValue(r) { return r.dataset.steps ? JSON.parse(r.dataset.steps)[Number(r.value)] : Number(r.value); }
   _rangeStage(r) {
@@ -503,7 +647,8 @@ class EufyHomebaseCard extends HTMLElement {
   }
   _secOfEnt(id) { return (this._lay || []).find(s => s.entity_ids.includes(id)); }
   _click(e) {
-    const t = e.target.closest('[data-act],[data-sec],[data-node],[data-hub],[data-lens],[data-lstep],[data-pg],[data-cell],[data-dcell],[data-dsw],[data-stab],[data-tg],[data-opt],[data-ddo],[data-dd],[data-menu],[data-mi],[data-gact],[data-gedit],[data-gback],[data-gmode],[data-gdel],[data-gnew],[data-more]');
+    const t = e.target.closest('[data-act],[data-sec],[data-node],[data-hub],[data-lens],[data-lstep],[data-pg],[data-cell],[data-dcell],[data-dsw],[data-stab],[data-tg],[data-opt],[data-ddo],[data-dd],[data-menu],[data-mi],[data-gact],[data-gedit],[data-gback],[data-gmode],[data-gdel],[data-gnew],[data-more],'
+      + '[data-madd],[data-mdel],[data-slot],[data-sday],[data-sact],[data-xall],[data-xcam],[data-xg],[data-xgdel],[data-xgadd]');
     if (!t || t.disabled || t.getAttribute('aria-disabled') === 'true') return;
     const ds = t.dataset, fk = ds.focus;
     if (ds.act === 'cancel') return this._cancel();
@@ -511,6 +656,28 @@ class EufyHomebaseCard extends HTMLElement {
     if (ds.act === 'cf-set') return this._set(true);
     if (ds.act === 'cf-back') { this._confirm = false; this._fk = 'act-set'; return this._render(); }
     if (ds.act === 'disarm') { this._disarm(); return; }
+    if (ds.act === 'stopalarm') { this._stopAlarm(); return; }
+    if (ds.act === 'm-close') { this._medit = false; this._mnew = false; this._fk = 'menu'; return this._render(); }
+    if (ds.madd !== undefined) { this._mnew = true; this._fk = 'm-new'; return this._render(); }
+    if (ds.mdel) { this._stageModeDel(ds.mdel); this._fk = fk; return this._render(); }
+    if (ds.slot !== undefined) { this._loadSlot(Number(ds.slot)); this._fk = 'dd-slotpick'; return this._render(); }
+    if (ds.sday !== undefined) { const f = this._sf(), wd = Number(ds.sday); f.days = f.days.includes(wd) ? f.days.filter(x => x !== wd) : [...f.days, wd]; this._fk = fk; return this._render(); }
+    if (ds.sact) { this._slotAct(ds.sact); this._fk = ds.sact === 'del' ? 'sf-add' : fk; return this._render(); }
+    if (ds.xall !== undefined || ds.xcam) {
+      const live = this._xcLive().cams, cur = this._val('xc|cams', live), ids = this._xcCams().map(d => d.device_id);
+      let next;
+      if (ds.xall !== undefined) next = cur === null ? ids : null;
+      else { const l = cur === null ? ids : [...cur]; next = l.includes(ds.xcam) ? l.filter(x => x !== ds.xcam) : [...l, ds.xcam]; if (!next.length) return; }
+      this._stageX('xc|cams', 'xcams', next, live, 'cross_camera'); this._fk = fk; return this._render();
+    }
+    if (ds.xg || ds.xgdel !== undefined || ds.xgadd !== undefined) {
+      const live = this._xcLive().groups, g = JSON.parse(JSON.stringify(this._val('xc|groups', live)));
+      if (ds.xg) { const [gi, id] = [Number(ds.xg.split('|')[0]), ds.xg.slice(ds.xg.indexOf('|') + 1)]; g[gi] = g[gi].includes(id) ? g[gi].filter(x => x !== id) : [...g[gi], id]; }
+      else if (ds.xgdel !== undefined) g.splice(Number(ds.xgdel), 1);
+      else g.push([]);
+      this._stageX('xc|groups', 'xgroups', g, live, 'cross_camera_groups');
+      this._fk = ds.xgdel !== undefined ? 'xg-add' : fk; return this._render();
+    }
     if (ds.act === 'retry') { this._err = null; this._render(); this._load(); return; }
     if (ds.more) { this.dispatchEvent(new CustomEvent('hass-more-info', { detail: { entityId: ds.more }, bubbles: true, composed: true })); return; }
     if (ds.menu !== undefined) { this._menu = !this._menu; this._dd = null; this._fk = this._menu ? 'mi-first' : 'menu'; return this._render(); }
@@ -532,6 +699,9 @@ class EufyHomebaseCard extends HTMLElement {
     if (ds.ddo !== undefined) {
       const key = this._dd; this._dd = null;
       if (key === 'devpick') { this._pick(ds.ddo); this._fk = 'dd-devpick'; }
+      else if (key === 'slotpick') { this._loadSlot(ds.ddo === 'new' ? null : Number(ds.ddo)); this._fk = 'dd-slotpick'; }
+      else if (key === 'sf|def') { this._stageSched({ ...this._schedVal(), default: ds.ddo }); this._fk = `dd-${key}`; }
+      else if (key && key.startsWith('sf|')) { this._sf()[key.slice(3)] = ds.ddo; this._fk = `dd-${key}`; }
       else if (key && key.startsWith('sel|')) { const id = key.slice(4); this._stageEnt(id, ds.ddo, this._secOfEnt(id)); this._fk = `dd-${key}`; }
       return this._render();
     }
@@ -549,6 +719,8 @@ class EufyHomebaseCard extends HTMLElement {
     this._menu = false;
     if (mi === 'refresh') { this._fk = 'menu'; this._render(); this._reload(); if (this._hb) this._loadLayout(); if (this._shows('arming_groups')) this._loadGroups(); return; }
     if (mi === 'restart') { this._toggleStage('restart', { kind: 'restart', alarm: this._affects('restart') }); this._fk = 'menu'; return this._render(); }
+    if (mi === 'siren') { this._toggleStage('siren', { kind: 'siren', action: this._triggered() ? 'stop' : 'sound', alarm: this._affects('sound_alarm') }); this._fk = 'menu'; return this._render(); }
+    if (mi === 'modes') { this._medit = true; this._confirm = false; const c = this._hb.modes.find(m => m.custom); this._fk = c ? `m-name-${c.id}` : 'm-add'; return this._render(); }
     if (mi.startsWith('m:')) {
       const id = mi.slice(2);
       if (id === this._hb.guard_mode) this._stg.delete('mode'); else this._stage('mode', { kind: 'mode', value: id, alarm: this._affects('guard_mode') });
@@ -562,13 +734,25 @@ class EufyHomebaseCard extends HTMLElement {
     try { await this._hass.callService('alarm_control_panel', 'alarm_disarm', { entity_id: id }); this._pend.delete('disarm'); } catch (err) { this._pend.set('disarm', { entry: { kind: 'disarm' }, status: 'failed', t: Date.now(), msg: err && err.message }); }
     this._render();
   }
+  // Stop alarm while it sounds: at once, like Disarm
+  async _stopAlarm() {
+    const P = st => ({ entry: { kind: 'stopalarm' }, status: st, t: Date.now() });
+    this._pend.set('stopalarm', P('pending'));
+    this._render();
+    try {
+      const r = await this._hass.callWS({ type: WS.alarm, device_id: this._hb.device_id, action: 'stop' });
+      this._pend.delete('stopalarm'); if (r && r.modes) this._adopt(r);
+    } catch (err) { this._pend.set('stopalarm', { ...P('failed'), msg: err && err.message }); this._say(err && err.message); }
+    this._render();
+  }
   _key(e) {
     const t = e.target;
     if ((e.key === 'Enter' || e.key === ' ') && t.matches('g[role=button]')) { e.preventDefault(); t.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true })); return; }
-    if (e.key === 'Escape' && (this._menu || this._confirm || this._dd)) {
+    if (e.key === 'Escape' && (this._menu || this._confirm || this._dd || this._medit)) {
       e.preventDefault();
-      const back = this._dd ? `dd-${this._dd}` : this._confirm ? 'act-set' : 'menu';
-      this._menu = false; this._confirm = false; this._dd = null; this._fk = back; this._render(); return;
+      // the topmost layer closes: a list, the confirm, the modes editor, the menu
+      if (this._dd) { this._fk = `dd-${this._dd}`; this._dd = null; } else if (this._confirm) { this._confirm = false; this._fk = 'act-set'; } else if (this._medit) { this._medit = false; this._mnew = false; this._fk = 'menu'; } else { this._menu = false; this._fk = 'menu'; }
+      this._render(); return;
     }
     const list = t.closest('[role=menu],[role=listbox]');
     if (list && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End')) {
@@ -618,6 +802,7 @@ class EufyHomebaseCard extends HTMLElement {
     this._fk = null;
     if (!this._hass || !this._config) return;
     const W = (this._w || 400) - (this._inset || 0);
+    const ae = R.activeElement, typing = ae && ae.tagName === 'INPUT' && ae.type === 'text' && ae.dataset.focus ? { k: ae.dataset.focus, v: ae.value, a: ae.selectionStart, b: ae.selectionEnd } : null;
     let body;
     if (!this._devId()) body = this._shell('Choose a HomeBase in the card editor');
     else if (this._err) body = this._shell(this._err.code === 'not_found' ? 'This device is not a eufy station' : 'The HomeBase did not load', true);
@@ -630,7 +815,12 @@ class EufyHomebaseCard extends HTMLElement {
     this._sk = this._stateKey();
     this._bind();
     this._place();
+    // the header buttons (Set / ✕, Stop alarm / Disarm) take the name's room on a narrow card: hide it, never cut it
+    const hd = R.querySelector('.hdr'), nm = R.querySelector('.hdr .name');
+    if (hd && nm && !R.querySelector('.hdr .acts.off') && nm.scrollWidth > nm.clientWidth + 1) hd.classList.add('tight');
     if (prevFocus) this._focus(prevFocus);
+    if (typing && typing.k !== this._commit) { const el = R.querySelector(`input[data-focus="${cssEsc(typing.k)}"]`); if (el && R.activeElement === el && !el.disabled) { el.value = typing.v; try { el.setSelectionRange(typing.a, typing.b); } catch (x) { /* not a text field */ } } }
+    this._commit = null;
     // the drawing is sized to the content box: ha-card's border takes from the host width
     const cw = R.querySelector('.cc').clientWidth;
     if (cw && this._w && Math.abs(cw - W) >= 1 && !this._insetting) { this._inset = this._w - cw; this._insetting = true; this._render(); this._insetting = false; }
@@ -679,23 +869,27 @@ class EufyHomebaseCard extends HTMLElement {
     if (ms) { word = `${this._mname(g)} → ${this._mname(ms.value)}`; wcls = ' staged'; }
     else if (mp && mp.status === 'pending') { word = `${this._mname(mp.entry.value)} · sending`; wcls = ' pending'; }
     else if (mp && mp.status === 'failed') { word = `${this._mname(mp.entry.value)} · Not applied`; wcls = ' err'; }
-    const dp = this._pend.get('disarm');
+    const dp = this._pend.get('disarm'), sp = this._pend.get('stopalarm');
     if (dp && dp.status === 'failed') { word = 'Disarm · Not applied'; wcls = ' err'; }
+    else if (sp && sp.status === 'failed') { word = 'Stop alarm · Not applied'; wcls = ' err'; }
     const parts = [`<span class="g"><span class="st${wcls}">${esc(word)}</span></span>`];
     if (this._note === 'changed') parts.push('<span class="g"><i class="sep">·</i><span class="warn">Changed elsewhere, review</span></span>');
-    const nf = [...this._pend.entries()].filter(([k, p]) => p.status === 'failed' && k !== 'mode' && k !== 'disarm').length;
+    const nf = [...this._pend.entries()].filter(([k, p]) => p.status === 'failed' && !['mode', 'disarm', 'stopalarm'].includes(k)).length;
     if (nf && this._note !== 'changed') parts.push(`<span class="g"><i class="sep">·</i><span class="err">${nf} not applied</span></span>`);
     parts.push(`<span class="g"><i class="sep">·</i><span class="${off ? 'offn' : ''}">${off ? `${off} offline` : `${online} online`}</span></span>`);
     const n = this._stg.size;
     const label = `${this._config.name || hb.name}: ${word}${off ? `, ${off} devices offline` : ''}. Security mode menu`;
     const badge = (g === 'schedule' || g === 'geofencing') && !ms && !trig ? `<i class="badge" aria-hidden="true">${icon(MODE_ICON[g])}</i>` : '';
-    const acts = [];
-    if (trig && hb.alarm_panel) acts.push(`<button class="btn alarm" type="button" data-act="disarm" data-focus="disarm" aria-label="Disarm the HomeBase now"${dp && dp.status === 'pending' ? ' disabled' : ''}>${icon('shield-off')}<span>Disarm</span></button>`);
+    const acts = [], stop = trig && this._shows('sound_alarm') && this._can('sound_alarm'), wide = (this._w || 400) >= 560;
+    if (stop) acts.push(`<button class="btn alarm${wide ? '' : ' icon'}" type="button" data-act="stopalarm" data-focus="stopalarm" aria-label="Stop the alarm sound now"${sp && sp.status === 'pending' ? ' disabled' : ''}>${icon('bell-off')}${wide ? '<span>Stop alarm</span>' : ''}</button>`);
+    // under 360 px with Set / ✕ beside it, Disarm is its icon so the four buttons leave the mode button free
+    const dIcon = n && stop && (this._w || 400) < 360;
+    if (trig && hb.alarm_panel) acts.push(`<button class="btn alarm${dIcon ? ' icon' : ''}" type="button" data-act="disarm" data-focus="disarm" aria-label="Disarm the HomeBase now"${dp && dp.status === 'pending' ? ' disabled' : ''}>${icon('shield-off')}${dIcon ? '' : '<span>Disarm</span>'}</button>`);
     if (n) {
       acts.push(`<button class="btn icon" type="button" data-act="cancel" data-focus="act-cancel" aria-label="Cancel the changes">${icon('close')}</button>`);
       acts.push(`<button class="btn primary${this._alarmEntries().length ? ' warn' : ''}" type="button" data-act="set" data-focus="act-set" aria-label="${esc(`Set: ${[...this._stg.entries()].map(x => this._effect(x)[1]).join('; ')}`)}">Set<span class="cnt${n > 1 ? '' : ' none'}" aria-hidden="true">${n > 1 ? n : 0}</span></button>`);
     }
-    return `<div class="hdr${n ? ' staging' : ''}${trig ? ' trig' : ''}"><div class="tline"><div class="title">
+    return `<div class="hdr${n ? ' staging' : ''}${trig ? ' trig' : ''}${stop ? (wide ? ' stopw' : ' stop') : ''}${dIcon ? ' dicon' : ''}"><div class="tline"><div class="title">
       <div class="bwrap"><button type="button" class="mbtn m-${btnFam}${ms ? ' staged' : ''}${mp && mp.status === 'failed' ? ' failed' : ''}${trig ? ' alarm' : ''}" data-menu data-focus="menu" aria-haspopup="menu" aria-expanded="${this._menu}" aria-label="${esc(label)}">${icon(trig ? 'bell-ring' : ms ? this._micon(ms.value) : this._micon(g === 'schedule' || g === 'geofencing' ? (eff || 'home') : g))}${badge}</button>${this._menu ? this._menuHtml() : ''}</div>
       <div class="htext"><div class="name" aria-label="${esc(this._config.name || hb.name)}">${esc(this._config.name || hb.name)}</div>
       <div class="hsub">${parts.join('')}</div></div></div>
@@ -719,12 +913,25 @@ class EufyHomebaseCard extends HTMLElement {
       const st = this._stg.has(`ga|${g.group_id}`);
       items.push(`<button type="button" role="menuitemcheckbox" aria-checked="${st}" class="mi${i ? '' : ' sep'}${st ? ' sel' : ''}" data-gact="${esc(g.group_id)}" data-focus="mi-g-${esc(g.group_id)}"${this._can('arming_groups') ? '' : ' aria-disabled="true"'} aria-label="${esc(`Activate ${g.name}${g.active ? ', active' : ''}`)}">${icon(g.preset === 'leaving' ? 'home-export-outline' : g.preset === 'staying' ? 'home-import-outline' : 'account-group')}<span>${esc(g.name)}</span>${st ? icon('check', 'chk') : g.active ? `<span class="later">active</span>` : ''}</button>`);
     });
+    const acts = [];
+    if (this._shows('custom_modes')) {
+      const ch = [...this._stg.keys()].some(k => k.startsWith('mc|'));
+      acts.push(`<button type="button" role="menuitem" class="mi" data-mi="modes" data-focus="mi-modes" aria-label="${ch ? 'Edit the custom modes, changed' : 'Edit the custom modes'}">${icon('pencil')}<span>Edit modes</span>${ch ? '<span class="later">changed</span>' : ''}</button>`);
+    }
+    const sa = this._sup('sound_alarm');
+    if (sa.grade !== 'unknown') {
+      const on = this._can('sound_alarm'), st = this._stg.get('siren'), stopIt = st ? st.action === 'stop' : this._triggered();
+      const lab = stopIt ? 'Stop alarm' : `Sound alarm ${SIREN_S} s`;
+      acts.push(`<button type="button" role="menuitemcheckbox" aria-checked="${!!st}" class="mi${st ? ' sel' : ''}" data-mi="siren" data-focus="mi-siren"${on ? '' : ' aria-disabled="true"'} aria-label="${esc(`${stopIt ? 'Stop the HomeBase alarm' : `Sound the HomeBase alarm for ${SIREN_S} s`}${on ? '' : ': not available yet'}`)}">${icon(stopIt ? 'bell-off' : 'bullhorn')}<span>${esc(lab)}</span>${on ? (st ? icon('check', 'chk') : '') : '<span class="later">Not available yet</span>'}</button>`);
+    }
     const rs = this._sup('restart');
     if (rs.grade !== 'unknown' || !(this._hb.support || {}).restart) {
       const on = rs.available === true, st = this._stg.has('restart');
-      items.push(`<button type="button" role="menuitemcheckbox" aria-checked="${st}" class="mi sep${st ? ' sel' : ''}" data-mi="restart" data-focus="mi-restart"${on ? '' : ' aria-disabled="true"'} aria-label="${on ? 'Restart the HomeBase' : 'Restart: not available yet'}">${icon('restart')}<span>Restart</span>${on ? (st ? icon('check', 'chk') : '') : '<span class="later">Not available yet</span>'}</button>`);
+      acts.push(`<button type="button" role="menuitemcheckbox" aria-checked="${st}" class="mi${st ? ' sel' : ''}" data-mi="restart" data-focus="mi-restart"${on ? '' : ' aria-disabled="true"'} aria-label="${on ? 'Restart the HomeBase' : 'Restart: not available yet'}">${icon('restart')}<span>Restart</span>${on ? (st ? icon('check', 'chk') : '') : '<span class="later">Not available yet</span>'}</button>`);
     }
-    items.push(`<button type="button" role="menuitem" class="mi${rs.grade !== 'unknown' || !(this._hb.support || {}).restart ? '' : ' sep'}" data-mi="refresh" data-focus="mi-refresh" aria-label="Refresh from the HomeBase">${icon('refresh')}<span>Refresh</span></button>`);
+    acts.push(`<button type="button" role="menuitem" class="mi" data-mi="refresh" data-focus="mi-refresh" aria-label="Refresh from the HomeBase">${icon('refresh')}<span>Refresh</span></button>`);
+    acts[0] = acts[0].replace('class="mi', 'class="mi sep');
+    items.push(...acts);
     return `<div class="menu" role="menu" aria-label="Security mode, groups and HomeBase actions">${items.join('')}</div>`;
   }
 
@@ -835,8 +1042,9 @@ class EufyHomebaseCard extends HTMLElement {
     const lens = showLens ? this._lens(W, pm) : '';
     const schedHtml = sched ? this._schedule(G.D) : '';
     const confirm = this._confirm ? this._confirmBox() : '';
+    const medit = this._medit && this._shows('custom_modes') ? this._meditBox() : '';
     const toast = this._toast && this._toast.until > Date.now() ? `<div class="toast" role="status" style="bottom:${(showLens ? LENS_H : 0) + 6}px">${icon('alert-circle-outline')}<span>${esc(this._toast.text)}</span></div>` : '';
-    return `<div class="pic" style="height:${H}px">${svg}${schedHtml}${sched ? '' : pager}${lens}${toast}${confirm}</div>`;
+    return `<div class="pic" style="height:${H}px">${svg}${schedHtml}${sched ? '' : pager}${lens}${toast}${medit}${confirm}</div>`;
   }
   _lens(W, pm) {
     const ids = this._lensIds(), hb = this._hb;
@@ -851,14 +1059,14 @@ class EufyHomebaseCard extends HTMLElement {
       <span class="lo on" role="status" aria-label="${esc(`Showing ${lab(pm)}`)}">${inForce(pm) ? `<i class="ldot m-${this._fam(pm)}"></i>` : ''}${pm === 'schedule' ? icon('calendar-clock') : ''}<span>${esc(lab(pm))}</span></span>
       <button type="button" class="lo ls" data-lstep="1" data-focus="lens-next" aria-label="Next mode">${icon('chevron-right')}</button></div>`;
   }
-  // Read-only week strip of the schedule (weekday 0 = Sunday), Monday first; the default mode fills the gaps
+  // Read-only week strip of the schedule (the staged one while staged; weekday 0 = Sunday), Monday first;
+  // the default mode fills the gaps
   _schedule(D) {
-    const S = this._hb.schedule, H = this._hass;
+    const S = this._schedVal(), H = this._hass;
     const days = [1, 2, 3, 4, 5, 6, 0];
-    const dn = wd => new Date(2024, 0, 7 + wd).toLocaleDateString(H.locale && H.locale.language, { weekday: 'short' });
+    const dn = wd => dayName(H, wd);
     const used = [...new Set([S.default, ...(S.slots || []).map(s => s.mode)].filter(Boolean))];
-    // the armed modes share one HA state colour, so the strip gives each mode its own palette colour (legend below)
-    const col = id => (id === 'disarmed' || id === 'off' ? 'var(--m-disarmed)' : SCHED_COLORS[used.filter(m => m !== 'disarmed' && m !== 'off').indexOf(id) % SCHED_COLORS.length]);
+    const col = id => (id ? this._scol(id) : 'var(--cc-track)');
     const seg = s => { const a = minutes(s.start), b = minutes(s.end, true); return `<i class="sg" style="background:${col(s.mode)};left:${(a / 14.4).toFixed(2)}%;width:${(Math.max(0, b - a) / 14.4).toFixed(2)}%"></i>`; };
     const rows = days.map(wd => `<div class="sr"><span class="sd">${esc(dn(wd))}</span><div class="sb" style="background:${col(S.default)}">${(S.slots || []).filter(s => s.weekday === wd).map(seg).join('')}</div></div>`).join('');
     const ticks = [0, 6, 12, 18].map(h => `<span style="left:${(h / 24) * 100}%">${esc(clockTime(H, new Date(2000, 0, 1, h, 0)))}</span>`).join('');
@@ -866,6 +1074,32 @@ class EufyHomebaseCard extends HTMLElement {
     return `<div class="sched" style="height:${D}px" role="img" aria-label="${esc(`Schedule: ${desc || 'no slots'}; otherwise ${this._mname(S.default)}`)}">
       <div class="sr st"><span class="sd"></span><div class="stk">${ticks}</div></div>${rows}
       <div class="slg">${used.map(m => `<span><i style="background:${col(m)}"></i>${esc(this._mname(m))}</span>`).join('')}</div></div>`;
+  }
+  // Custom modes over the picture: rename or delete each, add one; the library's rules answer as error text
+  _meditBox() {
+    const hb = this._hb, cus = hb.modes.filter(m => m.custom), can = this._can('custom_modes');
+    const sub = (p, txt) => (p && p.status === 'failed' ? `Not applied${p.msg ? `: ${p.msg}` : ''}` : p ? 'sending' : txt);
+    const rows = cus.map((m) => {
+      const kr = `mc|ren|${m.id}`, kd = `mc|del|${m.id}`, sr = this._stg.get(kr), sd = this._stg.has(kd), p = this._pend.get(kd) || this._pend.get(kr);
+      const iu = this._inuse[m.id] && this._inuse[m.id].rev === hb.revision ? this._inuse[m.id].reason : '';
+      const why = m.id === hb.guard_mode || m.id === hb.effective_mode ? 'The current mode cannot be deleted' : iu;
+      const line = sub(p, sd ? 'Deleted on Set' : why);
+      return `<div class="mrow${sr || sd ? ' staged' : ''}${p && p.status === 'failed' ? ' failed' : ''}">
+        <input class="mname" type="text" maxlength="${MODE_NAME_MAX}" data-mren="${esc(m.id)}" data-focus="m-name-${esc(m.id)}" value="${esc(sr ? sr.name : m.name)}" aria-label="${esc(`Name of ${m.name}`)}"${can && !sd ? '' : ' disabled'}>
+        <button type="button" class="btn icon sm${sd ? ' primary' : ''}" data-mdel="${esc(m.id)}" data-focus="m-del-${esc(m.id)}" aria-pressed="${sd}" aria-label="${esc(`Delete ${m.name}${why ? `: ${why}` : ''}`)}"${can && (!why || sd) ? '' : ' disabled'}>${icon('delete')}</button>
+        <span class="msub${p && p.status === 'failed' ? ' err' : ''}">${esc(line)}</span></div>`;
+    }).join('');
+    const sn = this._stg.get('mc|new'), pn = this._pend.get('mc|new');
+    let add;
+    if (sn || pn || this._mnew) {
+      const nm = sn ? sn.name : pn && !hb.modes.some(m => m.custom && m.name === pn.entry.name) ? pn.entry.name : '';
+      add = `<div class="mrow${sn ? ' staged' : ''}${pn && pn.status === 'failed' ? ' failed' : ''}"><input class="mname" type="text" maxlength="${MODE_NAME_MAX}" data-mnew data-focus="m-new" value="${esc(nm)}" placeholder="New mode" aria-label="Name of the new mode"${can && !(pn && pn.status === 'pending') ? '' : ' disabled'}>
+        <span class="btn-ph"></span><span class="msub${pn && pn.status === 'failed' ? ' err' : ''}">${esc(sub(pn, sn ? 'Added on Set' : ''))}</span></div>`;
+    } else if (cus.length >= CUSTOM_MAX) add = `<div class="mrow"><span class="msub full">${esc(`${CUSTOM_MAX} custom modes: delete one to add another`)}</span></div>`;
+    else add = `<div class="mrow"><button type="button" class="madd" data-madd data-focus="m-add" aria-label="Add a custom mode"${can ? '' : ' disabled'}>${icon('plus')}<span>Mode</span></button></div>`;
+    return `<div class="confirm medit" role="dialog" aria-label="Custom modes">
+      <div class="cfh">${icon('shield-edit-outline')}<span>Custom modes</span><button type="button" class="btn icon sm mclose" data-act="m-close" data-focus="m-close" aria-label="Close the custom modes">${icon('close')}</button></div>
+      <div class="cfl mlist">${rows}${add}</div>${this._note2([['custom_modes', 'custom modes']])}</div>`;
   }
   _confirmBox() {
     const lines = this._alarmEntries().map(x => this._effect(x));
@@ -879,6 +1113,7 @@ class EufyHomebaseCard extends HTMLElement {
   _secs() {
     const out = [];
     if (this._devs().length && (this._shows('mode_tables') || this._shows('mode_delays')) && this._tmodes().length) out.push(['devices', 'cctv', 'Devices']);
+    if (this._shows('schedule')) out.push(['schedule', 'calendar-clock', 'Schedule']);
     if (this._shows('arming_groups') && !(this._groups && this._groups.err === 'not_supported')) out.push(['groups', 'account-group', 'Groups']);
     if (this._setSecs().length) out.push(['settings', 'cog', 'Settings']);
     out.push(['status', 'information-outline', 'Status']);
@@ -888,7 +1123,8 @@ class EufyHomebaseCard extends HTMLElement {
   _secOf(k) {
     if (/^(t|dv|dd)\|/.test(k)) return 'devices';
     if (/^(ga|gu|gd)\||^gn$/.test(k)) return 'groups';
-    if (k.startsWith('e|')) return 'settings';
+    if (k.startsWith('e|') || k.startsWith('xc|')) return 'settings';
+    if (k === 'sched') return 'schedule';
     return null;
   }
   // Toggle look by width: full (icon, name, chevron), name (icon, name), icon (icons; the open name in the section)
@@ -910,7 +1146,7 @@ class EufyHomebaseCard extends HTMLElement {
     if (!this._open) return '';
     const name = (this._secs().find(s => s[0] === this._open) || [])[2];
     const head = this._secFit(W, this._secs()) === 'icon' ? `<div class="sname" aria-hidden="true">${esc(name)}</div>` : '';
-    const body = this._open === 'devices' ? this._devices(W) : this._open === 'groups' ? this._groupsHtml() : this._open === 'settings' ? this._settings(W) : this._statusHtml();
+    const body = this._open === 'devices' ? this._devices(W) : this._open === 'schedule' ? this._schedSec() : this._open === 'groups' ? this._groupsHtml() : this._open === 'settings' ? this._settings(W) : this._statusHtml();
     return `<div class="sect" role="tabpanel" aria-label="${esc(name)}">${head}${body}</div>`;
   }
   _note2(feats) {
@@ -979,12 +1215,12 @@ class EufyHomebaseCard extends HTMLElement {
     const on = this._devDelayOn(mode, id, which), mv = this._modeDelay(mode, which);
     const lab = `${which === 'entry' ? 'Entry delay' : 'Leaving delay'} · ${this._mname(mode)}`;
     if (on === undefined) return `<div class="row slot na"><div class="rname">${icon('timer-outline')}<span class="rn">${esc(lab)}</span></div><span class="rval">Not reported</span><div class="rctl"></div></div>`;
-    const steps = this._steps(), cur = mv || 0;
+    const cur = mv || 0, steps = this._steps().length ? this._steps() : [cur];
     const idx = steps.reduce((b, s, i) => (Math.abs(s - cur) < Math.abs(steps[b] - cur) ? i : b), 0);
     const kv = `dv|${mode}|${which}`, kd = `dd|${mode}|${which}|${id}`;
     const st = this._status(kd) || this._status(kv);
     const sub = st === 'failed' ? '<span class="rsub err">Not applied</span>' : st === 'pending' ? '<span class="rsub">sending</span>' : '<span class="rsub">every device</span>';
-    const fx = vis ? '' : 'z-', ti = vis ? '' : ' tabindex="-1"', dis = this._can('mode_delays') ? '' : ' disabled';
+    const fx = vis ? '' : 'z-', ti = vis ? '' : ' tabindex="-1"', dis = this._can('mode_delays') && this._steps().length ? '' : ' disabled';
     return `<div class="row slot${st ? ` ${st}` : ''}"><div class="rname">${icon(which === 'entry' ? 'timer-outline' : 'timer-sand')}<span class="rn">${esc(lab)}</span>${sub}</div>
       <span class="rval">${on ? `${esc(cur)} s` : 'Off'}</span>
       <div class="rctl"><button type="button" class="tg${on ? ' on' : ''}" role="switch" aria-checked="${!!on}" data-dsw="${esc(`${mode}|${which}|${id}`)}" data-focus="${fx}dsw-${esc(id)}"${ti}${dis} aria-label="${esc(`${d.name} uses the ${which === 'entry' ? 'entry' : 'leaving'} delay in ${this._mname(mode)}`)}"><i></i></button>
@@ -1042,7 +1278,9 @@ class EufyHomebaseCard extends HTMLElement {
     const f12 = this._font(600, this._fs());
     const full = secs.reduce((s, x) => s + textW(x.heading, f12) + 16 + 4 + 16, 0) <= W - 20;
     const tabs = `<div class="stabs${full ? '' : ' fit1'}" role="tablist" aria-label="Settings">${secs.map((s) => {
-      const stg = s.entity_ids.some(e => this._stg.has(`e|${e}`)), err = s.entity_ids.some(e => this._status(`e|${e}`) === 'failed');
+      const xk = s.id === 'detection' && this._hb.cross_camera ? ['xc|cams', 'xc|groups'] : [];
+      const stg = s.entity_ids.some(e => this._stg.has(`e|${e}`)) || xk.some(k => this._stg.has(k));
+      const err = s.entity_ids.some(e => this._status(`e|${e}`) === 'failed') || xk.some(k => this._status(k) === 'failed');
       return `<button type="button" role="tab" class="stab${s.id === cur ? ' on' : ''}${err ? ' err' : stg ? ' stg' : ''}" data-stab="${esc(s.id)}" data-focus="stab-${esc(s.id)}" aria-selected="${s.id === cur}" tabindex="${s.id === cur ? 0 : -1}" aria-label="${esc(`${s.heading}${err ? ', not applied' : stg ? ', changed' : ''}`)}">${icon(SEC_ICON[s.id] || 'cog')}<span>${esc(s.heading)}</span><i class="tdot" aria-hidden="true"></i></button>`;
     }).join('')}<div class="stitle" aria-hidden="true">${esc((secs.find(s => s.id === cur) || {}).heading || '')}</div></div>`;
     const panes = secs.map((s) => {
@@ -1059,7 +1297,7 @@ class EufyHomebaseCard extends HTMLElement {
         html += head; if (r.tg) one += r.html; else two += r.html;
       }
       html += two + one;
-      const extra = s.id === 'detection' ? this._crossCam() : '';
+      const extra = s.id === 'detection' ? this._crossCam(vis) : '';
       return `<div class="pane"${vis ? '' : ' hidden-pane inert aria-hidden="true"'}><div class="ctl-rows">${html}</div>${extra}</div>`;
     }).join('');
     return `${tabs}<div class="stack">${panes}</div>`;
@@ -1102,14 +1340,76 @@ class EufyHomebaseCard extends HTMLElement {
     }
     return { tg: false, html: `<div class="row${status ? ` ${status}` : ''}${na ? ' na' : ''}"><div class="rname"><span class="rn">${esc(name)}</span>${sub}</div>${val}<div class="rctl">${ctl}</div></div>` };
   }
-  // Read-only cross-camera picks and groups (Settings › Detection)
-  _crossCam() {
+  // Cross-camera tracking (Settings › Detection): the cameras (All = every camera) and the tracking groups, staged
+  _crossCam(vis) {
     const c = this._hb.cross_camera;
     if (!c || !this._shows('cross_camera')) return '';
-    const nm = id => (this._devs().find(d => d.device_id === id) || {}).name || 'Unknown camera';
-    const cams = c.cameras ? `<div class="chips" role="list" aria-label="Cross-camera tracking cameras"><span class="clab">Cameras</span>${c.cameras.map(id => `<span class="chip" role="listitem">${icon('cctv')}${esc(nm(id))}</span>`).join('')}</div>` : '';
-    const groups = c.groups && c.groups.length && this._shows('cross_camera_groups') ? `<div class="chips" role="list" aria-label="Cross-camera tracking groups"><span class="clab">Groups</span>${c.groups.map((g, i) => `<span class="chip grp" role="listitem" aria-label="${esc(`Group ${i + 1}: ${g.map(nm).join(', ')}`)}">${esc(g.map(nm).join(' + '))}</span>`).join('')}</div>` : '';
-    return cams || groups ? `<div class="xcam">${cams}${groups}${this._note2([['cross_camera', 'cameras'], ['cross_camera_groups', 'groups']])}</div>` : '';
+    const L = this._xcLive(), cams = this._xcCams(), ti = vis ? '' : ' tabindex="-1"', fx = vis ? '' : 'z-';
+    const cv = this._val('xc|cams', L.cams), canC = this._can('cross_camera');
+    const chip = (attr, key, on, label, dis, aria) => `<button type="button" class="xchip" ${attr} data-focus="${fx}${esc(key)}"${ti} aria-pressed="${on}" aria-label="${esc(aria || label)}"${dis ? ' disabled' : ''}>${icon(on ? 'check' : 'cctv')}<span>${esc(label)}</span></button>`;
+    const camChips = [chip('data-xall', 'xc-all', cv === null, 'All cameras', !canC),
+      ...cams.map((d) => {
+        const on = cv === null || cv.includes(d.device_id), last = cv !== null && on && cv.length === 1;
+        return chip(`data-xcam="${esc(d.device_id)}"`, `xc-${d.device_id}`, on, d.name, !canC || last, `${d.name}${last ? ': the last chosen camera stays' : ''}`);
+      })].join('');
+    const stat = (keys) => { const p = keys.map(k => this._pend.get(k)).find(Boolean); return p && p.status === 'failed' ? ['err', `Not applied${p.msg ? `: ${p.msg}` : ''}`] : p ? ['', 'sending'] : ['', '']; };
+    let groups = '';
+    if (this._shows('cross_camera_groups')) {
+      const gv = this._val('xc|groups', L.groups), canG = this._can('cross_camera_groups');
+      const rows = gv.map((g, gi) => `<div class="xgrow"><span class="xgn" aria-hidden="true">${gi + 1}</span><div class="xgm" role="group" aria-label="${esc(`Tracking group ${gi + 1}`)}">${cams.map(d => `<button type="button" class="xchip sm" data-xg="${esc(`${gi}|${d.device_id}`)}" data-focus="${fx}xg-${gi}-${esc(d.device_id)}"${ti} aria-pressed="${g.includes(d.device_id)}" aria-label="${esc(`Group ${gi + 1}: ${d.name}`)}"${canG ? '' : ' disabled'}><span>${esc(d.name)}</span></button>`).join('')}${g.filter(x => !x).map(() => '<span class="xchip sm unk">Unknown camera</span>').join('')}</div>
+        <button type="button" class="btn icon sm" data-xgdel="${gi}" data-focus="${fx}xg-del-${gi}"${ti} aria-label="${esc(`Remove tracking group ${gi + 1}`)}"${canG ? '' : ' disabled'}>${icon('delete')}</button></div>`).join('');
+      groups = `<div class="xh">Tracking groups</div><div class="xgl">${rows || '<div class="xnone">No groups</div>'}</div>
+        <button type="button" class="gnew sm" data-xgadd data-focus="${fx}xg-add"${ti} aria-label="Add a tracking group"${canG ? '' : ' disabled'}>${icon('plus')}<span>Group</span></button>`;
+    }
+    const [sc, st] = stat(['xc|cams', 'xc|groups']);
+    const time = typeof c.continuous_time_s === 'number' ? `<span class="xtime">${icon('timer-outline')}<span>${esc(`Tracking time ${dur(c.continuous_time_s)}`)}</span></span>` : '';
+    return `<div class="xcam"><div class="xh">Cameras to track</div><div class="chips" role="group" aria-label="Cross-camera tracking cameras">${camChips}</div>
+      ${groups}<div class="xfoot">${time}<span class="xst${sc ? ` ${sc}` : ''}" role="status">${esc(st)}</span></div>
+      ${this._note2([['cross_camera', 'cameras'], ['cross_camera_groups', 'groups']])}</div>`;
+  }
+
+  // ----- Schedule: the week, the default mode, one slot form under the week (staged as one whole schedule) -----
+  _schedSec() {
+    const H = this._hass, v = this._schedVal(), can = this._can('schedule');
+    if (this._sform && this._sform.idx !== null && !v.slots[this._sform.idx]) this._sform = { ...this._sform, idx: null };
+    const f = this._sf();
+    const days = [1, 2, 3, 4, 5, 6, 0], sm = this._schedModes();
+    const p = this._pend.get('sched'), staged = this._stg.has('sched');
+    const ticks = [0, 6, 12, 18].map(h => `<span style="left:${(h / 24) * 100}%">${esc(clockTime(H, new Date(2000, 0, 1, h, 0)))}</span>`).join('');
+    const rows = days.map(wd => `<div class="sr"><span class="sd">${esc(dayName(H, wd))}</span><div class="sb" style="background:${v.default ? this._scol(v.default) : 'var(--cc-track)'}">${v.slots.map((x, i) => {
+      if (x.weekday !== wd) return '';
+      const a = minutes(x.start), b = minutes(x.end, true);
+      return `<button type="button" tabindex="-1" class="sg${i === f.idx ? ' sel' : ''}" data-slot="${i}" style="background:${this._scol(x.mode)};left:${(a / 14.4).toFixed(2)}%;width:${(Math.max(0, b - a) / 14.4).toFixed(2)}%" aria-label="${esc(`${this._slotText(x)}: edit`)}"></button>`;
+    }).join('')}</div></div>`).join('');
+    const legend = sm.map(m => `<span><i style="background:${this._scol(m.id)}"></i>${esc(m.name)}</span>`).join('');
+    const order = v.slots.map((x, i) => [x, i]).sort((a, b) => ((a[0].weekday + 6) % 7) - ((b[0].weekday + 6) % 7) || minutes(a[0].start) - minutes(b[0].start));
+    const pick = this._ddHtml('slotpick', f.idx === null ? 'New slot' : this._slotText(v.slots[f.idx]), [['new', 'New slot'], ...order.map(([x, i]) => [String(i), this._slotText(x)])], f.idx === null ? 'new' : String(f.idx), 'Slot', !can);
+    const tset = new Set(); for (let t = 0; t < 1440; t += SLOT_STEP) tset.add(hm(t));
+    const tOpts = (extra, end) => { const l = new Set([...tset, extra]); if (end) { l.delete('00:00'); l.add(DAY_END); } return [...l].sort((a, b) => minutes(a) - minutes(b)).map(t => [t, hhmm(H, t)]); };
+    const dayBtns = days.map(wd => `<button type="button" class="opt txt" data-sday="${wd}" data-focus="sday-${wd}" aria-pressed="${f.days.includes(wd)}" aria-label="${esc(new Date(2024, 0, 7 + wd).toLocaleDateString(H.locale && H.locale.language, { weekday: 'long' }))}"${can ? '' : ' disabled'}><span>${esc(dayName(H, wd))}</span></button>`).join('');
+    const why = this._sformCheck(v, f);
+    const msg = p && p.status === 'failed' ? ['err', `Not applied${p.msg ? `: ${p.msg}` : ''}`] : p ? ['', 'sending'] : why && can ? ['warn', why] : staged ? ['', 'The schedule changes on Set'] : ['', ''];
+    const def = this._ddHtml('sf|def', v.default ? this._mname(v.default) : 'Not set', sm.map(m => [m.id, m.name]), v.default, 'Outside the slots', !can);
+    return `<div class="schw${staged ? ' staged' : ''}${p && p.status === 'failed' ? ' failed' : ''}">
+      <div class="sdef"><span class="slab">${icon('calendar-clock')}<span>Outside the slots</span></span>${def}</div>
+      <div class="swk" role="group" aria-label="${esc(`Week: ${order.map(([x]) => this._slotText(x)).join('; ') || 'no slots'}`)}"><div class="sr st"><span class="sd"></span><div class="stk">${ticks}</div></div>${rows}</div>
+      <div class="slg">${legend}</div>
+      <div class="sfrm" role="group" aria-label="Slot">
+        ${pick}
+        <div class="seg sdays" role="group" aria-label="Days">${dayBtns}</div>
+        <div class="stimes"><div class="sfl"><span>Start</span>${this._ddHtml('sf|start', hhmm(H, f.start), tOpts(f.start), f.start, 'Start', !can)}</div>
+          <div class="sfl"><span>End</span>${this._ddHtml('sf|end', hhmm(H, f.end), tOpts(f.end, true), f.end, 'End', !can)}</div>
+          <div class="sfl smode"><span>Mode</span>${this._ddHtml('sf|mode', this._mname(f.mode), sm.map(m => [m.id, m.name]), f.mode, 'Mode', !can)}</div></div>
+        <div class="sbar"><span class="smsg${msg[0] ? ` ${msg[0]}` : ''}" role="status">${esc(msg[1])}</span>
+          <button type="button" class="btn sm" data-sact="del" data-focus="sf-del" aria-label="Delete this slot"${can && f.idx !== null ? '' : ' disabled'}>${icon('delete')}<span>Delete</span></button>
+          <button type="button" class="btn sm primary" data-sact="${f.idx === null ? 'add' : 'save'}" data-focus="sf-add" aria-label="${esc(f.idx === null ? 'Add the slot' : 'Save the slot')}${why ? `: ${esc(why)}` : ''}"${can && !why ? '' : ' disabled'}>${icon(f.idx === null ? 'plus' : 'check')}<span>${f.idx === null ? 'Add' : 'Save'}</span></button></div>
+      </div></div>${this._note2([['schedule', 'schedule']])}`;
+  }
+  // An in-card dropdown: opts [[value, text]]
+  _ddHtml(k, text, opts, cur, aria, dis) {
+    const open = this._dd === k;
+    const list = open ? `<div class="ddl" role="listbox" aria-label="${esc(aria)}">${opts.map(([v, t], i) => `<button type="button" role="option" class="ddo" data-ddo="${esc(v)}" data-focus="ddo-${esc(k)}-${i}" aria-selected="${v === cur}" aria-label="${esc(t)}"><span>${esc(t)}</span>${v === cur ? icon('check', 'chk') : ''}</button>`).join('')}</div>` : '';
+    return `<div class="ddw"><button type="button" class="dd" data-dd="${esc(k)}" data-focus="dd-${esc(k)}" aria-haspopup="listbox" aria-expanded="${open}" aria-label="${esc(`${aria}: ${text}`)}"${dis ? ' disabled' : ''}><span>${esc(text)}</span>${icon(open ? 'chevron-up' : 'chevron-down')}</button>${list}</div>`;
   }
 
   // ----- Status: storage, firmware, the paired devices -----
@@ -1221,9 +1521,15 @@ const CSS = `
   .acts { position: absolute; right: 0; top: 50%; transform: translateY(-50%); display: flex; gap: 6px; padding-left: 10px;
     background: linear-gradient(90deg, transparent, var(--cc-bg) 10px); }
   .acts.off { visibility: hidden; }
+  .hdr.tight .name { visibility: hidden; }
   .staging .title { padding-right: 118px; }
   .trig .title { padding-right: 104px; }
   .trig.staging .title { padding-right: 218px; }
+  .trig.stop .title { padding-right: 142px; }
+  .trig.stop.staging .title { padding-right: 256px; }
+  .trig.stop.staging.dicon .title { padding-right: 196px; }
+  .trig.stopw .title { padding-right: 226px; }
+  .trig.stopw.staging .title { padding-right: 340px; }
   .btn { min-height: 32px; padding: 0 14px; border-radius: 16px; cursor: pointer; border: 1px solid color-mix(in srgb, var(--cc-text) 16%, transparent);
     background: transparent; color: var(--cc-text); font-size: var(--fs-sm); font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
   .btn:hover { background: color-mix(in srgb, var(--cc-text) 8%, transparent); }
@@ -1348,6 +1654,28 @@ const CSS = `
   .cfi { display: flex; align-items: flex-start; gap: 8px; font-size: var(--fs-sm); line-height: 1.3; --mdc-icon-size: 16px; }
   .cfi ha-icon { display: flex; line-height: 0; flex: none; margin-top: 1px; color: var(--hb-alarm); }
   .cfb { display: flex; justify-content: flex-end; gap: 8px; }
+  .medit .cfh { color: var(--cc-text); }
+  .medit .cfh ha-icon { color: var(--cc-sub); }
+  .medit .mclose { margin-left: auto; }
+  .medit .note { padding: 0; }
+  .mlist { gap: 2px; }
+  .mrow { display: grid; grid-template-columns: minmax(0, 1fr) 32px; grid-template-areas: "in del" "sub sub"; align-items: center; column-gap: 8px;
+    padding: 2px 4px; border-radius: 10px; border: 1px solid transparent; }
+  .mrow.staged { background: color-mix(in srgb, var(--cc-accent) 6%, transparent); }
+  .mrow.failed { border-color: var(--cc-error); }
+  .mrow .mname { grid-area: in; height: 34px; box-sizing: border-box; padding: 0 10px; border-radius: 8px; border: 1px solid var(--cc-field-line); background: var(--cc-field);
+    color: var(--cc-text); font: inherit; font-size: var(--fs-sm); min-width: 0; }
+  .mrow .mname:focus { outline: 2px solid var(--cc-accent); outline-offset: -1px; }
+  .mrow .mname:disabled { color: var(--cc-sub); }
+  .mrow > .btn, .mrow > .btn-ph { grid-area: del; }
+  .msub { grid-area: sub; min-height: 15px; padding: 0 2px; font-size: var(--fs-xs); line-height: 1.25; color: var(--cc-sub); }
+  .msub.err { color: var(--cc-error-text); font-weight: 500; }
+  .msub.full { grid-column: 1 / -1; grid-row: 1 / -1; padding: 8px 2px; }
+  .madd { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 8px; border: 1px dashed var(--cc-field-line); border-radius: 8px;
+    background: transparent; color: var(--cc-accent-text); font-size: var(--fs-sm); cursor: pointer; --mdc-icon-size: 18px; }
+  .madd ha-icon { display: flex; line-height: 0; }
+  .madd:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -1px; }
+  .madd:disabled { color: var(--cc-sub); cursor: default; }
 
   /* Section toggles: the camera card's segmented strip; one open at a time, they never move */
   .secs { display: flex; gap: 2px; margin: 8px 10px; padding: 2px; border-radius: 10px; background: var(--cc-track); }
@@ -1515,6 +1843,56 @@ const CSS = `
   .stabs.fit1 .stab { flex: 1 1 0; padding: 0; }
   .stabs.fit1 .stitle { display: block; flex: 1 0 100%; box-sizing: border-box; padding: 4px 6px 0; font-size: var(--fs-xs); font-weight: 600; color: var(--cc-sub); }
   .xcam { display: grid; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--cc-line); }
+  .xh { padding: 0 6px; font-size: var(--fs-xs); font-weight: 600; color: var(--cc-sub); }
+  .xchip { display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 0 10px 0 8px; border-radius: 15px; border: 1px solid var(--cc-field-line);
+    background: transparent; color: var(--cc-text); font-size: var(--fs-xs); cursor: pointer; white-space: nowrap; --mdc-icon-size: 14px; }
+  .xchip ha-icon { display: flex; line-height: 0; color: var(--cc-sub); }
+  .xchip[aria-pressed="true"] { background: var(--cc-sel); border-color: transparent; font-weight: 500; }
+  .xchip[aria-pressed="true"] ha-icon { color: var(--cc-accent-text); }
+  .xchip:disabled { cursor: default; }
+  .xchip:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 1px; }
+  .xchip.sm { min-height: 28px; padding: 0 9px; }
+  .xchip.unk { color: var(--cc-sub); font-style: italic; cursor: default; }
+  .xgl { height: 132px; overflow-y: auto; display: grid; align-content: start; gap: 4px; padding: 0 6px; }
+  .xgrow { display: grid; grid-template-columns: 16px minmax(0, 1fr) 32px; align-items: start; gap: 6px; padding: 2px 0; border-top: 1px solid var(--cc-line); }
+  .xgrow:first-child { border-top: 0; }
+  .xgn { font-size: var(--fs-xs); font-weight: 600; color: var(--cc-sub); line-height: 30px; text-align: center; }
+  .xgm { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+  .xnone { padding: 6px 0; font-size: var(--fs-xs); color: var(--cc-sub); }
+  .gnew.sm { min-height: 34px; font-size: var(--fs-xs); }
+  .gnew.sm ha-icon { width: 26px; height: 26px; }
+  .gnew:disabled { color: var(--cc-sub); cursor: default; }
+  .xfoot { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; min-height: 34px; padding: 0 6px; font-size: var(--fs-xs); color: var(--cc-sub); }
+  .xtime { display: inline-flex; align-items: center; gap: 5px; --mdc-icon-size: 14px; white-space: nowrap; }
+  .xtime ha-icon { display: flex; line-height: 0; }
+  .xst.err { color: var(--cc-error-text); font-weight: 500; }
+
+  /* Schedule section: the week, the default, one slot form */
+  .schw { display: grid; gap: 8px; margin: 0 auto; max-width: 560px; padding: 0 2px; border-radius: 10px; }
+  .sdef { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; }
+  .slab { display: inline-flex; align-items: center; gap: 7px; font-size: var(--fs-sm); --mdc-icon-size: 18px; white-space: nowrap; }
+  .slab ha-icon { display: flex; line-height: 0; color: var(--cc-sub); }
+  .swk { display: grid; gap: 3px; }
+  .swk .sr { height: 20px; }
+  .swk .sb { height: 16px; background-clip: padding-box; }
+  .swk .sg { padding: 0; border: 0; cursor: pointer; border-radius: 0; min-width: 3px; }
+  .swk .sg.sel { box-shadow: inset 0 0 0 2px var(--cc-text); z-index: 1; }
+  .schw .slg { justify-content: flex-start; margin-top: 0; }
+  .sfrm { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--cc-line); }
+  .sdays { height: 32px; }
+  .stimes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 8px; }
+  .sfl { display: grid; gap: 2px; min-width: 0; }
+  .sfl > span { font-size: var(--fs-xs); color: var(--cc-sub); padding-left: 2px; }
+  .sfl.smode { grid-column: 1 / -1; }
+  .sbar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "msg msg msg" ". del add"; align-items: center; gap: 4px 6px; }
+  .sbar [data-sact=del] { grid-area: del; } .sbar [data-sact=add], .sbar [data-sact=save] { grid-area: add; }
+  /* three lines kept for the form's note or the HomeBase's refusal text, so the form never changes height */
+  .smsg { grid-area: msg; height: 48px; overflow-y: auto; font-size: var(--fs-xs); line-height: 16px; color: var(--cc-sub); }
+  .smsg.warn { color: var(--cc-warn-text); font-weight: 500; }
+  .smsg.err { color: var(--cc-error-text); font-weight: 500; }
+  .sbar .btn:disabled { opacity: 0.5; cursor: default; }
+  .schw.failed .sfrm { border-top-color: var(--cc-error); }
+  .dd:disabled { cursor: default; color: var(--cc-sub); }
   .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 0 6px; }
   .clab { font-size: var(--fs-xs); color: var(--cc-sub); font-weight: 600; margin-right: 2px; }
 
