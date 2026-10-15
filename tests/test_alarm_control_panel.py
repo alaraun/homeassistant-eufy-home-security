@@ -50,6 +50,7 @@ from eufy_home_security import (
     SessionReplacedError,
     StationStateChanged,
     StationUnreachableError,
+    UnsupportedError,
 )
 from eufy_home_security.p2p import FrameType
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
@@ -349,6 +350,8 @@ _OTHER_ACCOUNT_ID = "fedcba9876543210fedcba9876543210fedcba98"
         # A kick-out in the chain names the session and Repairs, on
         # any station, instead of a cloud outage.
         (SessionReplacedError(), "session_replaced_see_repairs"),
+        # The library refused the station's model before sending.
+        (UnsupportedError("guard_mode is not supported here"), "guard_mode_not_supported"),
     ],
     ids=lambda value: type(value).__name__ if isinstance(value, Exception) else value,
 )
@@ -444,6 +447,36 @@ async def test_an_arm_the_library_refuses_raises_a_translated_error(
     assert raised.value.translation_placeholders == {"target": "home"}
     assert raised.value.__cause__ is error
     assert state_of(hass, entity_id) == "armed_away"
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_an_arm_on_a_model_the_library_refuses_is_reported_once_and_unsent(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A station model without app data: the library refuses the guard mode before
+    sending; the arm raises ``guard_mode_not_supported`` once, is not retried, and the
+    panel returns to the mode it showed."""
+    station_entry = next(d for d in fake_cloud.devices if d.get("device_sn") == fake_station.serial)
+    station_entry["device_new_pn"] = "T8021"
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = panel_entity_id(hass)
+    states = record_states(hass, entity_id)
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await call_panel(hass, SERVICE_ALARM_ARM_HOME, entity_id)
+    await advance_to_poll(hass, POLL_INTERVAL_SECONDS + 1)
+
+    assert raised.value.translation_key == "guard_mode_not_supported"
+    assert raised.value.translation_placeholders == {"target": "home"}
+    assert isinstance(raised.value.__cause__, UnsupportedError)
+    assert [obj for obj in fake_station.received if obj.get("cmd") == 1224] == []
+    assert states == ["arming", "armed_away"]
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

@@ -61,6 +61,7 @@ from eufy_home_security import (
     SessionReplacedError,
     SkippedDevice,
     Station,
+    UnsupportedError,
     redact,
     redact_serial,
 )
@@ -83,6 +84,7 @@ from .const import (
     EXC_DEFAULT_PRESET_NEEDS_CONFIRMATION,
     EXC_DEVICE_LIST_REFRESH_FAILED,
     EXC_GUARD_MODE_NOT_APPLIED,
+    EXC_GUARD_MODE_NOT_SUPPORTED,
     EXC_LIVE_STREAM_LIMIT,
     EXC_ON_DEMAND_UNREACHABLE,
     EXC_PAN_TILT_NOT_APPLIED,
@@ -268,6 +270,8 @@ def arm_failed(
       (``CommandNotAppliedError``, usually an owner id it does not hold) or answered
       with an error or another mode (``CommandRejectedError``, a -108
       ``CommandUnsupportedError`` included).
+    - ``UnsupportedError`` (any other): the library refused before sending, a station
+      model whose guard mode it does not set.
     - ``KeyRejectedError``: the write reconnected and the station rejected even its
       re-fetched key; the station's key-rejected repair is the remedy.
     - ``CipherUnusableError``: eufy serves no key the station's connection method can
@@ -280,8 +284,8 @@ def arm_failed(
       asleep: a wake takes about ten seconds and may fail.
 
     The only placeholder is ``target``, the requested mode's lower-case name: no
-    serial and no library text. Six of these seven messages are shared with
-    :func:`setting_write_failed`. The caller lets a plain ``UnsupportedError`` propagate.
+    serial and no library text. Six of these eight messages are shared with
+    :func:`setting_write_failed`.
     """
     if is_session_replaced_failure(err):
         key = EXC_SESSION_REPLACED_SEE_REPAIRS
@@ -289,6 +293,8 @@ def arm_failed(
         key = EXC_ON_DEMAND_UNREACHABLE
     elif isinstance(err, CommandError):
         key = EXC_GUARD_MODE_NOT_APPLIED
+    elif isinstance(err, UnsupportedError):
+        key = EXC_GUARD_MODE_NOT_SUPPORTED
     elif isinstance(err, KeyRejectedError):
         key = EXC_STATION_KEY_REJECTED
     elif isinstance(err, CipherUnusableError):

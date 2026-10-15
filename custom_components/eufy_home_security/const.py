@@ -225,6 +225,7 @@ ERROR_SESSION_REJECTED: Final = "session_rejected"
 EXC_AUTH_FAILED: Final = "auth_failed"
 # An arm or disarm the station answered but did not apply.
 EXC_GUARD_MODE_NOT_APPLIED: Final = "guard_mode_not_applied"
+EXC_GUARD_MODE_NOT_SUPPORTED: Final = "guard_mode_not_supported"
 # A setting write the station answered but did not apply. The entity keeps
 # the last value it read, so nothing shows a value the station never took.
 EXC_SETTING_NOT_APPLIED: Final = "setting_not_applied"

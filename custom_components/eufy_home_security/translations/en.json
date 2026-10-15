@@ -281,6 +281,9 @@
     "guard_mode_not_applied": {
       "message": "The HomeBase did not apply {target}. The panel shows the mode the HomeBase last reported. If this keeps happening, check in the eufy app that the HomeBase is shared with this eufy account."
     },
+    "guard_mode_not_supported": {
+      "message": "Home Assistant cannot switch this HomeBase to {target}: the eufy library does not set the guard mode of this model, so nothing was sent. Change the mode in the eufy app."
+    },
     "setting_not_applied": {
       "message": "The HomeBase did not apply the change to {target}. The entity shows the value the HomeBase last reported; check that the device is online and try again."
     },

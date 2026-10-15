@@ -41,7 +41,6 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from eufy_home_security import (
-    CommandError,
     CommandRejectedError,
     CommandUnsupportedError,
     DeviceBusyError,
@@ -372,7 +371,7 @@ class EufySecurityModeSelect(EufyStationEntity, SelectEntity):
         """Set the mode named ``option``; a mode the select only shows is refused, nothing sent.
 
         Shows the mode the station applied. A library error becomes the alarm panel's
-        translated error; a plain ``UnsupportedError`` propagates as a programming error.
+        translated error, a model the library refuses included (nothing sent).
         """
         target = self._choices().get(option)
         config = self.coordinator.station_config
@@ -385,8 +384,6 @@ class EufySecurityModeSelect(EufyStationEntity, SelectEntity):
         try:
             applied = await self.coordinator.station.async_set_guard_mode(target)
         except EufySecurityError as err:
-            if isinstance(err, UnsupportedError) and not isinstance(err, CommandError):
-                raise
             raise errors.arm_failed(
                 err, target, on_demand=self.coordinator.station.connects_on_demand
             ) from err

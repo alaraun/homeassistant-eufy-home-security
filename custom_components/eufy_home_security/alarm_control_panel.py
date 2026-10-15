@@ -23,13 +23,11 @@ from homeassistant.util.hass_dict import HassKey
 from eufy_home_security import (
     AlarmChanged,
     AlarmPhase,
-    CommandError,
     EufySecurityError,
     GuardMode,
     PushMessageType,
     SecurityEvent,
     StationState,
-    UnsupportedError,
 )
 
 from . import detections, errors
@@ -664,9 +662,9 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
         reconnects first when the session is down, so a protocol or handshake
         failure, a rejected key or a cloud refusal can arrive here. A
         ``SessionReplacedError`` in the cause chain is named as such, pointing at
-        Repairs. A plain ``UnsupportedError`` (not a -108 receipt) and anything that
-        is not a library error propagate: they are programming errors, not a
-        station's answer.
+        Repairs. A station model whose guard mode the library does not set is refused
+        before sending (``guard_mode_not_supported``), never retried. Anything that is
+        not a library error propagates.
         """
         self._in_flight = transitional
         self.async_write_ha_state()
@@ -681,9 +679,6 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
                 self._async_end_lifecycle()
             self.coordinator.async_apply_guard_mode(applied)
         except EufySecurityError as err:
-            # A -108 receipt is a CommandError and an UnsupportedError: the station's answer.
-            if isinstance(err, UnsupportedError) and not isinstance(err, CommandError):
-                raise
             raise errors.arm_failed(
                 err,
                 target,

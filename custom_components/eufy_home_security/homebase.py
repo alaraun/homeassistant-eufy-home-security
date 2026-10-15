@@ -33,8 +33,9 @@ serial: devices are named by HA device id and name, a device HA does not know by
 Library errors: ``ConfigChangedError`` -> ``config_changed``, ``ModeInUseError`` ->
 ``mode_in_use`` (the library's reason), ``CommandNotAppliedError`` -> ``not_applied``,
 ``ValueError`` -> ``invalid_format``, ``UnsupportedError`` -> ``not_supported``, any
-other library error -> ``home_assistant_error``. The device an error names
-(``device_sn``) reads as its HA name; any other redacted serial as ``a device``.
+other library error -> ``home_assistant_error``. The devices an error names
+(``device_sns``) and the request's station read as their HA names; any other redacted
+serial as ``a device``.
 """
 
 from __future__ import annotations
@@ -65,6 +66,8 @@ from eufy_home_security import (
     EufySecurityError,
     GuardMode,
     ModeInUseError,
+    Schedule,
+    ScheduleSlot,
     Station,
     StationConfig,
     StationFeature,
@@ -80,9 +83,7 @@ from eufy_home_security.devices import (
     mode_action_label,
     scope_for_kind,
 )
-
-# The library guide's import for the schedule types (not exported from the root).
-from eufy_home_security.p2p.station_config_codecs import Schedule, ScheduleSlot
+from eufy_home_security.station import MIN_TRACKING_CAMERAS
 
 from . import detections
 from .const import DOMAIN, FIRMWARE_KEY, GUARD_MODE_KEY, SECURITY_MODE_KEY
@@ -163,6 +164,8 @@ _SLOT = vol.Schema(
     }
 )
 _CLOCK = re.compile(r"(\d{2}):(\d{2})")
+# A slot's end at midnight, as the card shows and sends it.
+_DAY_END: Final = "24:00"
 
 
 def mode_id(mode: GuardMode | int) -> str:
@@ -210,10 +213,13 @@ def _clock(value: time) -> str:
     return f"{value.hour:02d}:{value.minute:02d}"
 
 
-def _parse_clock(text: str) -> time:
-    """An ``HH:MM`` time of day; ``ValueError`` for anything else."""
+def _parse_clock(text: str, *, end: bool = False) -> time:
+    """An ``HH:MM`` time of day; with ``end``, ``24:00`` is midnight (the library's
+    ``time(0)`` end). ``ValueError`` for anything else."""
+    if end and text == _DAY_END:
+        return time(0)
     match = _CLOCK.fullmatch(text)
-    if match is None:
+    if match is None or int(match[1]) > 23 or int(match[2]) > 59:
         raise ValueError(f"a time must be HH:MM, got {text!r}")
     return time(int(match[1]), int(match[2]))
 
@@ -311,7 +317,7 @@ def _schedule(config: StationConfig) -> dict[str, Any] | None:
             {
                 "weekday": int(slot.weekday),
                 "start": _clock(slot.start),
-                "end": _clock(slot.end),
+                "end": _DAY_END if slot.ends_at_midnight else _clock(slot.end),
                 "mode": mode_id(slot.mode),
             }
             for slot in slots
@@ -333,7 +339,22 @@ def _cross_camera(config: StationConfig, paired: _Paired) -> dict[str, Any] | No
             None if cross.cameras is None else [paired.device_id(sn) for sn in cross.cameras]
         ),
         "groups": [[paired.device_id(sn) for sn in group] for group in cross.groups],
+        "eligible": [d for d in map(paired.device_id, cross.eligible) if d is not None],
+        "min_cameras": MIN_TRACKING_CAMERAS,
     }
+
+
+def _alarm(station: Station) -> dict[str, Any]:
+    """Whether the alarm sounds; ``last``: when the last transition was seen and its own
+    time (null when it carries none), absent before any."""
+    out: dict[str, Any] = {"triggered": station.alarming}
+    last = station.last_alarm
+    if last is not None:
+        out["last"] = {
+            "at": last.at.isoformat(),
+            "event_time": None if last.event_time is None else last.event_time.isoformat(),
+        }
+    return out
 
 
 def _status(hass: HomeAssistant, target: ResolvedDevice) -> dict[str, Any]:
@@ -388,7 +409,7 @@ def payload(hass: HomeAssistant, target: ResolvedDevice) -> dict[str, Any]:
             hass, Platform.SELECT, station.serial, SECURITY_MODE_KEY
         ),
         "connected": station.connected,
-        "alarm": {"triggered": station.alarming},
+        "alarm": _alarm(station),
         "guard_mode": None if guard is None else mode_id(guard),
         "effective_mode": None if effective is None else mode_id(effective),
         "modes": [
@@ -459,16 +480,11 @@ class _Serials:
             websocket_api.ERR_INVALID_FORMAT, f"{device_id} is not a device of this HomeBase"
         )
 
-    def message(self, text: str, device_sn: str | None = None) -> str:
-        """``text`` with ``device_sn`` (the device a library error names), plain or
-        redacted, as its HA name; then, for a text that names further devices, every
-        serial of the entry the same way and any other redacted serial as ``a device``."""
-        known: dict[str, None] = dict.fromkeys([device_sn] if device_sn else [])
-        known.update(dict.fromkeys(self._target.entry.runtime_data.coordinators))
-        for coordinator in self._target.entry.runtime_data.coordinators.values():
-            known.update(
-                dict.fromkeys(s.device_sn for s in coordinator.station.sub_devices if s.device_sn)
-            )
+    def message(self, text: str, device_sns: Iterable[str] = ()) -> str:
+        """``text`` with ``device_sns`` (the devices a library error names) and the
+        target station, plain or redacted, as their HA names; any other redacted serial
+        as ``a device``."""
+        known = dict.fromkeys((*device_sns, self._target.station.serial))
         for serial in known:
             device = self.device(serial)
             name = (device_name(device) if device is not None else None) or _UNNAMED
@@ -556,7 +572,7 @@ type _Handler = Callable[[ResolvedDevice, _Serials], Awaitable[dict[str, Any]]]
 
 def _error(err: EufySecurityError, serials: _Serials) -> tuple[str, str]:
     """The websocket error code and message of a library error."""
-    text = serials.message(str(err), err.device_sn)
+    text = serials.message(str(err), err.device_sns)
     if isinstance(err, ConfigChangedError):
         return ERR_CONFIG_CHANGED, text
     if isinstance(err, ModeInUseError):  # before UnsupportedError, which it is
@@ -830,7 +846,7 @@ def _slot(slot: Mapping[str, Any]) -> ScheduleSlot:
     return ScheduleSlot(
         slot["weekday"],
         _parse_clock(slot["start"]),
-        _parse_clock(slot["end"]),
+        _parse_clock(slot["end"], end=True),
         parse_mode_id(slot[ATTR_MODE]),  # type: ignore[arg-type]  # the slot refuses a bare code
     )
 
@@ -842,8 +858,8 @@ def _slot(slot: Mapping[str, Any]) -> ScheduleSlot:
 async def _ws_schedule_set(
     _hass: HomeAssistant, msg: dict[str, Any], target: ResolvedDevice, _serials: _Serials
 ) -> None:
-    """Replace the weekly schedule; ``default`` (a mode id) sets the mode outside its
-    slots, absent or null leaves it."""
+    """Replace the weekly schedule (an end of ``24:00`` runs a slot to midnight);
+    ``default`` (a mode id) sets the mode outside its slots, absent or null leaves it."""
     schedule = Schedule(account_id=None, slots=tuple(_slot(s) for s in msg[ATTR_SLOTS]))
     default = msg.get(ATTR_DEFAULT)
     await target.station.async_set_schedule(
@@ -1022,7 +1038,7 @@ async def _ws_groups_activate(
                     "mode": mode_id(result.mode),
                     "outcome": str(result.outcome),
                     "error": (
-                        None if error is None else serials.message(str(error), error.device_sn)
+                        None if error is None else serials.message(str(error), error.device_sns)
                     ),
                 }
             )

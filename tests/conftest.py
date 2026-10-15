@@ -10,8 +10,6 @@ P2P id, owner account id or e-mail.
 from __future__ import annotations
 
 import asyncio
-import base64
-import json
 import os
 import re
 import shlex
@@ -78,7 +76,6 @@ __all__ = [
     "advance_to_poll",
     "cloud_calls",
     "configure_options",
-    "define_custom_modes",
     "detection_event",
     "entity_id_for",
     "now_ms",
@@ -182,26 +179,6 @@ def set_guard_mode(station: FakeStation, mode: int) -> None:
     """
     station.guard_mode = mode
     station.params[_STATION_BLOCK][_GUARD_MODE_PARAM] = str(mode)
-
-
-# The station's mode list (the app's custom modes and their titles) in its dump.
-_MODE_LIST_PARAM = 1256
-
-
-def define_custom_modes(station: FakeStation, titles: Mapping[int, str]) -> None:
-    """List custom modes (guard-mode code -> title) in the fake station's mode list.
-
-    Home and Away are listed too, as the app stores the list. A custom mode the list does
-    not name is not defined on the station (``StationConfig.is_defined``).
-    """
-    modes = [
-        {"iconType": 1, "mode": 1, "title": "Home"},
-        {"iconType": 0, "mode": 0, "title": "Away"},
-    ]
-    modes += [{"iconType": 2, "mode": code, "title": title} for code, title in titles.items()]
-    body = {"account_id": SYNTHETIC.account_id, "mode_id": 0, "modes": modes}
-    raw = base64.b64encode(json.dumps(body, separators=(",", ":")).encode()).decode()
-    station.params[_STATION_BLOCK][_MODE_LIST_PARAM] = raw
 
 
 # A T8910 motion sensor's serial. The library's ``SYNTHETIC`` has no sensor serial,
