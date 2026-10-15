@@ -1156,6 +1156,28 @@ def _add_camera(fake_station: FakeStation, fake_cloud: FakeCloud) -> None:
     fake_station.params[_PORCH_CHANNEL] = {1101: "90"}
 
 
+async def test_paired_devices_are_listed_by_name_whatever_the_cloud_order(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The payload's devices are sorted by name, so the card's drawing keeps its places
+    when a device-list refresh reorders the cloud's list."""
+    _add_camera(fake_station, fake_cloud)
+    fake_cloud.devices.insert(0, fake_cloud.devices.pop())  # the cloud lists Porch first
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+
+    names = [d["name"] for d in (await _payload(client, hass))["devices"]]
+
+    assert len(names) >= 2
+    assert names == sorted(names, key=str.casefold)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_cross_camera_cameras_and_groups_are_written_by_device_id(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,

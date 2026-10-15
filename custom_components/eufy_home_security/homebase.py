@@ -237,6 +237,7 @@ class _Paired:
         if data is not None:
             states = {d.serial: d for d in data.devices.values() if d.serial is not None}
         station = target.station
+        listed: list[tuple[tuple[str, str], dict[str, Any]]] = []
         for sub in station.sub_devices:
             serial = sub.device_sn
             if not serial or serial == station.serial:
@@ -250,9 +251,10 @@ class _Paired:
             self.ids[serial] = None if device is None else device.id
             self.flags[serial] = flags
             state = states.get(serial)
+            name = (device_name(device) if device is not None else None) or sub.name
             entry: dict[str, Any] = {
                 ATTR_DEVICE_ID: None if device is None else device.id,
-                "name": (device_name(device) if device is not None else None) or sub.name,
+                "name": name,
                 "kind": None if kind is None else str(kind),
                 "model": None if device is None else device_model(device),
                 "online": None if state is None else state.online,
@@ -264,7 +266,9 @@ class _Paired:
             )
             if kind_flags != flags:
                 entry["flags"] = flags
-            self.devices.append(entry)
+            listed.append((((name or "").casefold(), "" if device is None else device.id), entry))
+        # By name: the cloud list's order changes between refreshes, the card's drawing must not
+        self.devices.extend(entry for _, entry in sorted(listed, key=lambda item: item[0]))
 
     def device_id(self, serial: str | None) -> str | None:
         """The HA device id of a paired ``serial``; None when HA does not know it."""
