@@ -4,11 +4,13 @@ One websocket command, registered once per Home Assistant instance:
 
 - ``eufy_home_security/settings_layout`` ``{device_id}`` (a station, a paired camera or
   sensor, a standalone camera) answers ``{device_id, sections}``: each section with at
-  least one registered entity, as ``{id, heading, order, entity_ids}``. Sections, headings
-  and order are the library's (``Setting.section_info``, ``SETTING_SECTIONS``); entity ids
-  follow ``Station.settings_for()``, a ``toggles`` setting's members in the library's
-  order where the setting sits. Disabled registry entries are
-  listed. The integration's own pan/tilt selects (default and live-view preset) are added
+  least one registered entity, as ``{id, heading, order, alarm_affecting, entity_ids,
+  alarm_affecting_entity_ids}``. Sections, headings, order and ``alarm_affecting`` are the
+  library's (``Setting.section_info``, ``SETTING_SECTIONS``); entity ids follow
+  ``Station.settings_for()``, a ``toggles`` setting's members in the library's order where
+  the setting sits; ``alarm_affecting_entity_ids`` are those of settings whose write
+  changes how the station alarms (``Setting.alarm_affecting``). Disabled registry entries
+  are listed. The integration's own pan/tilt selects (default and live-view preset) are added
   to ``ptz``. Entities without a section (camera, battery, buttons) are not listed.
 
 Errors: ``not_found`` for a device that is not a station or device of this integration,
@@ -142,16 +144,19 @@ def _section_order(section: SettingSection) -> tuple[int, int, str]:
 
 def layout(hass: HomeAssistant, target: ResolvedDevice) -> list[dict[str, Any]]:
     """The sections of ``target``'s registered setting entities, in display order."""
-    sections: dict[str, tuple[SettingSection, list[str]]] = {}
+    sections: dict[str, tuple[SettingSection, list[str], list[str]]] = {}
 
-    def add(section: SettingSection, entity_ids: Iterable[str]) -> None:
-        sections.setdefault(section.id, (section, []))[1].extend(entity_ids)
+    def add(section: SettingSection, entity_ids: Iterable[str], *, alarm: bool = False) -> None:
+        _, ids, alarm_ids = sections.setdefault(section.id, (section, [], []))
+        ids.extend(entity_ids)
+        if alarm:
+            alarm_ids.extend(entity_ids)
 
     serial = target.serial
     for spec in device_specs(target):
         entity_id = registered_entity_id(hass, spec.platform, serial, spec.key)
         if entity_id is not None:
-            add(spec.setting.section_info, [entity_id])
+            add(spec.setting.section_info, [entity_id], alarm=spec.setting.alarm_affecting)
     if detections.has_preset_entities(target.station, serial):
         own = [
             entity_id
@@ -161,8 +166,17 @@ def layout(hass: HomeAssistant, target: ResolvedDevice) -> list[dict[str, Any]]:
         if own:
             add(setting_section(_PTZ_SECTION), own)
     return [
-        {"id": section.id, "heading": section.heading, "order": section.order, "entity_ids": ids}
-        for section, ids in sorted(sections.values(), key=lambda item: _section_order(item[0]))
+        {
+            "id": section.id,
+            "heading": section.heading,
+            "order": section.order,
+            "alarm_affecting": section.alarm_affecting,
+            "entity_ids": ids,
+            "alarm_affecting_entity_ids": alarm_ids,
+        }
+        for section, ids, alarm_ids in sorted(
+            sections.values(), key=lambda item: _section_order(item[0])
+        )
     ]
 
 

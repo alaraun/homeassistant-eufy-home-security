@@ -11,7 +11,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from homeassistant.const import Platform
+from homeassistant.components.number import NumberDeviceClass
+from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.const import EntityCategory, Platform
+from homeassistant.helpers import entity_registry as er
 
 from eufy_home_security import MODES_SECTION, Station, entity_unique_id
 from eufy_home_security.devices import (
@@ -49,6 +52,28 @@ def is_per_mode(setting: Setting) -> bool:
 def is_per_mode_entity(unique_id: str) -> bool:
     """Whether ``unique_id`` (``<serial>_<key>``) is a per-mode delay or action-bit entity."""
     return unique_id.partition("_")[2] in _PER_MODE_ENTITY_KEYS
+
+
+# The device classes a setting entity carries (a seconds range, an enum sensor); the
+# integration's own entities named by a device class (battery, signal) have none of these.
+_SETTING_DEVICE_CLASSES: frozenset[str] = frozenset(
+    {NumberDeviceClass.DURATION, SensorDeviceClass.DURATION, SensorDeviceClass.ENUM}
+)
+
+
+def is_setting_row(row: er.RegistryEntry) -> bool:
+    """Whether a registry row looks like a setting entity's: named by the library
+    (``Setting.name``: a literal name, no translation key), a config or diagnostic
+    category, and no device class or one a setting entity carries."""
+    return (
+        row.translation_key is None
+        and row.original_name is not None
+        and row.entity_category in (EntityCategory.CONFIG, EntityCategory.DIAGNOSTIC)
+        and (
+            row.original_device_class is None
+            or row.original_device_class in _SETTING_DEVICE_CLASSES
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)

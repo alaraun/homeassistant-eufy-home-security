@@ -10,7 +10,7 @@ from types import MappingProxyType
 from typing import Any, Final
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import CONF_EMAIL, EVENT_HOMEASSISTANT_STOP, EntityCategory, Platform
+from homeassistant.const import CONF_EMAIL, EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
@@ -68,7 +68,12 @@ from .coordinator import StationCoordinator
 from .events import EventRouter
 from .presets import PresetManager
 from .runtime import EufyConfigEntry
-from .settings import is_per_mode_entity, offered_only_without_parent, setting_specs
+from .settings import (
+    is_per_mode_entity,
+    is_setting_row,
+    offered_only_without_parent,
+    setting_specs,
+)
 from .snapshots import SnapshotManager, camera_image_mode
 from .storage import StorageCoordinator
 from .streaming import StreamManager
@@ -618,19 +623,22 @@ def _async_forget_dropped_setting_entities(
 
     - a ``toggles`` member switch of a setting still listed, for a member the library no
       longer names (``<serial>_<key>_<member>``);
-    - a setting row named by the library: no translation key, no device class, a name
-      and a config or diagnostic category. Only setting entities carry a name of their
-      own (``Setting.name``); the integration's entities are named by translation key or
-      device class. A dropped setting of a device class (a duration) is not recognised.
+    - a setting row (``is_setting_row``) whose key the library answers for: not a setting
+      of the device in this release (``Station.has_setting`` False), or one this setup
+      builds no row for. Kept while the device's settings are not known (None).
     """
     registry = er.async_get(hass)
     built: set[str] = set()
-    served: set[str] = set()
+    served: dict[str, tuple[Station, str | None]] = {}
     members: dict[str, set[str]] = {}
     for coordinator in coordinators:
         station = coordinator.station
-        served.add(station.serial)
-        served.update(device.device_sn for device in station.sub_devices if device.device_sn)
+        served[station.serial] = (station, None)
+        served.update(
+            (device.device_sn, (station, device.device_sn))
+            for device in station.sub_devices
+            if device.device_sn and device.device_sn != station.serial
+        )
         for spec in setting_specs(station):
             serial = spec.device_sn or station.serial
             built.add(entity_unique_id(serial, spec.key))
@@ -642,19 +650,16 @@ def _async_forget_dropped_setting_entities(
         unique_id = registered.unique_id
         if registered.domain not in _SETTING_DOMAINS or unique_id in built:
             continue
-        serial = unique_id.split("_", 1)[0]
+        serial, _, key = unique_id.partition("_")
         if serial not in served:
             continue
         dropped_member = registered.domain == Platform.SWITCH and any(
             unique_id.startswith(prefix) for prefix in members.get(serial, ())
         )
-        library_named = (
-            registered.translation_key is None
-            and registered.original_device_class is None
-            and registered.original_name is not None
-            and registered.entity_category in (EntityCategory.CONFIG, EntityCategory.DIAGNOSTIC)
-        )
-        if dropped_member or library_named:
+        station, device_sn = served[serial]
+        if dropped_member or (
+            is_setting_row(registered) and station.has_setting(key, device_sn) is not None
+        ):
             registry.async_remove(registered.entity_id)
 
 

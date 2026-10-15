@@ -19,6 +19,12 @@ serial: devices are named by HA device id and name, a device HA does not know by
   entry_s?, entry_devices?, exit_s?, exit_devices?, expect_revision}``: one mode's
   device actions and delays in one write (``Station.async_set_mode_actions``); answers
   the payload after the write.
+- ``homebase/custom_mode/create`` ``{name}``, ``rename`` ``{mode, name}``, ``delete``
+  ``{mode}``; ``homebase/schedule/set`` ``{slots, default?}``; ``homebase/cross_camera/set``
+  ``{cameras?, groups?}`` (admin, each with ``device_id`` and ``expect_revision``): the
+  library's configuration writes; answer the payload after the write.
+- ``homebase/restart`` and ``homebase/alarm`` ``{action, seconds?}`` (admin,
+  ``device_id``): restart the station, sound or stop its alarm; answer the payload.
 - ``eufy_home_security/arming_groups/list`` (read), ``create``, ``update``, ``delete``,
   ``activate`` (admin) and ``logs`` (read): the arming groups of the station's house
   (``EufySecurity.async_arming_groups`` and siblings). Every call reads the cloud; the
@@ -27,8 +33,8 @@ serial: devices are named by HA device id and name, a device HA does not know by
 Library errors: ``ConfigChangedError`` -> ``config_changed``, ``ModeInUseError`` ->
 ``mode_in_use`` (the library's reason), ``CommandNotAppliedError`` -> ``not_applied``,
 ``ValueError`` -> ``invalid_format``, ``UnsupportedError`` -> ``not_supported``, any
-other library error -> ``home_assistant_error``; a serial in a message is replaced by
-the device's name.
+other library error -> ``home_assistant_error``. The device an error names
+(``device_sn``) reads as its HA name; any other redacted serial as ``a device``.
 """
 
 from __future__ import annotations
@@ -37,22 +43,23 @@ import logging
 import re
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from datetime import time
-from enum import IntEnum
 from typing import Any, Final
 
 import probatio as vol
 from homeassistant.components import websocket_api
 from homeassistant.components.alarm_control_panel import DOMAIN as ALARM_DOMAIN
-from homeassistant.components.alarm_control_panel.const import AlarmControlPanelState
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import Platform
 from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
-from homeassistant.util import dt as dt_util
 from homeassistant.util.hass_dict import HassKey
 
 from eufy_home_security import (
+    MODE_ACTION_ALARM_AFFECTING,
+    MODE_DELAY_CHOICES,
+    ArmingGroupList,
+    ArmingGroupPreset,
     CommandNotAppliedError,
     ConfigChangedError,
     EufySecurityError,
@@ -74,8 +81,12 @@ from eufy_home_security.devices import (
     scope_for_kind,
 )
 
+# The library guide's import for the schedule types (not exported from the root).
+from eufy_home_security.p2p.station_config_codecs import Schedule, ScheduleSlot
+
 from . import detections
 from .const import DOMAIN, FIRMWARE_KEY, GUARD_MODE_KEY, SECURITY_MODE_KEY
+from .select import mode_choices
 from .settings_layout import (
     ATTR_DEVICE_ID,
     ERR_NOT_FOUND,
@@ -93,6 +104,13 @@ _LOGGER = logging.getLogger(__name__)
 WS_HOMEBASE: Final = f"{DOMAIN}/homebase"
 WS_HOMEBASE_SUBSCRIBE: Final = f"{DOMAIN}/homebase/subscribe"
 WS_MODE_TABLE_SET: Final = f"{DOMAIN}/homebase/mode_table/set"
+WS_CUSTOM_MODE_CREATE: Final = f"{DOMAIN}/homebase/custom_mode/create"
+WS_CUSTOM_MODE_RENAME: Final = f"{DOMAIN}/homebase/custom_mode/rename"
+WS_CUSTOM_MODE_DELETE: Final = f"{DOMAIN}/homebase/custom_mode/delete"
+WS_SCHEDULE_SET: Final = f"{DOMAIN}/homebase/schedule/set"
+WS_CROSS_CAMERA_SET: Final = f"{DOMAIN}/homebase/cross_camera/set"
+WS_RESTART: Final = f"{DOMAIN}/homebase/restart"
+WS_ALARM: Final = f"{DOMAIN}/homebase/alarm"
 WS_GROUPS_LIST: Final = f"{DOMAIN}/arming_groups/list"
 WS_GROUPS_CREATE: Final = f"{DOMAIN}/arming_groups/create"
 WS_GROUPS_UPDATE: Final = f"{DOMAIN}/arming_groups/update"
@@ -109,35 +127,42 @@ ATTR_EXIT_S: Final = "exit_s"
 ATTR_ENTRY_DEVICES: Final = "entry_devices"
 ATTR_EXIT_DEVICES: Final = "exit_devices"
 ATTR_EXPECT_REVISION: Final = "expect_revision"
+ATTR_SLOTS: Final = "slots"
+ATTR_DEFAULT: Final = "default"
+ATTR_CAMERAS: Final = "cameras"
+ATTR_GROUPS: Final = "groups"
+ATTR_ACTION: Final = "action"
+ATTR_SECONDS: Final = "seconds"
+ALARM_SOUND: Final = "sound"
+ALARM_STOP: Final = "stop"
 ERR_CONFIG_CHANGED: Final = "config_changed"
 ERR_MODE_IN_USE: Final = "mode_in_use"
 ERR_NOT_APPLIED: Final = "not_applied"
 _REGISTERED: HassKey[bool] = HassKey(f"{DOMAIN}_homebase")
-# An activation record's time above this is in milliseconds (the cloud's unit is not fixed).
-_EPOCH_MS_THRESHOLD: Final = 10**11
 # At most one subscription event per this many seconds.
 _DEBOUNCE_S: Final = 0.5
 # A mode id for a guard-mode code ``GuardMode`` does not name: ``code_<n>``.
 _CODE_PREFIX: Final = "code_"
 
-# The features the integration writes: the guard mode (select, panel), the mode tables
-# and delays (``mode_table/set``) and the arming groups.
-_WRITTEN_FEATURES: Final = frozenset(
-    {
-        StationFeature.GUARD_MODE,
-        StationFeature.MODE_TABLES,
-        StationFeature.MODE_DELAYS,
-        StationFeature.ARMING_GROUPS,
-    }
-)
-# Written by its setting entity when the station has the setting (``StationConfig.setting_keys``).
+# Written by its setting entity when the station has the setting (``StationConfig.setting_keys``);
+# every other feature is written by a command of this module, the select or the panel.
 _SETTING_FEATURES: Final = {StationFeature.WORKING_MODE: "working_mode"}
 
-# A serial as the library's messages redact it (``T8030***4321``), and what replaces one.
+# A serial as the library's messages redact it (``T8030***4321``), and what replaces one
+# the error's ``device_sn`` does not name.
 _REDACTED_SERIAL: Final = re.compile(r"\b[A-Z0-9]{5}\*+[A-Z0-9]{4}\b")
 _UNNAMED: Final = "a device"
 
 _MEMBER = vol.Schema({vol.Required(ATTR_DEVICE_ID): str, vol.Required(ATTR_MODE): str})
+_SLOT = vol.Schema(
+    {
+        vol.Required("weekday"): int,
+        vol.Required("start"): str,
+        vol.Required("end"): str,
+        vol.Required(ATTR_MODE): str,
+    }
+)
+_CLOCK = re.compile(r"(\d{2}):(\d{2})")
 
 
 def mode_id(mode: GuardMode | int) -> str:
@@ -183,6 +208,14 @@ def _json_value(value: object) -> bool | int | float | str | None:
 def _clock(value: time) -> str:
     """A time of day as ``HH:MM``."""
     return f"{value.hour:02d}:{value.minute:02d}"
+
+
+def _parse_clock(text: str) -> time:
+    """An ``HH:MM`` time of day; ``ValueError`` for anything else."""
+    match = _CLOCK.fullmatch(text)
+    if match is None:
+        raise ValueError(f"a time must be HH:MM, got {text!r}")
+    return time(int(match[1]), int(match[2]))
 
 
 class _Paired:
@@ -238,9 +271,7 @@ def _support(station: Station, config: StationConfig | None) -> dict[str, Any]:
     for feature in StationFeature:
         evidence = station.config_support(feature)
         key = _SETTING_FEATURES.get(feature)
-        available = feature in _WRITTEN_FEATURES or (
-            key is not None and config is not None and key in config.setting_keys
-        )
+        available = key is None or (config is not None and key in config.setting_keys)
         out[feature.value] = {
             "grade": evidence.support.value,
             "note": evidence.note or None,
@@ -297,6 +328,7 @@ def _cross_camera(config: StationConfig, paired: _Paired) -> dict[str, Any] | No
         "enabled": cross.enabled,
         "assistance": cross.assistance,
         "continuous_time": _json_value(cross.continuous_time),
+        "continuous_time_s": cross.continuous_time_s,
         "cameras": (
             None if cross.cameras is None else [paired.device_id(sn) for sn in cross.cameras]
         ),
@@ -342,23 +374,21 @@ def payload(hass: HomeAssistant, target: ResolvedDevice) -> dict[str, Any]:
     effective = data.active_mode if data is not None else None
     if data is None and config is not None:
         guard, effective = config.guard_mode, config.effective_mode
-    panel = registered_entity_id(hass, ALARM_DOMAIN, station.serial, GUARD_MODE_KEY)
-    panel_state = None if panel is None else hass.states.get(panel)
     settable = () if config is None else config.settable_modes
+    # The security-mode select's option per mode, as it builds them.
+    current = None if data is None else data.guard_mode
+    options = {code: name for name, code in mode_choices(config, current).items()}
     return {
         ATTR_DEVICE_ID: target.device.id,
         "name": device_name(target.device),
         "model": device_model(target.device),
         "revision": None if config is None else config.revision,
-        "alarm_panel": panel,
+        "alarm_panel": registered_entity_id(hass, ALARM_DOMAIN, station.serial, GUARD_MODE_KEY),
         "security_mode": registered_entity_id(
             hass, Platform.SELECT, station.serial, SECURITY_MODE_KEY
         ),
         "connected": station.connected,
-        "alarm": {
-            "triggered": panel_state is not None
-            and panel_state.state == AlarmControlPanelState.TRIGGERED
-        },
+        "alarm": {"triggered": station.alarming},
         "guard_mode": None if guard is None else mode_id(guard),
         "effective_mode": None if effective is None else mode_id(effective),
         "modes": [
@@ -367,14 +397,23 @@ def payload(hass: HomeAssistant, target: ResolvedDevice) -> dict[str, Any]:
                 "name": mode.name,
                 "custom": mode.custom,
                 "settable": mode.code in settable,
+                "option": options.get(mode.code),
             }
             for mode in (() if config is None else config.modes)
         ],
         "support": _support(station, config),
         "flags": {
-            str(scope): [{"id": flag, "label": mode_action_label(flag)} for flag in flags]
+            str(scope): [
+                {
+                    "id": flag,
+                    "label": mode_action_label(flag),
+                    "alarm_affecting": flag in MODE_ACTION_ALARM_AFFECTING,
+                }
+                for flag in flags
+            ]
             for scope, flags in MODE_ACTION_FLAGS.items()
         },
+        "delay_choices": list(MODE_DELAY_CHOICES),
         "devices": paired.devices,
         "mode_tables": {} if config is None else _mode_tables(config, paired),
         "schedule": None if config is None else _schedule(config),
@@ -386,7 +425,7 @@ def payload(hass: HomeAssistant, target: ResolvedDevice) -> dict[str, Any]:
 
 
 class _Serials:
-    """Serial <-> HA device for one request; scrubs serials out of library messages."""
+    """Serial <-> HA device for one request; names devices in library messages."""
 
     def __init__(self, hass: HomeAssistant, target: ResolvedDevice) -> None:
         self._hass = hass
@@ -420,12 +459,16 @@ class _Serials:
             websocket_api.ERR_INVALID_FORMAT, f"{device_id} is not a device of this HomeBase"
         )
 
-    def scrub(self, text: str) -> str:
-        """``text`` with every known serial, plain or redacted, replaced by its device's name,
-        and any other redacted serial by ``a device``."""
-        known: set[str] = set(self._target.entry.runtime_data.coordinators)
+    def message(self, text: str, device_sn: str | None = None) -> str:
+        """``text`` with ``device_sn`` (the device a library error names), plain or
+        redacted, as its HA name; then, for a text that names further devices, every
+        serial of the entry the same way and any other redacted serial as ``a device``."""
+        known: dict[str, None] = dict.fromkeys([device_sn] if device_sn else [])
+        known.update(dict.fromkeys(self._target.entry.runtime_data.coordinators))
         for coordinator in self._target.entry.runtime_data.coordinators.values():
-            known.update(s.device_sn for s in coordinator.station.sub_devices if s.device_sn)
+            known.update(
+                dict.fromkeys(s.device_sn for s in coordinator.station.sub_devices if s.device_sn)
+            )
         for serial in known:
             device = self.device(serial)
             name = (device_name(device) if device is not None else None) or _UNNAMED
@@ -465,7 +508,9 @@ def _member_label(target: ResolvedDevice, serial: str, mode: GuardMode | int, ti
     return title or guard_mode_label(mode)
 
 
-def _groups(listing: Any, serials: _Serials, target: ResolvedDevice) -> list[dict[str, Any]]:
+def _groups(
+    listing: ArmingGroupList, serials: _Serials, target: ResolvedDevice
+) -> list[dict[str, Any]]:
     groups: list[dict[str, Any]] = []
     for group in listing.groups:
         members: list[dict[str, Any]] = []
@@ -486,7 +531,7 @@ def _groups(listing: Any, serials: _Serials, target: ResolvedDevice) -> list[dic
                 "name": group.name,
                 "active": group.active,
                 # A code the library does not name is shown as a group of the user's.
-                "preset": preset.name.lower() if isinstance(preset, IntEnum) else "user",
+                "preset": preset.name.lower() if isinstance(preset, ArmingGroupPreset) else "user",
                 ATTR_MEMBERS: members,
             }
         )
@@ -509,6 +554,21 @@ def _members(serials: _Serials, members: Iterable[Mapping[str, str]]) -> dict[st
 type _Handler = Callable[[ResolvedDevice, _Serials], Awaitable[dict[str, Any]]]
 
 
+def _error(err: EufySecurityError, serials: _Serials) -> tuple[str, str]:
+    """The websocket error code and message of a library error."""
+    text = serials.message(str(err), err.device_sn)
+    if isinstance(err, ConfigChangedError):
+        return ERR_CONFIG_CHANGED, text
+    if isinstance(err, ModeInUseError):  # before UnsupportedError, which it is
+        return ERR_MODE_IN_USE, text  # the message is the library's reason
+    if isinstance(err, UnsupportedError):
+        return websocket_api.ERR_NOT_SUPPORTED, text
+    if isinstance(err, CommandNotAppliedError):
+        return ERR_NOT_APPLIED, text
+    _LOGGER.debug("HomeBase request failed: %s", type(err).__name__)
+    return websocket_api.ERR_HOME_ASSISTANT_ERROR, text
+
+
 async def _answer(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
@@ -528,26 +588,12 @@ async def _answer(
         connection.send_error(msg["id"], err.code, str(err))
         return
     except ValueError as err:
-        connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, serials.scrub(str(err)))
-        return
-    except ConfigChangedError as err:
-        connection.send_error(msg["id"], ERR_CONFIG_CHANGED, serials.scrub(str(err)))
-        return
-    except ModeInUseError as err:
-        # Before UnsupportedError, which it is.
-        connection.send_error(msg["id"], ERR_MODE_IN_USE, serials.scrub(err.reason))
-        return
-    except UnsupportedError as err:
-        connection.send_error(msg["id"], websocket_api.ERR_NOT_SUPPORTED, serials.scrub(str(err)))
-        return
-    except CommandNotAppliedError as err:
-        connection.send_error(msg["id"], ERR_NOT_APPLIED, serials.scrub(str(err)))
+        connection.send_error(
+            msg["id"], websocket_api.ERR_INVALID_FORMAT, serials.message(str(err))
+        )
         return
     except EufySecurityError as err:
-        _LOGGER.debug("HomeBase request failed: %s", type(err).__name__)
-        connection.send_error(
-            msg["id"], websocket_api.ERR_HOME_ASSISTANT_ERROR, serials.scrub(str(err))
-        )
+        connection.send_error(msg["id"], *_error(err, serials))
         return
     connection.send_result(msg["id"], result)
 
@@ -716,6 +762,153 @@ async def _ws_mode_table_set(
     await _answer(hass, connection, msg, handler)
 
 
+def _write_command(
+    command: str, fields: Mapping[Any, Any], *, revision: bool = True
+) -> Callable[
+    [Callable[[HomeAssistant, dict[str, Any], ResolvedDevice, _Serials], Awaitable[None]]],
+    websocket_api.WebSocketCommandHandler,
+]:
+    """An admin command of ``fields`` (plus ``device_id`` and, with ``revision``, a
+    required ``expect_revision``) that runs a write and answers the payload after it."""
+    schema: dict[Any, Any] = {vol.Required("type"): command, vol.Required(ATTR_DEVICE_ID): str}
+    schema.update(fields)
+    if revision:
+        schema[vol.Required(ATTR_EXPECT_REVISION)] = int
+
+    def wrap(
+        write: Callable[[HomeAssistant, dict[str, Any], ResolvedDevice, _Serials], Awaitable[None]],
+    ) -> websocket_api.WebSocketCommandHandler:
+        async def handle(
+            hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+        ) -> None:
+            async def handler(target: ResolvedDevice, serials: _Serials) -> dict[str, Any]:
+                await write(hass, msg, target, serials)
+                return payload(hass, target)
+
+            await _answer(hass, connection, msg, handler)
+
+        handle.__doc__ = write.__doc__
+        return websocket_api.require_admin(
+            websocket_api.websocket_command(schema)(websocket_api.async_response(handle))
+        )
+
+    return wrap
+
+
+@_write_command(WS_CUSTOM_MODE_CREATE, {vol.Required(ATTR_NAME): str})
+async def _ws_custom_mode_create(
+    _hass: HomeAssistant, msg: dict[str, Any], target: ResolvedDevice, _serials: _Serials
+) -> None:
+    """Add a custom mode named ``name`` (the station seeds its device table)."""
+    await target.station.async_create_custom_mode(
+        msg[ATTR_NAME], expect_revision=msg[ATTR_EXPECT_REVISION]
+    )
+
+
+@_write_command(WS_CUSTOM_MODE_RENAME, {vol.Required(ATTR_MODE): str, vol.Required(ATTR_NAME): str})
+async def _ws_custom_mode_rename(
+    _hass: HomeAssistant, msg: dict[str, Any], target: ResolvedDevice, _serials: _Serials
+) -> None:
+    """Rename the custom mode ``mode``."""
+    await target.station.async_rename_custom_mode(
+        parse_mode_id(msg[ATTR_MODE]), msg[ATTR_NAME], expect_revision=msg[ATTR_EXPECT_REVISION]
+    )
+
+
+@_write_command(WS_CUSTOM_MODE_DELETE, {vol.Required(ATTR_MODE): str})
+async def _ws_custom_mode_delete(
+    _hass: HomeAssistant, msg: dict[str, Any], target: ResolvedDevice, _serials: _Serials
+) -> None:
+    """Delete the custom mode ``mode``; a mode in use is ``mode_in_use``."""
+    await target.station.async_delete_custom_mode(
+        parse_mode_id(msg[ATTR_MODE]), expect_revision=msg[ATTR_EXPECT_REVISION]
+    )
+
+
+def _slot(slot: Mapping[str, Any]) -> ScheduleSlot:
+    """A ``schedule/set`` slot; ``ValueError`` (the library's text where it has one)."""
+    return ScheduleSlot(
+        slot["weekday"],
+        _parse_clock(slot["start"]),
+        _parse_clock(slot["end"]),
+        parse_mode_id(slot[ATTR_MODE]),  # type: ignore[arg-type]  # the slot refuses a bare code
+    )
+
+
+@_write_command(
+    WS_SCHEDULE_SET,
+    {vol.Required(ATTR_SLOTS): [_SLOT], vol.Optional(ATTR_DEFAULT): vol.Any(None, str)},
+)
+async def _ws_schedule_set(
+    _hass: HomeAssistant, msg: dict[str, Any], target: ResolvedDevice, _serials: _Serials
+) -> None:
+    """Replace the weekly schedule; ``default`` (a mode id) sets the mode outside its
+    slots, absent or null leaves it."""
+    schedule = Schedule(account_id=None, slots=tuple(_slot(s) for s in msg[ATTR_SLOTS]))
+    default = msg.get(ATTR_DEFAULT)
+    await target.station.async_set_schedule(
+        schedule,
+        default_mode=None if default is None else parse_mode_id(default),
+        expect_revision=msg[ATTR_EXPECT_REVISION],
+    )
+
+
+@_write_command(
+    WS_CROSS_CAMERA_SET,
+    {
+        vol.Optional(ATTR_CAMERAS): vol.Any(None, [str]),
+        vol.Optional(ATTR_GROUPS): [[str]],
+    },
+)
+async def _ws_cross_camera_set(
+    _hass: HomeAssistant, msg: dict[str, Any], target: ResolvedDevice, serials: _Serials
+) -> None:
+    """Choose the cross-camera tracking cameras (null: every camera) and/or replace its
+    groups; a key left out is unchanged."""
+    if ATTR_CAMERAS not in msg and ATTR_GROUPS not in msg:
+        raise Refused(websocket_api.ERR_INVALID_FORMAT, "Give cameras, groups or both")
+    station = target.station
+    revision: int | None = msg[ATTR_EXPECT_REVISION]
+    cameras = msg.get(ATTR_CAMERAS)
+    groups = [[serials.paired_serial(d) for d in group] for group in msg.get(ATTR_GROUPS, ())]
+    if ATTR_CAMERAS in msg:
+        chosen = None if cameras is None else [serials.paired_serial(d) for d in cameras]
+        await station.async_set_cross_camera_cameras(chosen, expect_revision=revision)
+        # The cameras write changed the revision the request names.
+        revision = None
+    if ATTR_GROUPS in msg:
+        await station.async_set_cross_camera_groups(groups, expect_revision=revision)
+
+
+@_write_command(WS_RESTART, {}, revision=False)
+async def _ws_restart(
+    _hass: HomeAssistant, _msg: dict[str, Any], target: ResolvedDevice, _serials: _Serials
+) -> None:
+    """Restart the station; it is unavailable until its session reconnects."""
+    await target.station.async_restart()
+
+
+@_write_command(
+    WS_ALARM,
+    {
+        vol.Required(ATTR_ACTION): vol.In([ALARM_SOUND, ALARM_STOP]),
+        vol.Optional(ATTR_SECONDS): int,
+    },
+    revision=False,
+)
+async def _ws_alarm(
+    _hass: HomeAssistant, msg: dict[str, Any], target: ResolvedDevice, _serials: _Serials
+) -> None:
+    """Sound the station's alarm (``seconds``, else the library's default) or stop it."""
+    station = target.station
+    if msg[ATTR_ACTION] == ALARM_STOP:
+        await station.async_stop_alarm()
+    elif ATTR_SECONDS in msg:
+        await station.async_trigger_alarm(msg[ATTR_SECONDS])
+    else:
+        await station.async_trigger_alarm()
+
+
 @websocket_api.websocket_command(
     {vol.Required("type"): WS_GROUPS_LIST, vol.Required(ATTR_DEVICE_ID): str}
 )
@@ -828,7 +1021,9 @@ async def _ws_groups_activate(
                     "name": None if device is None else device_name(device),
                     "mode": mode_id(result.mode),
                     "outcome": str(result.outcome),
-                    "error": None if error is None else serials.scrub(str(error)),
+                    "error": (
+                        None if error is None else serials.message(str(error), error.device_sn)
+                    ),
                 }
             )
         return {"results": results}
@@ -856,19 +1051,13 @@ async def _ws_groups_logs(
                 {
                     "user_name": log.user_name,
                     "group_name": log.group_name,
-                    "time": _log_time(log.create_time),
+                    "time": log.created_at.isoformat(),
                 }
                 for log in logs
             ]
         }
 
     await _answer(hass, connection, msg, handler)
-
-
-def _log_time(stamp: int) -> str:
-    """An activation record's epoch time (seconds or milliseconds) as ISO 8601 UTC."""
-    seconds = stamp / 1000 if stamp > _EPOCH_MS_THRESHOLD else stamp
-    return dt_util.utc_from_timestamp(seconds).isoformat()
 
 
 @callback
@@ -881,6 +1070,13 @@ def async_setup(hass: HomeAssistant) -> None:
         _ws_homebase,
         _ws_homebase_subscribe,
         _ws_mode_table_set,
+        _ws_custom_mode_create,
+        _ws_custom_mode_rename,
+        _ws_custom_mode_delete,
+        _ws_schedule_set,
+        _ws_cross_camera_set,
+        _ws_restart,
+        _ws_alarm,
         _ws_groups_list,
         _ws_groups_create,
         _ws_groups_update,

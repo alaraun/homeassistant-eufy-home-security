@@ -12,7 +12,9 @@ from typing import Any, Final
 
 import pytest
 from conftest import (
+    SENSOR_SN,
     add_entry,
+    add_motion_sensor,
     advance_to_poll,
     alarm_changed,
     define_custom_modes,
@@ -24,11 +26,15 @@ from conftest import (
     setting_param,
     setup_entry,
     state_of,
+    wait_until,
 )
 from eufy_home_security import (
+    MODE_ACTION_ALARM_AFFECTING,
+    MODE_DELAY_CHOICES,
     SETTING_SECTIONS,
     CloudApiError,
     EufySecurity,
+    EufySecurityError,
     GuardMode,
     ModeInUseError,
     StationConfigChanged,
@@ -37,6 +43,7 @@ from eufy_home_security import (
     setting_section,
 )
 from eufy_home_security.devices import mode_action_label
+from eufy_home_security.p2p import FrameType
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation, camera_device
 from homeassistant.components.alarm_control_panel import DOMAIN as ALARM_DOMAIN
 from homeassistant.components.number import DOMAIN as NUMBER_DOMAIN
@@ -62,7 +69,7 @@ from custom_components.eufy_home_security.const import (
     POLL_INTERVAL_SECONDS,
     SECURITY_MODE_KEY,
 )
-from custom_components.eufy_home_security.settings import setting_specs
+from custom_components.eufy_home_security.settings import is_setting_row, setting_specs
 
 _HOUSE: Final = "house-1"
 _GROUP: Final = "group-1"
@@ -150,17 +157,22 @@ async def test_the_layout_lists_a_cameras_setting_entities_by_library_section_in
     for section in sections:
         info = setting_section(section["id"])
         assert (section["heading"], section["order"]) == (info.heading, info.order)
+        assert section["alarm_affecting"] is info.alarm_affecting
         assert section["entity_ids"]
     registry = er.async_get(hass)
     by_section: dict[str, list[str | None]] = {}
+    alarm_by_section: dict[str, list[str | None]] = {}
     for spec in setting_specs(station):
         if spec.device_sn == SYNTHETIC.camera_sn:
-            by_section.setdefault(spec.setting.section, []).append(
-                registry.async_get_entity_id(
-                    spec.platform, DOMAIN, f"{SYNTHETIC.camera_sn}_{spec.key}"
-                )
+            entity_id = registry.async_get_entity_id(
+                spec.platform, DOMAIN, f"{SYNTHETIC.camera_sn}_{spec.key}"
             )
+            by_section.setdefault(spec.setting.section, []).append(entity_id)
+            alarm_ids = alarm_by_section.setdefault(spec.setting.section, [])
+            if spec.setting.alarm_affecting:
+                alarm_ids.append(entity_id)
     assert {s["id"]: s["entity_ids"] for s in sections} == by_section
+    assert {s["id"]: s["alarm_affecting_entity_ids"] for s in sections} == alarm_by_section
     listed = [entity_id for section in sections for entity_id in section["entity_ids"]]
     disabled = [
         e
@@ -181,7 +193,8 @@ async def test_the_layout_of_the_homebase_has_its_own_settings_and_no_pan_tilt(
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """The station's layout holds the station's settings (the alarm volume in ``alarm``)."""
+    """The station's layout holds the station's settings (the alarm volume in ``alarm``,
+    which is alarm-affecting: the section and the entity are marked)."""
     entry = await set_up_warm(hass, seed_warm_cache)
     client = await hass_ws_client(hass)
 
@@ -194,6 +207,10 @@ async def test_the_layout_of_the_homebase_has_its_own_settings_and_no_pan_tilt(
     sections = {s["id"]: s["entity_ids"] for s in result["sections"]}
     volume = entity_id_for(hass, NUMBER_DOMAIN, SYNTHETIC.station_sn, _ALARM_VOLUME)
     assert volume in sections["alarm"]
+    alarm = next(s for s in result["sections"] if s["id"] == "alarm")
+    assert alarm["alarm_affecting"] is True
+    assert volume in alarm["alarm_affecting_entity_ids"]
+    assert set(alarm["alarm_affecting_entity_ids"]) <= set(alarm["entity_ids"])
     assert "ptz" not in sections
     assert entity_id_for(hass, ALARM_DOMAIN, SYNTHETIC.station_sn, "guard_mode") not in {
         e for ids in sections.values() for e in ids
@@ -226,6 +243,7 @@ async def test_the_layout_adds_the_integrations_preset_selects_to_pan_and_tilt(
     assert ptz["heading"] == setting_section("ptz").heading
     default = entity_id_for(hass, SELECT_DOMAIN, SYNTHETIC.camera_sn, DEFAULT_PRESET_KEY)
     assert default in ptz["entity_ids"]
+    assert default not in ptz["alarm_affecting_entity_ids"]
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
@@ -348,11 +366,22 @@ async def test_the_homebase_payload_is_the_stations_configuration_by_device_id(
     assert result["connected"] is True
     assert result["alarm"] == {"triggered": False}
     assert result["modes"] == [
-        {"id": "home", "name": "Home", "custom": False, "settable": True},
-        {"id": "away", "name": "Away", "custom": False, "settable": True},
-        {"id": "custom_1", "name": _NIGHT, "custom": True, "settable": True},
-        {"id": "disarmed", "name": "Disarmed", "custom": False, "settable": True},
+        {"id": "home", "name": "Home", "custom": False, "settable": True, "option": "Home"},
+        {"id": "away", "name": "Away", "custom": False, "settable": True, "option": "Away"},
+        {"id": "custom_1", "name": _NIGHT, "custom": True, "settable": True, "option": _NIGHT},
+        {
+            "id": "disarmed",
+            "name": "Disarmed",
+            "custom": False,
+            "settable": True,
+            "option": "Disarmed",
+        },
     ]
+    options = hass.states.get(
+        entity_id_for(hass, SELECT_DOMAIN, SYNTHETIC.station_sn, SECURITY_MODE_KEY)
+    )
+    assert options is not None
+    assert [m["option"] for m in result["modes"]] == options.attributes[ATTR_OPTIONS]
     support = result["support"]
     assert set(support) == {feature.value for feature in StationFeature}
     for feature in StationFeature:
@@ -360,13 +389,20 @@ async def test_the_homebase_payload_is_the_stations_configuration_by_device_id(
         assert support[feature.value]["grade"] == evidence.support.value
         assert support[feature.value]["note"] == (evidence.note or None)
         assert support[feature.value]["alarm_affecting"] is feature.alarm_affecting
-    available = {k for k, v in support.items() if v["available"]}
-    assert {"guard_mode", "mode_tables", "mode_delays", "arming_groups"} <= available
-    assert not available & {"custom_modes", "schedule", "cross_camera", "restart", "sound_alarm"}
-    # Written by its setting entity; the HomeBase 3 has the setting.
+    # Every feature has its write; the working mode's is its setting entity, which the
+    # HomeBase 3 has.
+    assert all(v["available"] for v in support.values())
     assert "working_mode" in config.setting_keys
-    assert support["working_mode"]["available"] is True
-    assert result["flags"]["camera"][0] == {"id": "record", "label": mode_action_label("record")}
+    assert result["flags"]["camera"][0] == {
+        "id": "record",
+        "label": mode_action_label("record"),
+        "alarm_affecting": False,
+    }
+    for flags in result["flags"].values():
+        for flag in flags:
+            assert flag["alarm_affecting"] is (flag["id"] in MODE_ACTION_ALARM_AFFECTING)
+    assert any(f["alarm_affecting"] for f in result["flags"]["camera"])
+    assert result["delay_choices"] == list(MODE_DELAY_CHOICES)
     (camera,) = result["devices"]
     assert camera == {
         "device_id": camera_id,
@@ -399,21 +435,26 @@ async def test_the_homebase_payload_is_the_stations_configuration_by_device_id(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-async def test_the_payload_shows_a_sounding_alarm(
+async def test_the_payload_shows_a_sounding_alarm_as_the_station_reports_it(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """``alarm.triggered`` follows the alarm panel's ``triggered``."""
+    """``alarm.triggered`` is the station's ``alarming`` (its tone frames), not the panel:
+    a panel turned triggered without the station sounding leaves it false."""
     entry = await set_up_warm(hass, seed_warm_cache)
     client = await hass_ws_client(hass)
-    router = entry.runtime_data.router
 
-    router.handle(alarm_changed(alarming=True))
+    entry.runtime_data.router.handle(alarm_changed(alarming=True))
     await hass.async_block_till_done()
+    assert state_of(hass, panel_entity_id(hass)) == "triggered"
+    assert (await _payload(client, hass))["alarm"] == {"triggered": False}
 
+    fake_station.send_alarm_frame(FrameType.ALARM_TONE_NOTIFY, 3, 30, channel=1)
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+    await wait_until(lambda: station.alarming)
     assert (await _payload(client, hass))["alarm"] == {"triggered": True}
     assert await hass.config_entries.async_unload(entry.entry_id)
 
@@ -454,15 +495,50 @@ async def test_the_payload_carries_the_schedule_and_a_reported_off_that_cannot_b
     assert result["schedule"]["slots"] == [
         {"weekday": 1, "start": "08:00", "end": "17:30", "mode": "home"}
     ]
-    assert {"id": "schedule", "name": "Schedule", "custom": False, "settable": True} in result[
-        "modes"
-    ]
-    assert {"id": "off", "name": "Off", "custom": False, "settable": False} in result["modes"]
+    modes = {m["id"]: m for m in result["modes"]}
+    assert modes["schedule"] == {
+        "id": "schedule",
+        "name": "Schedule",
+        "custom": False,
+        "settable": True,
+        "option": "Schedule",
+    }
+    # Off in force: shown by the select, so it has its option.
+    assert modes["off"] == {
+        "id": "off",
+        "name": "Off",
+        "custom": False,
+        "settable": False,
+        "option": "Off",
+    }
     assert result["guard_mode"] == "off"
     door = next(d for d in result["devices"] if d["name"] == "Door")
     assert door["kind"] == "sensor"
     assert door["flags"] == ["station_alarm", "notification", "report_monitor_center"]
     assert door_sn not in json.dumps(result)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_a_mode_option_is_the_selects_own_for_a_name_two_modes_share(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A custom mode named like a built-in one keeps its name; its ``option`` is the
+    select's distinct option string."""
+    define_custom_modes(fake_station, {3: "Away"})
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+
+    result = await _payload(client, hass)
+
+    custom = next(m for m in result["modes"] if m["id"] == "custom_1")
+    assert (custom["name"], custom["option"]) == ("Away", "Away (Custom 1)")
+    state = hass.states.get(_security_mode(hass))
+    assert state is not None
+    assert [m["option"] for m in result["modes"]] == state.attributes[ATTR_OPTIONS]
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
@@ -519,7 +595,13 @@ async def test_a_subscription_sends_the_payload_now_and_after_a_config_change(
     await advance_to_poll(hass, POLL_INTERVAL_SECONDS + 1)
     await advance_to_poll(hass, POLL_INTERVAL_SECONDS + 2)  # the debounce
     changed = await _event(client)
-    assert {"id": "custom_1", "name": _NIGHT, "custom": True, "settable": True} in changed["modes"]
+    assert {
+        "id": "custom_1",
+        "name": _NIGHT,
+        "custom": True,
+        "settable": True,
+        "option": _NIGHT,
+    } in changed["modes"]
     assert changed["revision"] != first["revision"]
     _no_serial(changed)
     assert await hass.config_entries.async_unload(entry.entry_id)
@@ -549,7 +631,8 @@ async def test_a_subscription_follows_the_entry_across_a_reload(
     again = await _event(client)
     assert again["device_id"] == station_id
     assert again["alarm"] == {"triggered": False}
-    entry.runtime_data.router.handle(alarm_changed(alarming=True))
+    fake_station.send_alarm_frame(FrameType.ALARM_TONE_NOTIFY, 3, 30, channel=1)
+    await wait_until(lambda: state_of(hass, panel_entity_id(hass)) == "triggered")
     await advance_to_poll(hass, 1)  # the debounce
     assert (await _event(client))["alarm"] == {"triggered": True}
     assert await hass.config_entries.async_unload(entry.entry_id)
@@ -684,32 +767,6 @@ async def test_a_table_the_station_does_not_apply_is_not_applied_named_without_s
 
 
 @pytest.mark.usefixtures("away_table")
-async def test_a_mode_in_use_is_refused_with_the_librarys_reason(
-    hass: HomeAssistant,
-    hass_ws_client: WebSocketGenerator,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``ModeInUseError`` -> ``mode_in_use`` with its reason (no table write raises it
-    yet, so the library call is replaced for this one case)."""
-    entry = await set_up_warm(hass, seed_warm_cache)
-    client = await hass_ws_client(hass)
-    revision = (await _payload(client, hass))["revision"]
-    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
-
-    async def in_use(*_args: Any, **_kwargs: Any) -> None:
-        raise ModeInUseError("Away is the current mode")
-
-    monkeypatch.setattr(station, "async_set_mode_actions", in_use)
-    reply = await _set_table(client, hass, revision)
-
-    assert reply["error"] == {"code": "mode_in_use", "message": "Away is the current mode"}
-    assert await hass.config_entries.async_unload(entry.entry_id)
-
-
-@pytest.mark.usefixtures("away_table")
 async def test_a_mode_table_write_refuses_bad_input_before_sending(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
@@ -753,6 +810,485 @@ async def test_a_non_admin_cannot_write_a_mode_table(
 
     assert reply["error"]["code"] == "unauthorized"
     assert fake_station.mode_tables_received == []
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+# ── mode-table flag semantics ────────────────────────────────────────────────
+
+
+@pytest.mark.usefixtures("away_table")
+async def test_a_motion_sensor_reacts_while_its_bit_is_clear_and_a_write_takes_logical_values(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """``motion_sensor_respond`` is on while bit 32 is clear (the library's flags); turning
+    it off is a logical ``false``: the library sets the bit and clears the sensor's
+    notification and HomeBase alarm in the same table."""
+    add_motion_sensor(fake_station, fake_cloud)
+    sensor_channel = 1
+    fake_station.params[sensor_channel].update({1239: "8", 1167: "0", 1172: "0"})
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    sensor_id = _device_id(hass, SENSOR_SN)
+    before = await _payload(client, hass)
+    flags = before["mode_tables"]["away"]["devices"][sensor_id]["flags"]
+    assert flags["motion_sensor_respond"] is True
+    assert flags["notification"] is True
+
+    reply = await _set_table(
+        client,
+        hass,
+        before["revision"],
+        actions={sensor_id: {"motion_sensor_respond": False}},
+    )
+
+    assert reply["success"], reply
+    assert fake_station.params[sensor_channel][1239] == "32"
+    after = reply["result"]["mode_tables"]["away"]["devices"][sensor_id]["flags"]
+    assert after["motion_sensor_respond"] is False
+    assert after["notification"] is False
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+# ── configuration writes, restart, alarm ─────────────────────────────────────
+
+
+async def _write(
+    client: MockHAClientWebSocket, hass: HomeAssistant, command: str, **fields: Any
+) -> dict[str, Any]:
+    """``command`` on the station with the current revision, unless ``fields`` names one."""
+    fields.setdefault("expect_revision", (await _payload(client, hass))["revision"])
+    return await _ws(client, command, device_id=_device_id(hass, SYNTHETIC.station_sn), **fields)
+
+
+def _config_writes(fake_station: FakeStation, frame: int) -> list[dict[str, Any]]:
+    return [
+        json.loads(body) for ftype, body in fake_station.config_frames_received if ftype == frame
+    ]
+
+
+async def test_a_custom_mode_is_created_renamed_and_deleted(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Each write is the station's mode list (1256) and answers the payload with the mode
+    and its select option."""
+    define_custom_modes(fake_station, {3: _NIGHT})
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+
+    created = await _write(client, hass, homebase.WS_CUSTOM_MODE_CREATE, name="Garden")
+    assert created["success"], created
+    garden = next(m for m in created["result"]["modes"] if m["id"] == "custom_2")
+    assert garden == {
+        "id": "custom_2",
+        "name": "Garden",
+        "custom": True,
+        "settable": True,
+        "option": "Garden",
+    }
+    assert _config_writes(fake_station, 1256)[-1]["modes"][-1]["title"] == "Garden"
+
+    renamed = await _write(
+        client, hass, homebase.WS_CUSTOM_MODE_RENAME, mode="custom_1", name="Night"
+    )
+    assert renamed["success"], renamed
+    names = {m["id"]: m["name"] for m in renamed["result"]["modes"]}
+    assert names["custom_1"] == "Night"
+
+    deleted = await _write(client, hass, homebase.WS_CUSTOM_MODE_DELETE, mode="custom_2")
+    assert deleted["success"], deleted
+    assert "custom_2" not in {m["id"] for m in deleted["result"]["modes"]}
+    assert len(_config_writes(fake_station, 1256)) == 3
+    _no_serial(deleted)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_custom_mode_refusals_map_to_error_codes_and_send_nothing(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The current mode cannot be deleted (``mode_in_use``, the library's reason); a
+    stale revision is ``config_changed``; the library's ``ValueError`` (an empty name, a
+    built-in mode) is ``invalid_format`` with its text."""
+    define_custom_modes(fake_station, {3: _NIGHT})
+    set_guard_mode(fake_station, int(GuardMode.CUSTOM_1))
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    revision = (await _payload(client, hass))["revision"]
+
+    in_use = await _write(client, hass, homebase.WS_CUSTOM_MODE_DELETE, mode="custom_1")
+    assert in_use["error"]["code"] == "mode_in_use"
+    with pytest.raises(ModeInUseError) as raised:
+        station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+        await station.async_delete_custom_mode(GuardMode.CUSTOM_1)
+    assert in_use["error"]["message"] == raised.value.reason
+
+    stale = await _write(
+        client, hass, homebase.WS_CUSTOM_MODE_CREATE, name="Garden", expect_revision=revision + 1
+    )
+    assert stale["error"]["code"] == "config_changed"
+
+    empty = await _write(client, hass, homebase.WS_CUSTOM_MODE_CREATE, name=" ")
+    assert empty["error"]["code"] == "invalid_format"
+    with pytest.raises(ValueError) as invalid:
+        await station.async_create_custom_mode(" ")
+    assert empty["error"]["message"] == str(invalid.value)
+    built_in = await _write(client, hass, homebase.WS_CUSTOM_MODE_RENAME, mode="home", name="X")
+    assert built_in["error"]["code"] == "invalid_format"
+    assert _config_writes(fake_station, 1256) == []
+    for reply in (in_use, stale, empty, built_in):
+        _no_serial(reply)
+    await advance_to_poll(hass, 2)  # let a written mode's dump-settle timer fire
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_the_schedule_is_written_whole_with_its_default(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Slots by weekday, ``HH:MM`` and mode id become one 1254 write; ``default`` the mode
+    outside them (1257); the answer shows both."""
+    define_custom_modes(fake_station, {3: _NIGHT})
+    fake_station.params[255][1257] = "63"
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    slots = [
+        {"weekday": 1, "start": "08:00", "end": "17:30", "mode": "home"},
+        {"weekday": 6, "start": "22:00", "end": "23:59", "mode": "custom_1"},
+    ]
+
+    reply = await _write(client, hass, homebase.WS_SCHEDULE_SET, slots=slots, default="away")
+
+    assert reply["success"], reply
+    assert reply["result"]["schedule"] == {"slots": slots, "default": "away"}
+    (written,) = _config_writes(fake_station, 1254)
+    assert written["schedules"][0] == {
+        "week": 1,
+        "start_h": 8,
+        "start_m": 0,
+        "end_h": 17,
+        "end_m": 30,
+        "mode_id": 1,
+    }
+    assert fake_station.params[255][1257] == "0"
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize(
+    ("slots", "match"),
+    [
+        (
+            [
+                {"weekday": 1, "start": "08:00", "end": "12:00", "mode": "home"},
+                {"weekday": 1, "start": "11:00", "end": "13:00", "mode": "away"},
+            ],
+            "overlap",
+        ),
+        ([{"weekday": 1, "start": "12:00", "end": "08:00", "mode": "home"}], "start before"),
+        ([{"weekday": 7, "start": "08:00", "end": "09:00", "mode": "home"}], "weekday"),
+        ([{"weekday": 1, "start": "8:00", "end": "09:00", "mode": "home"}], "HH:MM"),
+        ([{"weekday": 1, "start": "08:00", "end": "09:00", "mode": "sometimes"}], "sometimes"),
+    ],
+    ids=["overlap", "end-before-start", "weekday", "clock", "mode"],
+)
+async def test_a_schedule_the_codec_refuses_is_invalid_format_with_its_text(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    slots: list[dict[str, Any]],
+    match: str,
+) -> None:
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+
+    reply = await _write(client, hass, homebase.WS_SCHEDULE_SET, slots=slots)
+
+    assert reply["error"]["code"] == "invalid_format"
+    assert match in reply["error"]["message"]
+    assert fake_station.config_frames_received == []
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_cross_camera_cameras_and_groups_are_written_by_device_id(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """``cameras: null`` chooses every camera (1072), ``groups`` replaces the groups
+    (1073); the answer lists them by HA device id with the tracking time in seconds."""
+    fake_station.reply_to_settings = True
+    fake_station.params[255][1070] = "180"  # the wire value: seconds
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    camera_id = _device_id(hass, SYNTHETIC.camera_sn)
+
+    reply = await _write(
+        client, hass, homebase.WS_CROSS_CAMERA_SET, cameras=None, groups=[[camera_id]]
+    )
+
+    assert reply["success"], reply
+    writes = [(c["cmd"], c["payload"]) for c in fake_station.received if c["cmd"] in (1072, 1073)]
+    assert writes == [(1072, [SYNTHETIC.camera_sn]), (1073, [{"value": [SYNTHETIC.camera_sn]}])]
+    cross = reply["result"]["cross_camera"]
+    assert cross["cameras"] == [camera_id]
+    assert cross["groups"] == [[camera_id]]
+    assert (cross["continuous_time"], cross["continuous_time_s"]) == (1, 180)
+    _no_serial(reply)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_cross_camera_refuses_an_empty_request_and_a_foreign_device(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    station_id = _device_id(hass, SYNTHETIC.station_sn)
+
+    empty = await _write(client, hass, homebase.WS_CROSS_CAMERA_SET)
+    foreign = await _write(client, hass, homebase.WS_CROSS_CAMERA_SET, cameras=[station_id])
+
+    assert empty["error"]["code"] == "invalid_format"
+    assert foreign["error"]["code"] == "invalid_format"
+    assert [c for c in fake_station.received if c["cmd"] in (1072, 1073)] == []
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_restart_sends_the_stations_restart_and_answers_the_payload(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    station_id = _device_id(hass, SYNTHETIC.station_sn)
+
+    result = await _ok(client, homebase.WS_RESTART, device_id=station_id)
+
+    assert result["device_id"] == station_id
+    assert (1034, 255, 0) in fake_station.ecb_received
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+def _tone_files(fake_station: FakeStation) -> list[int]:
+    return [c["payload"]["time_out"] for c in fake_station.received if c["cmd"] == 1201]
+
+
+async def test_the_alarm_sounds_and_stops(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """``sound`` without seconds is the library's default (30 s); ``stop`` ends it. The
+    station's tone frame confirms each, and the payload follows the station."""
+    fake_station.tone_frames = True
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    station_id = _device_id(hass, SYNTHETIC.station_sn)
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+
+    await _ok(client, homebase.WS_ALARM, device_id=station_id, action="sound")
+    await wait_until(lambda: station.alarming)
+    assert (await _payload(client, hass))["alarm"] == {"triggered": True}
+    await _ok(client, homebase.WS_ALARM, device_id=station_id, action="sound", seconds=30)
+    stopped = await _ok(client, homebase.WS_ALARM, device_id=station_id, action="stop")
+
+    assert _tone_files(fake_station) == [30, 30, 0]
+    await wait_until(lambda: not station.alarming)
+    assert stopped["device_id"] == station_id
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_alarm_seconds_the_library_refuses_are_invalid_format(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+
+    reply = await _ws(
+        client,
+        homebase.WS_ALARM,
+        device_id=_device_id(hass, SYNTHETIC.station_sn),
+        action="sound",
+        seconds=60,
+    )
+
+    assert reply["error"]["code"] == "invalid_format"
+    assert _tone_files(fake_station) == []
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+_WRITES: Final = [
+    (homebase.WS_CUSTOM_MODE_CREATE, {"name": "Garden", "expect_revision": 1}),
+    (homebase.WS_CUSTOM_MODE_RENAME, {"mode": "custom_1", "name": "X", "expect_revision": 1}),
+    (homebase.WS_CUSTOM_MODE_DELETE, {"mode": "custom_1", "expect_revision": 1}),
+    (homebase.WS_SCHEDULE_SET, {"slots": [], "expect_revision": 1}),
+    (homebase.WS_CROSS_CAMERA_SET, {"cameras": None, "expect_revision": 1}),
+    (homebase.WS_RESTART, {}),
+    (homebase.WS_ALARM, {"action": "sound"}),
+]
+_WRITE_IDS: Final = ["create", "rename", "delete", "schedule", "cross_camera", "restart", "alarm"]
+
+
+@pytest.mark.parametrize(
+    ("command", "fields"),
+    [
+        (homebase.WS_CUSTOM_MODE_CREATE, {"name": "Garden"}),
+        (homebase.WS_CUSTOM_MODE_RENAME, {"mode": "custom_1", "name": "X"}),
+        (homebase.WS_CUSTOM_MODE_DELETE, {"mode": "custom_1"}),
+        (
+            homebase.WS_SCHEDULE_SET,
+            {"slots": [{"weekday": 1, "start": "08:00", "end": "09:00", "mode": "home"}]},
+        ),
+        (homebase.WS_CROSS_CAMERA_SET, {"cameras": None}),
+    ],
+    ids=["create", "rename", "delete", "schedule", "cross_camera"],
+)
+async def test_a_stale_revision_refuses_a_configuration_write_unsent(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    command: str,
+    fields: dict[str, Any],
+) -> None:
+    """``config_changed`` and nothing sent when ``expect_revision`` is not the station's."""
+    define_custom_modes(fake_station, {3: _NIGHT})
+    fake_station.reply_to_settings = True
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    revision = (await _payload(client, hass))["revision"]
+
+    reply = await _write(client, hass, command, expect_revision=revision + 1, **fields)
+
+    assert reply["error"]["code"] == "config_changed"
+    assert fake_station.config_frames_received == []
+    assert [c for c in fake_station.received if c["cmd"] in (1072, 1073)] == []
+    _no_serial(reply)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize(("command", "fields"), _WRITES, ids=_WRITE_IDS)
+async def test_a_non_admin_cannot_write_the_configuration_restart_or_sound(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    hass_read_only_access_token: str,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    command: str,
+    fields: dict[str, Any],
+) -> None:
+    define_custom_modes(fake_station, {3: _NIGHT})
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass, hass_read_only_access_token)
+
+    reply = await _ws(client, command, device_id=_device_id(hass, SYNTHETIC.station_sn), **fields)
+
+    assert reply["error"]["code"] == "unauthorized"
+    assert fake_station.config_frames_received == []
+    assert fake_station.ecb_received == []
+    assert [c for c in fake_station.received if c["cmd"] in (1072, 1201)] == []
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize(("command", "fields"), _WRITES, ids=_WRITE_IDS)
+async def test_a_write_to_an_unknown_device_or_a_paired_one_is_not_found(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    command: str,
+    fields: dict[str, Any],
+) -> None:
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+
+    for device_id in ("nope", _device_id(hass, SYNTHETIC.camera_sn)):
+        reply = await _ws(client, command, device_id=device_id, **fields)
+        assert reply["error"]["code"] == "not_found"
+    assert fake_station.ecb_received == []
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_an_error_names_its_device_by_the_ha_name(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``device_sn`` on a library error is the device the message names: its HA name
+    replaces the serial, plain or redacted, even for a device the station no longer
+    lists; a refused command is ``home_assistant_error``."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    gone_sn = "T8160P0000009999"
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, gone_sn)}, name="Garage"
+    )
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+
+    async def refused(*_args: Any, **_kwargs: Any) -> None:
+        raise EufySecurityError(f"{redact_serial(gone_sn)} refused ({gone_sn})", device_sn=gone_sn)
+
+    monkeypatch.setattr(station, "async_restart", refused)
+    reply = await _ws(client, homebase.WS_RESTART, device_id=_device_id(hass, SYNTHETIC.station_sn))
+
+    assert reply["error"] == {"code": "home_assistant_error", "message": "Garage refused (Garage)"}
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_a_rejected_restart_is_home_assistant_error_without_serial(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The station's own rejection (another account's command): the library's message,
+    the station named by its HA name."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    station_id = _device_id(hass, SYNTHETIC.station_sn)
+    fake_station.account_id = "another-account"
+
+    reply = await _ws(client, homebase.WS_RESTART, device_id=station_id)
+
+    assert reply["error"]["code"] == "home_assistant_error"
+    _no_serial(reply)
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
@@ -1117,15 +1653,25 @@ def test_a_mode_name_another_mode_has_gets_its_label() -> None:
 # ── stale setting rows (a library release drops or moves settings) ───────────
 
 
+# A paired device of a model the library has no settings list for.
+_UNLISTED_SN: Final = "T9999P0000000001"
+
+
 async def test_rows_of_settings_the_library_moved_or_dropped_are_forgotten(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
+    fake_cloud: FakeCloud,
     seed_warm_cache: Callable[..., None],
 ) -> None:
     """A setting turned read-only loses its switch row and gets a binary sensor; a
-    ``toggles`` member and a whole setting the library no longer lists lose their rows.
-    The integration's own rows (named by device class or translation key) stay."""
+    ``toggles`` member and a whole setting the library no longer lists for the device
+    (``has_setting`` False) lose their rows, a duration setting's too. A setting row of
+    a device whose settings the library does not know (``has_setting`` None) stays, as
+    do the integration's own rows (named by device class or translation key)."""
+    fake_cloud.devices.append(
+        camera_device(_UNLISTED_SN, station_sn=fake_station.serial, channel=3, name="Odd")
+    )
     seed_warm_cache()
     entry = add_entry(hass)
     registry = er.async_get(hass)
@@ -1154,6 +1700,23 @@ async def test_rows_of_settings_the_library_moved_or_dropped_are_forgotten(
         original_name="Alarm type",
         entity_category=EntityCategory.CONFIG,
     )
+    dropped_duration = registry.async_get_or_create(
+        Platform.NUMBER,
+        DOMAIN,
+        f"{station_sn}_old_entry_delay",
+        config_entry=entry,
+        original_name="Entry delay",
+        original_device_class="duration",
+        entity_category=EntityCategory.CONFIG,
+    )
+    unknown_device = registry.async_get_or_create(
+        Platform.SELECT,
+        DOMAIN,
+        f"{_UNLISTED_SN}_set_alarm_type",
+        config_entry=entry,
+        original_name="Alarm type",
+        entity_category=EntityCategory.CONFIG,
+    )
     own_device_class = registry.async_get_or_create(
         Platform.SENSOR,
         DOMAIN,
@@ -1175,9 +1738,12 @@ async def test_rows_of_settings_the_library_moved_or_dropped_are_forgotten(
 
     assert await setup_entry(hass, entry)
 
-    for gone in (keypad, member, dropped):
+    station = entry.runtime_data.coordinators[station_sn].station
+    assert station.has_setting("set_alarm_type") is False
+    assert station.has_setting("set_alarm_type", _UNLISTED_SN) is None
+    for gone in (keypad, member, dropped, dropped_duration):
         assert registry.async_get(gone.entity_id) is None, gone.unique_id
-    for kept in (own_device_class, own_translated):
+    for kept in (own_device_class, own_translated, unknown_device):
         assert registry.async_get(kept.entity_id) is not None, kept.unique_id
     sensor = registry.async_get_entity_id(
         Platform.BINARY_SENSOR, DOMAIN, f"{station_sn}_hb_keypad_is_password_set"
@@ -1195,8 +1761,9 @@ async def test_only_setting_entities_carry_a_name_of_their_own(
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """The stale-row rule's premise: every row on a setting platform with a literal name and
-    no translation key or device class is a setting entity this setup builds."""
+    """The stale-row rule's premise: every row ``is_setting_row`` matches (a literal name,
+    no translation key, no device class or a setting's) is a setting entity this setup
+    builds."""
     entry = await set_up_warm(hass, seed_warm_cache)
     registry = er.async_get(hass)
     built = {
@@ -1209,10 +1776,7 @@ async def test_only_setting_entities_carry_a_name_of_their_own(
     named = [
         row.unique_id
         for row in er.async_entries_for_config_entry(registry, entry.entry_id)
-        if row.domain in setting_domains
-        and row.translation_key is None
-        and row.original_device_class is None
-        and row.original_name is not None
+        if row.domain in setting_domains and is_setting_row(row)
     ]
     assert named
     assert set(named) <= built
