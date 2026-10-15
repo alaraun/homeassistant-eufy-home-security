@@ -5,7 +5,7 @@
 // every write is staged under one ✕ / Set in the title line, and alarm-affecting writes (as the payload marks them)
 // are listed for a confirm first. While the alarm sounds, Disarm and Stop alarm act at once.
 
-const CARD_VERSION = '2026.10.15-4';
+const CARD_VERSION = '2026.10.15-5';
 
 const DOMAIN = 'eufy_home_security';
 const WS = {
@@ -884,14 +884,23 @@ class EufyHomebaseCard extends HTMLElement {
     if (m) { const r = m.getBoundingClientRect(); m.style.maxHeight = `${Math.max(80, Math.floor(cr.bottom - r.top - 8))}px`; }
     const l = R.querySelector('.ddl');
     if (l) { this._ddApply(); this._ddPlace(l, cr); }
+    else this._ddTries = 0;
   }
   // An open list: DD_MIN_ROWS..DD_ROWS rows (all when fewer) inside the card; downward when that fits below the field,
   // else upward when it fits above, else downward with the card grown by the missing height while the list is open
   _ddPlace(l, cr) {
     const ii = l.querySelector('.ddi'), br = l.parentElement.getBoundingClientRect();
+    for (const g of this.shadowRoot.querySelectorAll('.ddgrow')) g.remove();
     const w = Math.min(Math.max(br.width, DD_MIN_W), cr.width - 16), left = Math.min(Math.max(br.right - w, cr.left + 8), cr.right - 8 - w);
     Object.assign(l.style, { left: `${Math.round(left - br.left)}px`, right: 'auto', width: `${Math.round(w)}px`, maxHeight: 'none', height: 'auto' });
-    const opts = [...ii.querySelectorAll('[role=option]')], n = opts.length, o1 = opts.find(o => !o.hidden), row = (o1 ? o1.offsetHeight : 34) + 1;
+    const opts = [...ii.querySelectorAll('[role=option]')], n = opts.length, o1 = opts.find(o => !o.hidden);
+    // A list opened before the browser laid it out (an off-screen dashboard section) measures 0: place it again next frame
+    if (o1 && !o1.offsetHeight) {
+      if ((this._ddTries = (this._ddTries || 0) + 1) <= 10) requestAnimationFrame(() => this._place());
+      return;
+    }
+    this._ddTries = 0;
+    const row = (o1 ? o1.offsetHeight : 34) + 1;
     const chrome = l.offsetHeight - ii.offsetHeight;
     const full = chrome + row * Math.min(n, DD_ROWS) - 1, need = chrome + row * Math.min(n, DD_MIN_ROWS) - 1;
     const below = Math.floor(cr.bottom - br.bottom - 8), above = Math.floor(br.top - cr.top - 8);
