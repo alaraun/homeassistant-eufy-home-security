@@ -1037,35 +1037,17 @@ wheels = [
 
 [[package]]
 name = "eufy-home-security"
-version = "0.3.17"
-source = { editable = "../python-eufy_home_security" }
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
     { name = "cryptography" },
     { name = "firebase-messaging" },
     { name = "protobuf" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.11" },
-    { name = "cryptography", specifier = ">=44" },
-    { name = "firebase-messaging", specifier = ">=0.4" },
-    { name = "protobuf", specifier = ">=5" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "aioresponses", specifier = ">=0.7.8" },
-    { name = "hypothesis", specifier = ">=6.130" },
-    { name = "mypy", specifier = ">=1.17" },
-    { name = "prek", specifier = ">=0.2" },
-    { name = "pytest", specifier = ">=8.4" },
-    { name = "pytest-asyncio", specifier = ">=1.2" },
-    { name = "pytest-cov", specifier = ">=6" },
-    { name = "pytest-timeout", specifier = ">=2.3" },
-    { name = "pytest-xdist", specifier = ">=3.8" },
-    { name = "ruff", specifier = ">=0.13" },
+sdist = { url = "https://files.pythonhosted.org/packages/8d/9a/308c417fc7bf1380efb734b8530b334289235cc673a14411d45f6b256033/eufy_home_security-0.4.0.tar.gz", hash = "sha256:8e6e5db7a61bb78831bf3efd62a3cb793e7391320187d59ded09b68014afb5b9", size = 815569, upload-time = "2026-10-15T15:46:56.437Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/29/13/75ff41fee453c94fcdd63791f37f5680bbfde95ac420d0943deaa7236d1c/eufy_home_security-0.4.0-py3-none-any.whl", hash = "sha256:52d53aeacccaa76b8dfcf647a543cca3196c193d84909ad20552cd9c1690eab5", size = 980649, upload-time = "2026-10-15T15:46:54.476Z" },
 ]
 
 [[package]]
@@ -1393,7 +1375,7 @@ dev = [
 [package.metadata.requires-dev]
 dev = [
     { name = "av", specifier = "==19.0.0" },
-    { name = "eufy-home-security", editable = "../python-eufy_home_security" },
+    { name = "eufy-home-security", specifier = "==0.4.0" },
     { name = "mypy" },
     { name = "pytest-homeassistant-custom-component", specifier = "==0.13.372" },
     { name = "pyturbojpeg", specifier = "==1.8.3" },
