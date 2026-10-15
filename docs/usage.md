@@ -218,6 +218,8 @@ the event history:
 - A standalone battery camera streams one view at a time; a live still or preset
   capture ends its view.
 - Changing **Streaming quality** (`live_streaming_resolution`) ends a running view.
+- The camera entity's state is `streaming` from a view's first picture until the last
+  viewer leaves (`recording` while it records a clip), else `idle`.
 
 Browser support: [network.md](network.md#browsers). Adding devices:
 [devices.md](devices.md#adding-a-device).

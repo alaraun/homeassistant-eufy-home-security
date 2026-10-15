@@ -403,7 +403,7 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
 
     @override
     async def async_added_to_hass(self) -> None:
-        """Follow this camera's image changes until the entity is removed."""
+        """Follow this camera's image changes and live viewers until the entity is removed."""
         await super().async_added_to_hass()
         self.async_on_remove(
             async_dispatcher_connect(
@@ -412,6 +412,18 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
                 self._async_on_image,
             )
         )
+        self._attr_is_streaming = streaming.is_watched(self.hass, self._serial)
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, streaming.streaming_signal(self._serial), self._async_on_streaming
+            )
+        )
+
+    @callback
+    def _async_on_streaming(self) -> None:
+        """A viewer started or the last one left: the state is Streaming while one watches."""
+        self._attr_is_streaming = streaming.is_watched(self.hass, self._serial)
+        self.async_write_ha_state()
 
     @callback
     def _async_on_image(self) -> None:

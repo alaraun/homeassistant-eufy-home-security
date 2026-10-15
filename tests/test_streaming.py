@@ -13,6 +13,7 @@ at the first keyframe and a test pays no settle window.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import ssl
 import time
@@ -58,7 +59,11 @@ from eufy_home_security.testing import FakeCloud, FakeStation, camera_device
 from homeassistant.components.button import DOMAIN as BUTTON_DOMAIN
 from homeassistant.components.button import SERVICE_PRESS
 from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
-from homeassistant.components.camera import CameraEntityFeature, async_get_stream_source
+from homeassistant.components.camera import (
+    CameraEntityFeature,
+    CameraState,
+    async_get_stream_source,
+)
 from homeassistant.components.camera.helper import get_camera_from_entity_id
 from homeassistant.components.number import ATTR_VALUE, SERVICE_SET_VALUE
 from homeassistant.components.number import DOMAIN as NUMBER_DOMAIN
@@ -573,6 +578,74 @@ async def test_the_last_viewer_leaving_releases_the_camera_and_a_later_view_reop
     assert len(fake_station.live_opens) == 2
 
     r3.close()
+    await _unload(hass, entry)
+
+
+def _camera_state(hass: HomeAssistant, entity_id: str) -> str:
+    state = hass.states.get(entity_id)
+    assert state is not None
+    return state.state
+
+
+async def test_the_camera_is_streaming_while_a_viewer_receives_its_live_stream(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_client_no_auth: ClientSessionGenerator,
+) -> None:
+    """Idle until a viewer receives data, Streaming while any does, Idle after the last."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_client_no_auth()
+    entity_id = _camera_id(hass)
+    path = await _stream_path(hass, entity_id)
+    assert _camera_state(hass, entity_id) == CameraState.IDLE
+
+    r1 = await client.get(path)
+    assert (await _read_ts(r1))[0] == TS_SYNC
+    await wait_until(lambda: _camera_state(hass, entity_id) == CameraState.STREAMING, timeout=20)
+    r2 = await client.get(path)
+    assert (await _read_ts(r2))[0] == TS_SYNC
+
+    r1.close()
+    await asyncio.sleep(0.2)
+    await hass.async_block_till_done()
+    assert _camera_state(hass, entity_id) == CameraState.STREAMING
+
+    r2.close()
+    await wait_until(lambda: _camera_state(hass, entity_id) == CameraState.IDLE, timeout=20)
+    await _unload(hass, entry)
+
+
+async def test_a_viewer_that_gets_no_picture_leaves_the_camera_idle(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_client_no_auth: ClientSessionGenerator,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A request waiting on a camera that does not open is not a live view."""
+    opening = asyncio.Event()
+
+    async def never_opens(*_args: Any) -> Any:
+        opening.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(streaming.StreamManager, "_async_open", never_opens)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_client_no_auth()
+    entity_id = _camera_id(hass)
+    path = await _stream_path(hass, entity_id)
+
+    pending = asyncio.ensure_future(client.get(path))
+    await wait_until(opening.is_set, timeout=20)
+    await hass.async_block_till_done()
+
+    assert _camera_state(hass, entity_id) == CameraState.IDLE
+    pending.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await pending
     await _unload(hass, entry)
 
 
