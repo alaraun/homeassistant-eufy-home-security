@@ -1,9 +1,11 @@
-"""The bundled dashboard card: served by the integration, one storage-mode resource kept current."""
+"""The bundled dashboard cards: served by the integration, one storage-mode resource per card
+kept current."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from http import HTTPStatus
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -39,29 +41,39 @@ async def _resource_urls(hass: HomeAssistant) -> list[str]:
     return [item["url"] for item in resources.async_items()]
 
 
+def _current() -> list[str]:
+    """Each bundled card's resource URL at its file's hash, in ``card.CARDS`` order."""
+    return [f"{c.url}?v={card.card_hash(c.file)}" for c in card.CARDS]
+
+
 async def _set_up(hass: HomeAssistant) -> None:
     assert await async_setup_component(hass, DOMAIN, {})
     await hass.async_block_till_done()
 
 
-def test_the_bundled_card_is_shipped_and_names_its_custom_element() -> None:
-    """The file exists in the package and defines the element dashboards reference."""
+def test_the_bundled_cards_are_shipped_and_name_their_custom_elements() -> None:
+    """Both files exist in the package and define the elements dashboards reference."""
     source = card.CARD_FILE.read_text(encoding="utf-8")
     assert "customElements.define('eufy-camera-card'" in source
     assert len(card.card_hash()) == 8
+    homebase = card.HOMEBASE_CARD_FILE.read_text(encoding="utf-8")
+    assert "customElements.define('eufy-homebase-card'" in homebase
+    assert len(card.card_hash(card.HOMEBASE_CARD_FILE)) == 8
+    assert [c.url for c in card.CARDS] == [card.CARD_URL, card.HOMEBASE_CARD_URL]
 
 
 async def test_the_card_resource_is_created_with_the_file_hash(
     hass: HomeAssistant, hass_client: ClientSessionGenerator
 ) -> None:
-    """No resource yet: one module resource at the bundled URL, cache key = the file hash."""
+    """No resource yet: one module resource per card at its URL, cache key = the file hash."""
     await _set_up(hass)
 
-    assert await _resource_urls(hass) == [f"{card.CARD_URL}?v={card.card_hash()}"]
+    assert await _resource_urls(hass) == _current()
     client = await hass_client()
-    response = await client.get(card.CARD_URL)
-    assert response.status == HTTPStatus.OK
-    assert await response.read() == card.CARD_FILE.read_bytes()
+    for bundled in card.CARDS:
+        response = await client.get(bundled.url)
+        assert response.status == HTTPStatus.OK
+        assert await response.read() == bundled.file.read_bytes()
 
 
 @pytest.mark.parametrize(
@@ -81,32 +93,32 @@ async def test_an_existing_card_resource_is_repointed_and_duplicates_removed(
 
     await _set_up(hass)
 
-    assert await _resource_urls(hass) == [other, f"{card.CARD_URL}?v={card.card_hash()}"]
+    assert await _resource_urls(hass) == [other, *_current()]
 
 
 async def test_a_current_resource_is_left_untouched(
     hass: HomeAssistant, hass_storage: dict[str, Any]
 ) -> None:
-    """Already at the current hash: no write."""
-    url = f"{card.CARD_URL}?v={card.card_hash()}"
-    hass_storage[_RESOURCES_KEY] = _stored_resources([url])
+    """Every card already at its current hash: no write."""
+    hass_storage[_RESOURCES_KEY] = _stored_resources(_current())
     await _set_up(hass)
     resources = hass.data[LOVELACE_DATA].resources
     assert isinstance(resources, ResourceStorageCollection)
-    assert [item["id"] for item in resources.async_items()] == ["r0"]
-    assert await _resource_urls(hass) == [url]
+    assert [item["id"] for item in resources.async_items()] == ["r0", "r1"]
+    assert await _resource_urls(hass) == _current()
 
 
 async def test_yaml_resource_mode_registers_nothing_but_still_serves_the_card(
     hass: HomeAssistant, hass_client: ClientSessionGenerator
 ) -> None:
-    """YAML resources are the user's file: nothing is written; the URL still serves the card."""
+    """YAML resources are the user's file: nothing is written; the URLs still serve the cards."""
     assert await async_setup_component(hass, "lovelace", {"lovelace": {"resource_mode": "yaml"}})
     await _set_up(hass)
 
     assert await _resource_urls_yaml(hass) == []
     client = await hass_client()
-    assert (await client.get(card.CARD_URL)).status == HTTPStatus.OK
+    for bundled in card.CARDS:
+        assert (await client.get(bundled.url)).status == HTTPStatus.OK
 
 
 async def _resource_urls_yaml(hass: HomeAssistant) -> list[str]:
@@ -119,15 +131,14 @@ async def test_a_config_entry_setup_registers_the_card_once(
     built_clients: list[Any],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """Setting an entry up (and reloading it) leaves exactly one card resource."""
+    """Setting an entry up (and reloading it) leaves exactly one resource per card."""
     entry = await set_up_warm(hass, seed_warm_cache)
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
 
     urls = await _resource_urls(hass)
-    assert [u for u in urls if u.split("?")[0] == card.CARD_URL] == [
-        f"{card.CARD_URL}?v={card.card_hash()}"
-    ]
+    for bundled, current in zip(card.CARDS, _current(), strict=True):
+        assert [u for u in urls if u.split("?")[0] == bundled.url] == [current]
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 
@@ -138,7 +149,7 @@ async def test_removing_the_last_entry_removes_the_card_resource(
     built_clients: list[Any],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """The last account's removal deletes the resource; other resources stay."""
+    """The last account's removal deletes both card resources; other resources stay."""
     other = "/hacsfiles/other-card/other-card.js"
     entry = await set_up_warm(hass, seed_warm_cache)
     resources = hass.data[LOVELACE_DATA].resources
@@ -160,11 +171,19 @@ async def test_an_entry_reload_points_the_resource_at_a_changed_card_file(
 ) -> None:
     """A card-only update needs no restart: the next entry setup syncs the new hash."""
     entry = await set_up_warm(hass, seed_warm_cache)
-    monkeypatch.setattr(card, "card_hash", lambda: "abcdef12")
+
+    original = card.card_hash
+
+    def changed(path: Path = card.CARD_FILE) -> str:
+        return "abcdef12" if path == card.HOMEBASE_CARD_FILE else original(path)
+
+    monkeypatch.setattr(card, "card_hash", changed)
 
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
 
-    assert f"{card.CARD_URL}?v=abcdef12" in await _resource_urls(hass)
+    urls = await _resource_urls(hass)
+    assert f"{card.HOMEBASE_CARD_URL}?v=abcdef12" in urls
+    assert f"{card.CARD_URL}?v={original(card.CARD_FILE)}" in urls
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

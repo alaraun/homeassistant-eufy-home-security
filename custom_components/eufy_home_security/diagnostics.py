@@ -16,7 +16,13 @@ from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.components.diagnostics import async_redact_data
 
-from eufy_home_security import EufySecurityError, Station, StorageInfo, redact_serial
+from eufy_home_security import (
+    EufySecurityError,
+    Station,
+    StationState,
+    StorageInfo,
+    redact_serial,
+)
 
 from . import detections
 
@@ -123,6 +129,7 @@ async def async_get_config_entry_diagnostics(
     stations: dict[str, Any] = {}
     for coordinator in data.coordinators.values():
         station = coordinator.station
+        state: StationState | None = coordinator.data
         stations[labels[station.serial]] = {
             "model": station.model.model if station.model is not None else None,
             "connected": station.connected,
@@ -139,6 +146,8 @@ async def async_get_config_entry_diagnostics(
             "session": dataclasses.asdict(station.stats()),
             # Top-level keys of the station's parameter dumps the library reads nowhere.
             "unread_dump_keys": sorted(station.session.unread_dump_keys),
+            # Ids of the station settings read from the cloud's copy; values can be private.
+            "cloud_param_ids": list(state.cloud_param_ids) if state is not None else None,
             "events_received_by_cipher": data.router.events_received_by_cipher(station.serial),
             "storage": _storage_figures(station.storage),
             "presets": _preset_figures(station),

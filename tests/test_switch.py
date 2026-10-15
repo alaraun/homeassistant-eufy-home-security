@@ -50,6 +50,7 @@ _AUDIO_RECORDING: Final = "audio_recording_on_off"
 
 _CAMERA_CHANNEL: Final = 0
 _NOT_APPLIED: Final = "setting_not_applied"
+_MODE_TABLE_REFUSED: Final = "setting_mode_table_refused"
 _UNCONFIRMED: Final = "setting_unconfirmed"
 
 _AWAY_ACTION: Final = "camera_action_away"
@@ -410,7 +411,8 @@ async def test_a_mode_action_switch_with_no_mask_reported_shows_unknown_and_send
     seed_warm_cache: Callable[..., None],
     short_readback: None,
 ) -> None:
-    """With no mask reported the bits say nothing, and a write is refused unsent."""
+    """With no mask reported the bits say nothing, and a write is refused unsent: the
+    library has no table to change for that mode."""
     entry = await set_up_warm(hass, seed_warm_cache)
     await _enable_action_switches(hass, entry)
     siren_id = _switch_id(hass, f"{_AWAY_ACTION}_camera_siren")
@@ -420,7 +422,7 @@ async def test_a_mode_action_switch_with_no_mask_reported_shows_unknown_and_send
         await set_switch(hass, siren_id, True)
     await hass.async_block_till_done()
 
-    assert raised.value.translation_key == _NOT_APPLIED
+    assert raised.value.translation_key == _MODE_TABLE_REFUSED
     assert fake_station.mode_tables_received == []
     assert state_of(hass, siren_id) == STATE_UNKNOWN
 

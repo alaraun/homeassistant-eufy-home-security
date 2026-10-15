@@ -17,6 +17,14 @@ restarts; it claims nothing about the camera. A change with no viewer sends noth
 with a view running it turns the camera at once (``Station.async_goto_preset``) and
 the stream keeps running. A chosen slot the camera no longer has shows as
 ``camera_default`` and opens the view there.
+
+**Security mode** (one per station): the selected guard mode
+(``StationState.guard_mode``, Schedule while a schedule drives the station), next to the
+alarm panel's mode in force. Options are the modes it sets (``SETTABLE_MODES``) plus the
+current mode when it is another one (a custom mode, geofencing), which is shown and
+refused on write. Picking one calls ``Station.async_set_guard_mode`` and shows the mode
+the station applied; ``GuardModeChanged`` and ``StationStateChanged`` reach it through
+the coordinator, as they reach the panel.
 """
 
 from __future__ import annotations
@@ -32,10 +40,13 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from eufy_home_security import (
+    CommandError,
     CommandRejectedError,
     CommandUnsupportedError,
     DeviceBusyError,
     EufySecurityError,
+    GuardMode,
+    StationState,
     UnsupportedError,
     redact_serial,
 )
@@ -45,9 +56,10 @@ from .const import (
     DEFAULT_PRESET_KEY,
     LIVE_PRESET_CAMERA_DEFAULT,
     LIVE_PRESET_KEY,
+    SECURITY_MODE_KEY,
 )
 from .coordinator import StationCoordinator
-from .entity import EufyDeviceEntity, EufyPushAvailability, EufySettingEntity
+from .entity import EufyDeviceEntity, EufyPushAvailability, EufySettingEntity, EufyStationEntity
 from .settings import SettingEntitySpec, setting_specs
 
 if TYPE_CHECKING:
@@ -61,14 +73,34 @@ _NEEDS_CONFIRMATION_CODE = -502
 # One write at a time within this platform; the library serialises the wire per station.
 PARALLEL_UPDATES = 1
 
+# The modes the security-mode select sets, in its option order.
+SETTABLE_MODES: tuple[GuardMode, ...] = (
+    GuardMode.AWAY,
+    GuardMode.HOME,
+    GuardMode.SCHEDULE,
+    GuardMode.DISARMED,
+)
+
+
+def mode_option(mode: GuardMode | int | None) -> str | None:
+    """A guard mode as a select option (``away``, ``custom_1``); OFF is ``disarmed``.
+
+    None for no mode and for a code the library does not name.
+    """
+    if not isinstance(mode, GuardMode):
+        return None
+    if mode.is_disarmed:
+        return GuardMode.DISARMED.name.lower()
+    return mode.name.lower()
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: EufyConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Add every writable enum setting of every station and paired device, and the default
-    preset of every pan/tilt camera."""
+    """Add every writable enum setting of every station and paired device, each station's
+    security mode, and the default preset of every pan/tilt camera."""
     del hass  # the coordinators carry everything this platform needs
     entities: list[SelectEntity] = [
         EufySettingSelect(coordinator, spec)
@@ -81,6 +113,10 @@ async def async_setup_entry(
         for coordinator in entry.runtime_data.coordinators.values()
         for device_sn in detections.paired_device_kinds(coordinator.station)
         if detections.has_preset_entities(coordinator.station, device_sn)
+    )
+    entities.extend(
+        EufySecurityModeSelect(coordinator)
+        for coordinator in entry.runtime_data.coordinators.values()
     )
     streams = runtime.streaming(entry)
     if streams is not None:
@@ -296,3 +332,50 @@ class EufySettingSelect(EufySettingEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         """Write the value the picked label stands for; Home Assistant has checked it."""
         await self.async_write_setting(self.option_value(option))
+
+
+class EufySecurityModeSelect(EufyStationEntity, SelectEntity):
+    """A station's selected security mode; sets Away, Home, Schedule or Disarmed."""
+
+    _attr_translation_key = SECURITY_MODE_KEY
+
+    def __init__(self, coordinator: StationCoordinator) -> None:
+        super().__init__(coordinator, SECURITY_MODE_KEY)
+
+    @property
+    @override
+    def current_option(self) -> str | None:
+        """The selected mode as an option; None before a read or for an unknown code."""
+        data: StationState | None = self.coordinator.data
+        return None if data is None else mode_option(data.guard_mode)
+
+    @property
+    @override
+    def options(self) -> list[str]:
+        """The settable modes, then the current mode when it is not one of them."""
+        options = [mode.name.lower() for mode in SETTABLE_MODES]
+        current = self.current_option
+        if current is not None and current not in options:
+            options.append(current)
+        return options
+
+    @override
+    async def async_select_option(self, option: str) -> None:
+        """Set the mode ``option``; a mode the select only shows is refused, nothing sent.
+
+        Shows the mode the station applied. A library error becomes the alarm panel's
+        translated error; a plain ``UnsupportedError`` propagates as a programming error.
+        """
+        target = GuardMode.parse(option)
+        if target not in SETTABLE_MODES:
+            raise errors.security_mode_not_settable(option)
+        try:
+            applied = await self.coordinator.station.async_set_guard_mode(target)
+        except EufySecurityError as err:
+            if isinstance(err, UnsupportedError) and not isinstance(err, CommandError):
+                raise
+            raise errors.arm_failed(
+                err, target, on_demand=self.coordinator.station.connects_on_demand
+            ) from err
+        self.coordinator.async_apply_guard_mode(applied)
+        self.async_write_ha_state()

@@ -52,6 +52,19 @@ def mode_action(setting: Setting, device_type: int | None = None) -> ModeAction 
 
 
 _DELAY_PREFIXES: tuple[str, ...] = ("alarm_delay_", "leaving_delay_")
+# A per-mode delay by key prefix: the entry (alarm) delay and the leaving delay.
+_DELAY_KINDS: Mapping[str, str] = {"alarm_delay_": "entry", "leaving_delay_": "leaving"}
+
+
+def mode_delay(setting: Setting) -> tuple[str, GuardMode] | None:
+    """``("entry" | "leaving", mode)`` of a per-mode delay (``alarm_delay_away``), else None."""
+    for prefix, kind in _DELAY_KINDS.items():
+        if setting.key.startswith(prefix):
+            try:
+                return kind, GuardMode.parse(setting.key.removeprefix(prefix))
+            except ValueError:
+                return None
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,11 +119,17 @@ class SettingEntitySpec:
         """Controls are enabled, except the per-mode action bits; read-only values are off.
 
         Each camera or sensor carries five action masks (20 to 30 bits) whose names come
-        from the eufy app; they, the read-only values and settings the app replaces with
-        another (``Setting.variant_of``) stay one click away in the registry instead of
-        crowding every device page.
+        from the eufy app; they, the read-only values, settings the app replaces with
+        another (``Setting.variant_of``) and settings the app puts behind a warning
+        (``Setting.advanced``) stay one click away in the registry instead of crowding
+        every device page.
         """
-        return self.is_control and self.action is None and not self.variant
+        return (
+            self.is_control
+            and self.action is None
+            and not self.variant
+            and not self.setting.advanced
+        )
 
 
 _CONTROL_PLATFORMS: frozenset[Platform] = frozenset(

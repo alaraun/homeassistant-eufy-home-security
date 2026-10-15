@@ -307,6 +307,8 @@ EXC_RECORDING_FAILED: Final = "recording_failed"
 EXC_RECORDING_NOT_RUNNING: Final = "recording_not_running"
 # A clip stopped before the camera sent its first picture: nothing was saved.
 EXC_RECORDING_STOPPED_EMPTY: Final = "recording_stopped_empty"
+# A security mode the select shows but cannot set (a custom mode, geofencing).
+EXC_SECURITY_MODE_NOT_SETTABLE: Final = "security_mode_not_settable"
 
 # Repair issue translation keys (the top-level "issues" key of strings.json). Each
 # issue id is the key followed by the entry id, and for a station's issue the
@@ -378,6 +380,11 @@ DEFAULT_PRESET_KEY: Final = "default_preset"
 # The live-view preset select, and its option for "wherever the camera stands".
 LIVE_PRESET_KEY: Final = "live_preset"
 LIVE_PRESET_CAMERA_DEFAULT: Final = "camera_default"
+# The station's security-mode select: translation key and unique-id key.
+SECURITY_MODE_KEY: Final = "security_mode"
+# The translation sections of mode and per-mode action labels (``selector.<key>.options``).
+GUARD_MODE_LABELS_KEY: Final = "guard_mode"
+MODE_ACTION_FLAG_LABELS_KEY: Final = "mode_action_flag"
 # The pan/tilt step buttons' translation and unique-id keys, one fixed step each.
 PAN_LEFT_KEY: Final = "pan_left"
 PAN_RIGHT_KEY: Final = "pan_right"
@@ -518,6 +525,11 @@ ATTR_APPLIES_WHEN: Final = "applies_when"
 ATTR_APPLIES_WHEN_LABEL: Final = "applies_when_label"
 # On a controlling setting: dependent setting key -> the option label it applies at.
 ATTR_CONTROLS: Final = "controls"
+# The library's section id of a setting (``Setting.section``), for templates.
+ATTR_SECTION: Final = "section"
+# Where a setting's value comes from: ``p2p``, ``cloud`` or ``app_default``
+# (``StationState.setting_source``); absent while there is no value.
+ATTR_VALUE_SOURCE: Final = "value_source"
 
 # Setting keys whose write changes the picture size a camera sends: a running live view
 # is ended so the next open starts at the new size (an MPEG-TS stream cannot carry a

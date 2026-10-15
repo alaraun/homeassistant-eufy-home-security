@@ -103,6 +103,7 @@ from .const import (
     EXC_RECORDING_NOT_RUNNING,
     EXC_RECORDING_STOPPED_EMPTY,
     EXC_RECORDING_UNSUPPORTED,
+    EXC_SECURITY_MODE_NOT_SETTABLE,
     EXC_SESSION_REPLACED_SEE_REPAIRS,
     EXC_SETTING_DEVICE_UNAVAILABLE,
     EXC_SETTING_MODE_TABLE_REFUSED,
@@ -401,6 +402,18 @@ def setting_value_invalid(target: str) -> ServiceValidationError:
         translation_domain=DOMAIN,
         translation_key=EXC_SETTING_VALUE_INVALID,
         translation_placeholders={"target": target},
+    )
+
+
+def security_mode_not_settable(mode: str) -> ServiceValidationError:
+    """A security mode the select shows but does not set (a custom mode); nothing sent.
+
+    ``mode`` is the mode's id (``custom_1``), the only placeholder.
+    """
+    return ServiceValidationError(
+        translation_domain=DOMAIN,
+        translation_key=EXC_SECURITY_MODE_NOT_SETTABLE,
+        translation_placeholders={"mode": mode},
     )
 
 

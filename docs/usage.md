@@ -368,7 +368,7 @@ HomeBase (version strings by parameter id; the subsystems are unnamed) and
 ## Removal
 
 **Settings → Devices & services → Anker eufy Home Security → ⋮ → Delete**. The saved
-password, keys and cached images are deleted; with the last account also the camera
-card's dashboard resource (remove its cards from dashboards first). The sign-in
+password, keys and cached images are deleted; with the last account also the dashboard
+resources of the bundled cards (remove those cards from dashboards first). The sign-in
 hold-off is kept, so removing and re-adding cannot trigger eufy's lockout. Event
 history files stay.

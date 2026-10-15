@@ -18,7 +18,14 @@ from types import SimpleNamespace
 from typing import Any, Final
 
 import pytest
-from conftest import detection_event, now_ms, set_up_warm, wait_until
+from conftest import (
+    detection_event,
+    entity_id_for,
+    now_ms,
+    set_up_warm,
+    setting_param,
+    wait_until,
+)
 from eufy_home_security import (
     DEFAULT_STATION_SESSIONS,
     DetectionType,
@@ -170,6 +177,37 @@ async def test_the_diagnostics_download_names_the_dump_keys_the_library_does_not
 
     station = data["stations"][redact_serial(SYNTHETIC.station_sn)]
     assert station["unread_dump_keys"] == ["aa_unknown_flag", "zz_unknown_list"]
+    await _unload(hass, entry)
+
+
+async def test_the_download_lists_the_ids_of_station_settings_read_from_the_cloud(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A station setting only the cloud's device list carries is named by its id, no value;
+    its entity says ``value_source: cloud``."""
+    param = setting_param("alarm_volume_value", model="T8030")
+    station_entry = next(d for d in fake_cloud.devices if d["device_sn"] == SYNTHETIC.station_sn)
+    station_entry.setdefault("params", []).append(
+        {"param_type": param, "param_value": "20", "update_time": 1.7e9}
+    )
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    data = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+
+    station = data["stations"][redact_serial(SYNTHETIC.station_sn)]
+    assert param in station["cloud_param_ids"]
+    assert all(isinstance(i, int) for i in station["cloud_param_ids"])
+    volume = hass.states.get(
+        entity_id_for(hass, "number", SYNTHETIC.station_sn, "alarm_volume_value")
+    )
+    assert volume is not None
+    assert float(volume.state) == 20
+    assert volume.attributes["value_source"] == "cloud"
     await _unload(hass, entry)
 
 
@@ -473,7 +511,8 @@ def _stand_in_coordinator(serial: str, like: Any) -> Any:
         max_sessions=like.max_sessions,
         storage=None,
     )
-    return SimpleNamespace(station=station)
+    # No state read yet.
+    return SimpleNamespace(station=station, data=None)
 
 
 async def test_station_labels_name_the_same_station_as_the_cache_labels(

@@ -83,6 +83,15 @@
       },
       "live_preset": {
         "default": "mdi:cctv"
+      },
+      "security_mode": {
+        "default": "mdi:shield-home",
+        "state": {
+          "away": "mdi:shield-lock",
+          "home": "mdi:shield-home",
+          "schedule": "mdi:calendar-clock",
+          "disarmed": "mdi:shield-off"
+        }
       }
     },
     "number": {

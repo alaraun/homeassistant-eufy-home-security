@@ -170,6 +170,29 @@
         "in": "In",
         "out": "Out"
       }
+    },
+    "guard_mode": {
+      "options": {
+        "away": "Away",
+        "home": "Home",
+        "schedule": "Schedule",
+        "custom_1": "Custom 1",
+        "custom_2": "Custom 2",
+        "custom_3": "Custom 3",
+        "geofence": "Geofencing",
+        "disarmed": "Disarmed"
+      }
+    },
+    "mode_action_flag": {
+      "options": {
+        "record": "Record",
+        "camera_siren": "Camera siren",
+        "station_alarm": "HomeBase alarm",
+        "notification": "Notification",
+        "report_monitor_center": "Report to monitoring center",
+        "light_alarm": "Light alarm",
+        "motion_sensor_respond": "Sensor response"
+      }
     }
   },
   "issues": {
@@ -391,6 +414,9 @@
     },
     "recording_failed": {
       "message": "The camera sent the clip, but Home Assistant could not save it to the event history. Check that the media folder is writable and has free space, and that Home Assistant's ffmpeg works; the log has the details."
+    },
+    "security_mode_not_settable": {
+      "message": "Home Assistant cannot switch the HomeBase to {mode}, so nothing was sent. Choose Away, Home, Schedule or Disarmed, or set this mode in the eufy app."
     }
   },
   "entity": {
@@ -490,6 +516,19 @@
         "name": "Live view preset",
         "state": {
           "camera_default": "Camera default"
+        }
+      },
+      "security_mode": {
+        "name": "Security mode",
+        "state": {
+          "away": "Away",
+          "home": "Home",
+          "schedule": "Schedule",
+          "custom_1": "Custom 1",
+          "custom_2": "Custom 2",
+          "custom_3": "Custom 3",
+          "geofence": "Geofencing",
+          "disarmed": "Disarmed"
         }
       }
     },

@@ -18,6 +18,7 @@ from conftest import (
     now_ms,
     record_states,
     set_up_warm,
+    setting_param,
     setup_entry,
     state_of,
     wait_until,
@@ -132,6 +133,20 @@ def wakeable(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_a_standalone_station_sets_up_from_cache_without_waking(
     hass: HomeAssistant, fake_cloud, seed_warm_cache, built_clients, fake_station
 ):
+    """From the cached device list alone: every entity available, no wake, no fetch but the
+    session probe's.
+
+    The cloud copy holds the custom recording power mode, so the settings that apply only
+    in it (clip length, retrigger interval) are available too; without it the library reads
+    the app default (optimal battery life) and those show unavailable by ``applies_when``.
+    """
+    fake_cloud.devices[0]["params"].append(
+        {
+            "param_type": setting_param("power_manager_mode", model="T8170"),
+            "param_value": "3",
+            "update_time": 1.7e9,
+        }
+    )
     seed_warm_cache()
     n = len(fake_cloud.calls)
     entry = add_entry(hass)

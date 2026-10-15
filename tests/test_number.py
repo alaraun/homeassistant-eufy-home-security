@@ -548,17 +548,24 @@ async def test_two_number_writes_of_the_same_value_end_at_that_value(
     await hass.async_block_till_done()
 
 
-async def test_a_number_the_station_does_not_report_shows_unknown(
+async def test_a_station_number_neither_the_dump_nor_the_cloud_carries_shows_the_app_default(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """A setting the dump does not carry shows unknown, never a default."""
+    """A station setting the dump and the cloud's copy lack shows the library's app default,
+    marked ``value_source: app_default``."""
     entry = await set_up_warm(hass, seed_warm_cache)
     entity_id = entity_id_for(hass, NUMBER_DOMAIN, SYNTHETIC.station_sn, _ALARM_VOLUME)
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+    default = station.setting(_ALARM_VOLUME).default
+    assert default is not None
 
-    assert state_of(hass, entity_id) == "unknown"
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert float(state.state) == default
+    assert state.attributes["value_source"] == "app_default"
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

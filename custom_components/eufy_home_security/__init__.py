@@ -10,7 +10,7 @@ from types import MappingProxyType
 from typing import Any, Final
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import CONF_EMAIL, EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.const import CONF_EMAIL, EVENT_HOMEASSISTANT_STOP, EntityCategory, Platform
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
@@ -35,10 +35,12 @@ from . import (
     detections,
     errors,
     history,
+    homebase,
     preset_upload,
     recordings,
     runtime,
     session_probe,
+    settings_layout,
     small_images,
     stale_devices,
     station_recordings,
@@ -153,12 +155,15 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Serve the bundled dashboard card, keep its resource current, and register the
-    station-recordings and preset-picture websocket commands and the thumbnail view."""
+    """Serve the bundled dashboard cards, keep their resources current, and register the
+    websocket commands (station recordings, preset pictures, settings layout, HomeBase
+    and arming groups) and the thumbnail view."""
     del config  # config entries only
     await card.async_setup_card(hass)
     station_recordings.async_setup(hass)
     preset_upload.async_setup(hass)
+    settings_layout.async_setup(hass)
+    homebase.async_setup(hass)
     return True
 
 
@@ -490,6 +495,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         station_recordings=station_recordings.StationRecordings(hass, stored_recordings),
     )
     _async_forget_moved_setting_entities(hass, entry, coordinators.values())
+    _async_forget_dropped_setting_entities(hass, entry, coordinators.values())
     _async_forget_parentless_setting_entities(hass, entry, coordinators.values())
     _async_forget_battery_entities(hass, entry, coordinators.values())
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -601,6 +607,56 @@ def _async_forget_moved_setting_entities(
                     registry.async_remove(entity_id)
 
 
+def _async_forget_dropped_setting_entities(
+    hass: HomeAssistant, entry: EufyConfigEntry, coordinators: Iterable[StationCoordinator]
+) -> None:
+    """Forget a served device's setting row the library no longer lists.
+
+    Two kinds of row, never a unique id this setup builds and only this entry's rows on
+    the setting platforms of a served station or its paired devices:
+
+    - a ``toggles`` member switch of a setting still listed, for a member the library no
+      longer names (``<serial>_<key>_<member>``);
+    - a setting row named by the library: no translation key, no device class, a name
+      and a config or diagnostic category. Only setting entities carry a name of their
+      own (``Setting.name``); the integration's entities are named by translation key or
+      device class. A dropped setting of a device class (a duration) is not recognised.
+    """
+    registry = er.async_get(hass)
+    built: set[str] = set()
+    served: set[str] = set()
+    members: dict[str, set[str]] = {}
+    for coordinator in coordinators:
+        station = coordinator.station
+        served.add(station.serial)
+        served.update(device.device_sn for device in station.sub_devices if device.device_sn)
+        for spec in setting_specs(station):
+            serial = spec.device_sn or station.serial
+            built.add(entity_unique_id(serial, spec.key))
+            if spec.member is not None:
+                members.setdefault(serial, set()).add(
+                    f"{entity_unique_id(serial, spec.setting.key)}_"
+                )
+    for registered in er.async_entries_for_config_entry(registry, entry.entry_id):
+        unique_id = registered.unique_id
+        if registered.domain not in _SETTING_DOMAINS or unique_id in built:
+            continue
+        serial = unique_id.split("_", 1)[0]
+        if serial not in served:
+            continue
+        dropped_member = registered.domain == Platform.SWITCH and any(
+            unique_id.startswith(prefix) for prefix in members.get(serial, ())
+        )
+        library_named = (
+            registered.translation_key is None
+            and registered.original_device_class is None
+            and registered.original_name is not None
+            and registered.entity_category in (EntityCategory.CONFIG, EntityCategory.DIAGNOSTIC)
+        )
+        if dropped_member or library_named:
+            registry.async_remove(registered.entity_id)
+
+
 # The battery-bound rows of a paired device, by platform domain.
 _BATTERY_UNIQUE_KEYS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
     {
@@ -682,7 +738,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry[Any]) -> No
 
     Any account-id-mismatch or cipher-unavailable issue goes too: an entry whose
     setup failed was never unloaded, so nothing else deletes it. The entry's cached
-    stills are deleted, and with the last entry the dashboard card's resource. The
+    stills are deleted, and with the last entry the dashboard cards' resources. The
     record of the recordings copied into the history goes too; the files stay.
     """
     errors.delete_reload_scoped_issues(hass, entry)

@@ -29,6 +29,11 @@ from homeassistant.helpers import issue_registry as ir
 from custom_components.eufy_home_security import runtime
 from custom_components.eufy_home_security.const import CONF_SESSION_PROBE, DOMAIN
 
+# Past every clock these tests advance: the library's hourly cloud-state refresh (a
+# device-list fetch of its own, tested in the library) stays out of the call counts, so
+# each "devices" call counted here is the probe's.
+_NO_CLOUD_STATE_REFRESH = {"cloud_state_refresh": 30 * 24 * 3600.0}
+
 
 async def test_the_first_probe_runs_a_minute_after_setup_and_a_kick_out_becomes_the_repair(
     hass: HomeAssistant,
@@ -59,6 +64,7 @@ async def test_the_first_probe_runs_a_minute_after_setup_and_a_kick_out_becomes_
     assert "Session probe" in caplog.text
 
 
+@pytest.mark.parametrize("client_options", [_NO_CLOUD_STATE_REFRESH])
 async def test_a_healthy_session_is_probed_at_a_minute_and_again_at_six_hours_without_a_login(
     hass: HomeAssistant,
     fake_station,
@@ -67,6 +73,7 @@ async def test_a_healthy_session_is_probed_at_a_minute_and_again_at_six_hours_wi
     fake_cloud: FakeCloud,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """One device-list read at a minute and one at six hours, no login, no issue."""
     entry = await set_up_warm(hass, seed_warm_cache)
     caplog.set_level(logging.DEBUG, logger="custom_components.eufy_home_security")
 
@@ -155,6 +162,7 @@ async def test_a_key_identity_a_new_exchange_does_not_restore_is_reported_not_hi
     await hass.async_block_till_done()
 
 
+@pytest.mark.parametrize("client_options", [_NO_CLOUD_STATE_REFRESH])
 async def test_with_the_option_off_no_probe_runs(
     hass: HomeAssistant,
     fake_station,
@@ -163,6 +171,7 @@ async def test_with_the_option_off_no_probe_runs(
     fake_cloud: FakeCloud,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """With the option off nothing is read from the cloud over six hours."""
     entry = await set_up_warm(hass, seed_warm_cache, options={CONF_SESSION_PROBE: False})
     caplog.set_level(logging.DEBUG, logger="custom_components.eufy_home_security")
 

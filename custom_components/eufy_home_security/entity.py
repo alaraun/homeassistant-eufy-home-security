@@ -27,6 +27,8 @@ from .const import (
     ATTR_APPLIES_WHEN,
     ATTR_APPLIES_WHEN_LABEL,
     ATTR_CONTROLS,
+    ATTR_SECTION,
+    ATTR_VALUE_SOURCE,
     DOMAIN,
     PICTURE_CHANGING_SETTINGS,
 )
@@ -213,8 +215,10 @@ class EufySettingEntity(EufyDeviceEntity):
     value decodes and whether it is writable.
     """
 
-    # Constant for the entity's life: kept out of the recorder.
-    _unrecorded_attributes = frozenset({ATTR_APPLIES_WHEN, ATTR_APPLIES_WHEN_LABEL, ATTR_CONTROLS})
+    # Constant for the entity's life, or provenance only: kept out of the recorder.
+    _unrecorded_attributes = frozenset(
+        {ATTR_APPLIES_WHEN, ATTR_APPLIES_WHEN_LABEL, ATTR_CONTROLS, ATTR_SECTION, ATTR_VALUE_SOURCE}
+    )
 
     def __init__(self, coordinator: StationCoordinator, spec: SettingEntitySpec) -> None:
         super().__init__(coordinator, spec.device_sn, spec.key)
@@ -245,8 +249,11 @@ class EufySettingEntity(EufyDeviceEntity):
     @property
     @override
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        """``applies_when`` with its label on a dependent; ``controls`` on the setting it depends on."""
-        attributes: dict[str, Any] = {}
+        """``section`` and ``value_source``; ``applies_when`` with its label on a dependent;
+        ``controls`` on the setting it depends on."""
+        attributes: dict[str, Any] = {ATTR_SECTION: self._spec.setting.section}
+        if (source := self._value_source()) is not None:
+            attributes[ATTR_VALUE_SOURCE] = source
         if (condition := self._spec.setting.applies_when) is not None:
             key, wanted = condition
             attributes[ATTR_APPLIES_WHEN] = f"{key}={wanted}"
@@ -258,7 +265,22 @@ class EufySettingEntity(EufyDeviceEntity):
                 attributes[ATTR_APPLIES_WHEN_LABEL] = label
         if controls := self._controls():
             attributes[ATTR_CONTROLS] = controls
-        return attributes or None
+        return attributes
+
+    def _value_source(self) -> str | None:
+        """The library's source of the shown value (``p2p``, ``cloud``, ``app_default``), else None.
+
+        None while the value is unknown, and for a value shown from a write of a setting the
+        dump never reports (``_written``).
+        """
+        data: StationState | None = self.coordinator.data
+        if data is None or self._unsettled or not self._spec.setting.readable:
+            return None
+        try:
+            source = data.setting_source(self._spec.setting.key, device_sn=self._spec.device_sn)
+        except UnsupportedError:
+            return None
+        return None if source is None else str(source)
 
     def _controls(self) -> dict[str, str]:
         """Dependent setting key -> the option label it applies at.

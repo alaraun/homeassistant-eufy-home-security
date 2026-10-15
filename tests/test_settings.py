@@ -231,7 +231,8 @@ async def test_controls_are_config_and_enabled_read_only_values_are_diagnostic_a
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """Category and default enablement follow the platform; action bits and variants start off."""
+    """Category and default enablement follow the platform; action bits, variants and
+    settings the app puts behind a warning (``advanced``) start off."""
     entry = await set_up_warm(hass, seed_warm_cache)
     registry = er.async_get(hass)
     station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
@@ -242,6 +243,7 @@ async def test_controls_are_config_and_enabled_read_only_values_are_diagnostic_a
         Platform.NUMBER,
         Platform.SENSOR,
     }
+    advanced: list[str] = []
     for spec in specs:
         unique_id = entity_unique_id(spec.device_sn or station.serial, spec.key)
         entity_id = registry.async_get_entity_id(spec.platform, DOMAIN, unique_id)
@@ -253,9 +255,15 @@ async def test_controls_are_config_and_enabled_read_only_values_are_diagnostic_a
         else:
             assert entity.entity_category is EntityCategory.DIAGNOSTIC, spec.key
         if spec.is_control and spec.action is None and not spec.variant:
+            if spec.setting.advanced:
+                advanced.append(spec.key)
+                assert entity.disabled_by is er.RegistryEntryDisabler.INTEGRATION, spec.key
+                continue
             assert entity.disabled_by is None, spec.key
         else:
             assert entity.disabled_by is er.RegistryEntryDisabler.INTEGRATION, spec.key
+    # The HomeBase's working mode is the library's advanced control on this fixture.
+    assert "working_mode_value" in advanced
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
