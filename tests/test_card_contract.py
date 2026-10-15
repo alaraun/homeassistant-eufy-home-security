@@ -1,9 +1,11 @@
 """The bundled card's contract with the integration and the library.
 
 The card finds entities by translation key or library setting key, calls this
-integration's actions, reads its state attributes and recognises one of its error
-keys. Each name it uses must still exist here, so a change on either side that would
-leave a card row or button silently empty fails this module.
+integration's actions and websocket commands, reads its state attributes and
+recognises one of its error keys. Each name it uses must still exist here, so a change
+on either side that would leave a card row or button silently empty fails this module.
+Settings tabs come from the ``settings_layout`` command only: the card keeps no
+section table and never reads the ``section`` attribute.
 """
 
 from __future__ import annotations
@@ -19,7 +21,12 @@ from typing import Final
 import pytest
 import yaml
 from eufy_home_security import MAX_PRESET_SLOTS
-from eufy_home_security.devices import Scope, SettingControl
+from eufy_home_security.devices import (
+    MODES_SECTION,
+    SETTING_SECTIONS,
+    Scope,
+    SettingControl,
+)
 from eufy_home_security.devices.model_settings import (
     bundled_codes,
     mode_table_settings,
@@ -50,12 +57,8 @@ _HA_ATTRIBUTES: Final = frozenset(
         "unit_of_measurement",
     }
 )
-# Section ids inside the card's key tables, not entity keys.
-_CARD_WORDS: Final = frozenset({"picture", "detection", "recording", "power", "ptz", "other"})
 # The card's tables that name setting keys.
 _KEY_TABLES: Final = (
-    "GROUPS",
-    "ROW_UNCATEGORISED",
     "ROW_ICONS",
     "ROW_LABELS",
     "DEP_ORDER",
@@ -156,6 +159,39 @@ def test_the_record_action_the_card_calls_is_registered() -> None:
     assert not missing, missing
 
 
+def _registered_ws_types() -> set[str]:
+    """Websocket command types this integration registers (literal or ``f"{DOMAIN}/…"``)."""
+    integration = "\n".join(p.read_text(encoding="utf-8") for p in _ROOT.glob("*.py"))
+    registered = set(re.findall(r"[\"'](eufy_home_security/[a-z_/]+)[\"']", integration))
+    registered |= {
+        f"{const.DOMAIN}/{suffix}"
+        for suffix in re.findall(r"f[\"']\{DOMAIN\}/([a-z_/]+)[\"']", integration)
+    }
+    return registered
+
+
+def test_the_settings_layout_command_the_card_sends_is_registered() -> None:
+    """Settings tabs come from ``LAYOUT_WS``, sent as ``{ type: LAYOUT_WS, device_id }``."""
+    assert _names_ws("LAYOUT_WS") == "eufy_home_security/settings_layout"
+    assert _names_ws("LAYOUT_WS") in _registered_ws_types()
+    sent = re.findall(r"\{ type: LAYOUT_WS, ([^}]*) \}", _SOURCE)
+    assert sent, "the card's layout request"
+    assert all(set(re.findall(r"(\w+):", fields)) == {"device_id"} for fields in sent), sent
+
+
+def test_the_card_keeps_no_section_table() -> None:
+    """Tabs, headings and order come from the layout: no key lists by section, no ``section``
+    attribute read; the ids the card names (icons, Modes, Power readings) are library sections."""
+    assert not re.search(r"\bconst (GROUPS|ROW_SKIP|ROW_UNCATEGORISED)\b", _SOURCE)
+    assert not re.search(r"attributes\s*(?:\.\s*section\b|\[\s*['\"]section)", _SOURCE)
+    ids = {s.id for s in SETTING_SECTIONS}
+    icons = set(re.findall(r"(?:^|[{,]\s*)([a-z]+):", _block("SECTION_ICONS"), re.MULTILINE))
+    assert icons, "SECTION_ICONS"
+    assert not icons - ids, f"icons for sections the library does not have: {sorted(icons - ids)}"
+    assert _names_ws("MODES_SECTION") == MODES_SECTION
+    assert _names_ws("POWER_SECTION") in ids
+
+
 def test_the_station_recording_commands_the_card_sends_are_registered() -> None:
     """The Station sub-tab's websocket commands are registered by the integration.
 
@@ -164,13 +200,7 @@ def test_the_station_recording_commands_the_card_sends_are_registered() -> None:
     """
     sent = {_names_ws(name) for name in ("STATION_WS", "STATION_FETCH_WS")}
     assert sent == {"eufy_home_security/recordings", "eufy_home_security/recordings/fetch"}
-    integration = "\n".join(p.read_text(encoding="utf-8") for p in _ROOT.glob("*.py"))
-    registered = set(re.findall(r"[\"'](eufy_home_security/[a-z_/]+)[\"']", integration))
-    registered |= {
-        f"{const.DOMAIN}/{suffix}"
-        for suffix in re.findall(r"f[\"']\{DOMAIN\}/([a-z_/]+)[\"']", integration)
-    }
-    missing = sorted(sent - registered)
+    missing = sorted(sent - _registered_ws_types())
     assert not missing, f"the card sends websocket commands nothing registers: {missing}"
 
 
@@ -217,7 +247,7 @@ def test_the_preset_picture_the_card_sends_fits_the_command() -> None:
 
 
 def _names_ws(name: str) -> str:
-    """The command type a ``const <name> = '<type>'`` line of the card holds."""
+    """The string a ``const <name> = '<value>'`` line of the card holds."""
     match = re.search(rf"const {name} = '([^']+)';", _SOURCE)
     assert match, name
     return match.group(1)
@@ -237,23 +267,22 @@ def test_every_error_key_the_card_recognises_exists() -> None:
         assert key in _STRINGS["exceptions"], key
 
 
-def test_the_documented_settings_groups_are_the_cards() -> None:
-    """``settings_groups`` ids in the user doc are the card's groups plus More, in the card's order."""
-    ids = re.findall(r"^\s*\['([a-z]+)', '", _block("GROUPS"), re.MULTILINE)
-    more = re.findall(r"'([a-z]+)'", _block("MORE_GROUP"))[0]
+def test_the_documented_settings_groups_are_the_library_sections() -> None:
+    """``settings_groups`` ids in the user doc are the library's sections in order, then More."""
+    more = re.findall(r"'([a-z]+)'", _block("MORE_TAB"))[0]
     doc = (_ROOT.parent.parent / "docs" / "card.md").read_text(encoding="utf-8")
     listed = doc[doc.index("`settings_groups` lists the tab ids") :]
     listed = listed[: listed.index("Without the key")]
-    assert re.findall(r"`([a-z]+)`", listed) == [*ids, more]
+    assert re.findall(r"`([a-z]+)`", listed) == [*(s.id for s in SETTING_SECTIONS), more]
 
 
 def test_every_setting_key_the_card_names_is_built() -> None:
-    """Group, icon, label, dependent-order and live-restart tables name keys the integration builds."""
+    """Icon, label, dependent-order and live-restart tables name keys the integration builds."""
     named: set[str] = set()
     for table in _KEY_TABLES:
         named |= _names(_block(table))
     named |= set(re.findall(r"[a-z][a-z0-9_]+", _block("RESTARTS_LIVE").split("=", 1)[1]))
-    known = _built_setting_keys() | _translation_keys() | _CARD_WORDS
+    known = _built_setting_keys() | _translation_keys()
     unknown = sorted(named - known)
     assert not unknown, f"the card names keys nothing builds: {unknown}"
 

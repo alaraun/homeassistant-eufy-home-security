@@ -36,11 +36,11 @@ live_seconds: 120                # optional: length of a started live view (defa
 auto_live: timed                 # optional: start live view when the dashboard opens: timed | continuous (true = timed)
 history_folder: Front_door       # optional: the camera's history folder, when it differs from the device name
 layout: auto                     # optional: auto | compact | regular
-settings_include:                # optional: more of the camera's controls in Settings (entity ids)
-  - switch.front_door_away_record
+settings_include:                # optional: more of the camera's entities in Settings (entity ids)
+  - number.front_door_entry_delay_away
 settings_exclude:                # optional: controls to leave out of Settings (entity ids)
   - switch.front_door_silent_firmware_updates
-settings_groups:                 # optional: Settings tabs to show, in this order (default: all, in the card's order)
+settings_groups:                 # optional: Settings tabs to show, in this order (default: all, in the integration's order)
   - detection
   - picture
   - more
@@ -108,16 +108,27 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     (5–10 s each, one at a time); Play then plays it. A standalone camera has no Station sub-tab.
   - Files come from the integration's history in HA's media folder (`Media › eufy_home_security › <camera name>`).
     A missing folder (history off, or nothing saved yet) reads as empty.
-- **Settings:** built from the camera device's own controls (every `select`, `number` and `switch` with entity
-  category *config*, plus the live view preset), so a new camera model needs no card change. Entities hidden or
-  disabled in HA are left out.
-  - Tabs: Picture, Detection, Recording, Power, Pan & tilt, Other, More (only those with rows). The common
-    settings sit in the named tabs; every other setting is under More; `settings_include` adds a row to Other.
-  - `settings_groups` lists the tab ids to show, in that order: `picture`, `detection`, `recording`, `power`,
-    `ptz` (Pan & tilt), `other`, `more`. Without the key every group shows in the order above. A group not
-    listed is hidden with its rows; an unknown id is ignored. A group a later card version adds stays hidden
-    while the key is set; remove the key to get every group. In the editor the groups are chips: drag to
-    reorder, ✕ to hide, the picker below adds one back; removing every chip shows every group.
+- **Settings:** the camera device's settings (its `select`, `number` and `switch` entities), so a new camera
+  model needs no card change. Entities hidden or disabled in HA are left out.
+  - Tabs follow the integration's sections: the card asks the integration for the device's settings layout
+    (websocket `eufy_home_security/settings_layout`) and shows one tab per section that has settings, with the
+    section's name, in the integration's order; rows keep the integration's order within a section (two-line
+    rows first, switches after). The layout is asked when the card first draws and again when the device's
+    entities change in HA. Until the first answer Settings shows `Loading settings` in the tabs' place; when it
+    fails, `Settings did not load` with Retry. A later failure keeps the last tabs.
+  - The per-mode entry and leaving delays and device actions (the Modes section) belong to the HomeBase and are
+    left out; `settings_include` adds one back under Modes. An entity in no section (a `settings_include` extra,
+    another configuration control of the device) is under More, the last tab.
+  - On a narrow card only the open tab shows its name; when even that does not fit, the tabs are icons and the
+    open tab's name is on a line under them.
+  - `settings_groups` lists the tab ids to show, in that order. The ids are the integration's section ids:
+    `picture`, `detection`, `recording`, `audio`, `power`, `ptz` (Pan & tilt), `notifications`, `doorbell`
+    (Doorbell & chime), `alarm`, `modes`, `storage`, `network`, `system`, `other`, then `more`. Without the key
+    every section with settings shows in the integration's order, then More. A section not listed is hidden
+    with its rows; an id the camera has no section for is skipped and kept in the list. A section the
+    integration adds later stays hidden while the key is set; remove the key to get every section. In the
+    editor the tabs are chips (the camera's sections and More): drag to reorder, ✕ to hide, the picker below
+    adds one back; removing every chip shows every tab.
   - A setting that applies only in one option of another sits under it, captioned with that option (`Only in
     Custom`), and shows only while that option is chosen or picked (before Set).
   - A setting the integration makes unavailable is greyed out; one the device never reports reads

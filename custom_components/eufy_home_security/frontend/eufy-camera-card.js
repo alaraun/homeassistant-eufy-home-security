@@ -1,10 +1,10 @@
 // eufy camera card: a tile-style header, a 16:9 picture that shows the still until live view is started,
 // pan/tilt/zoom and presets on the picture (cameras that have them), its history, and the camera's settings (staged; Set sends).
 // Entities come from the camera's device (translation_key, else the library key in the unique id), so only
-// `entity` is required; the settings rows are built from whatever settings the device has: the common ones
-// grouped, a setting that applies only in one state of another nested under it, the rest under More settings.
+// `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
+// (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.13-1';
+const CARD_VERSION = '2026.10.15-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -110,33 +110,38 @@ const EVENT_WORD = { motion: 'Motion', person: 'Person', identified_person: 'Kno
 
 // ---- Settings rows: every select/number/switch of the camera's device, keyed by the library's setting key ----
 const ROW_DOMAINS = ['select', 'number', 'switch'];
-// Rows without an entity category that still belong in Settings
-const ROW_UNCATEGORISED = ['live_preset'];
-// Guard-mode behaviour (per-mode actions, entry/leaving delays) belongs to the HomeBase and alarm, not the camera:
-// a row only when `settings_include` names it
-const ROW_SKIP = /^(camera|sensor)_action_|^(alarm|leaving)_delay_/;
-// The main list, by group: id, heading, icon, keys in row order. A key no group names goes under More settings,
-// unless `settings_include` names its entity (then Other).
-const GROUPS = [
-  ['picture', 'Picture', 'mdi:image-outline', ['nightvision_type_new', 'nightvision_type', 'spotlight_switch', 'spotlight_status',
-    'spotlight_brightness_level', 'led_on_off', 'watermark_set']],
-  ['detection', 'Detection', 'mdi:motion-sensor', ['motion_detection_status', 'detection_sensitivity',
-    'detection_type_set', 'detection_type_set_1', 'detection_type_set_2', 'detection_type_set_3', 'detection_type_set_4',
-    'disable_ptz_turn_switch']],
-  ['recording', 'Recording', 'mdi:record-rec', ['live_streaming_resolution', 'record_resolution', 'audio_recording_on_off']],
-  ['power', 'Power', 'mdi:battery-heart-variant', ['power_manager_mode', 'power_charge_mode']],
-  ['ptz', 'Pan & tilt', 'mdi:pan', ['live_preset', 'default_preset', 'ai_tracking_status', 'ptz_turn_speed']],
-  ['other', 'Other', 'mdi:tune-variant', []],
-];
-// Settings tabs in the card's order, More last. `settings_groups` lists the tabs to show in its order: a group it
-// does not list is hidden (also one a later card version adds), an id the card does not know is ignored.
-const MORE_GROUP = ['more', 'More', 'mdi:dots-horizontal'];
-const GROUP_IDS = [...GROUPS.map(g => g[0]), MORE_GROUP[0]];
-const groupInfo = id => (id === MORE_GROUP[0] ? MORE_GROUP : GROUPS.find(x => x[0] === id));
-const shownGroups = (cfg) => {
+// The integration's settings layout of a device: { sections: [{ id, heading, order, entity_ids }] }. Settings tabs,
+// their names and order come only from it; an entity in no section goes under More.
+const LAYOUT_WS = 'eufy_home_security/settings_layout';
+// The section of the per-mode delays and device actions (the HomeBase's): a row only when `settings_include` names it
+const MODES_SECTION = 'modes';
+// The section whose tab also shows the power readings
+const POWER_SECTION = 'power';
+// Tab icons by section id (presentation only); any other id gets SECTION_ICON
+const SECTION_ICONS = {
+  picture: 'mdi:image-outline', detection: 'mdi:motion-sensor', recording: 'mdi:record-rec', audio: 'mdi:volume-high',
+  power: 'mdi:battery-heart-variant', ptz: 'mdi:pan', notifications: 'mdi:bell-outline', doorbell: 'mdi:doorbell',
+  alarm: 'mdi:alarm-light-outline', modes: 'mdi:shield-home-outline', storage: 'mdi:harddisk', network: 'mdi:wifi',
+  system: 'mdi:cog-outline',
+};
+const SECTION_ICON = 'mdi:tune-variant';
+const MORE_TAB = ['more', 'More', 'mdi:dots-horizontal'];
+// A layout answer's sections by `order` (the answer's own order among equals): [{ id, heading, ids }]
+const layoutSections = (r) => {
+  const ord = x => (Number.isFinite(x.order) ? x.order : Number.MAX_SAFE_INTEGER);
+  return (r && Array.isArray(r.sections) ? r.sections : []).filter(x => x && x.id).map((x, i) => ({
+    id: String(x.id), heading: String(x.heading || x.id), order: Number(x.order), i, ids: [].concat(x.entity_ids || []).map(String) }))
+    .sort((a, b) => ord(a) - ord(b) || a.i - b.i);
+};
+// A device's entity set in hass.entities; the layout is asked again when it changes
+const deviceKey = (reg, dev) => Object.keys(reg).filter(id => reg[id] && reg[id].device_id === dev).sort().join();
+// Settings tabs in order. No `settings_groups`: every section of the layout, then More. A list: its ids in its order;
+// a section it does not list is hidden (also one the integration adds later), an id the layout lacks is skipped.
+const shownTabs = (cfg, secs) => {
+  const ids = [...(secs || []).map(x => x.id), MORE_TAB[0]];
   const v = cfg && cfg.settings_groups;
-  if (v === undefined || v === null) return GROUP_IDS.slice();
-  return [...new Set([].concat(v).map(String))].filter(id => GROUP_IDS.includes(id));
+  if (v === undefined || v === null) return ids;
+  return [...new Set([].concat(v).map(String))].filter(id => ids.includes(id));
 };
 // Dependents in this order under their controller
 const DEP_ORDER = ['video_clip_length', 'trigger_interval_time', 'motion_stop_end_early'];
@@ -250,6 +255,7 @@ class EufyCameraCard extends HTMLElement {
     this._thumbs = new Set(); // station thumbnail URLs already shown (rendered with src at once)
     this._onVis = () => this._visibility();
     this._dd = null;        // setting key whose dropdown is open
+    this._lay = null;       // settings layout: { dev, key, secs, loading, err }; secs stay while the next one loads
   }
 
   static getConfigElement() { return document.createElement('eufy-camera-card-editor'); }
@@ -422,6 +428,11 @@ class EufyCameraCard extends HTMLElement {
     const keys = this._keysOf(siblings.filter(e => !e.translation_key && ROW_DOMAINS.concat(['sensor', 'binary_sensor']).includes(e.entity_id.split('.')[0])
       && (e.entity_category === 'config' || e.entity_category === 'diagnostic' || e.entity_id.startsWith('binary_sensor.'))).map(e => e.entity_id));
     const inc = new Set([].concat(c.settings_include || [])), exc = new Set([].concat(c.settings_exclude || []));
+    // entity id -> { id: section, at: position in it }
+    const lay = dev ? this._layout(dev, deviceKey(reg, dev)) : null;
+    out.layout = lay;
+    out.sec = {};
+    ((lay && lay.secs) || []).forEach(x => x.ids.forEach((id, at) => { if (!out.sec[id]) out.sec[id] = { id: x.id, at }; }));
     siblings.forEach((e) => {
       const id = e.entity_id, tk = e.translation_key, st = h.states[id];
       const dom = id.split('.')[0];
@@ -442,7 +453,7 @@ class EufyCameraCard extends HTMLElement {
       const key = tk || keys[id];
       if (key === undefined) { out.keysPending = true; return; }
       if (!out.byKey[key] || dom !== 'sensor') out.byKey[key] = id;
-      if (this._rowPick(e, key, inc, exc)) { out.rows.push({ id, key, inc: inc.has(id) }); out.rowIds[key] = id; }
+      if (this._rowPick(e, out.sec[id], lay, inc, exc)) { out.rows.push({ id, key }); out.rowIds[key] = id; }
     });
     Object.keys(ROLES).map(k => ROLES[k]).concat(['battery']).forEach((k) => { if (c[`${k}_entity`]) out[k] = c[`${k}_entity`]; });
 
@@ -451,14 +462,41 @@ class EufyCameraCard extends HTMLElement {
     return out;
   }
 
-  // A settings row by default: a configuration control of the camera (not a guard-mode action or delay),
-  // not hidden in HA; `settings_include` / `settings_exclude` (entity ids) add and remove rows
-  _rowPick(e, key, inc, exc) {
+  // A settings row by default: an entity of a layout section other than Modes, else a configuration control in no
+  // section (More), not hidden in HA; `settings_include` / `settings_exclude` (entity ids) add and remove rows. While
+  // a new layout loads, an entity the previous one lacks waits for it.
+  _rowPick(e, sec, lay, inc, exc) {
     if (exc.has(e.entity_id)) return false;
     if (inc.has(e.entity_id)) return true;
     if (e.hidden || e.hidden_by) return false;
-    if (e.entity_category !== 'config' && !ROW_UNCATEGORISED.includes(key)) return false;
-    return !ROW_SKIP.test(key);
+    if (sec) return sec.id !== MODES_SECTION;
+    if (lay && lay.secs && lay.loading) return false;
+    return e.entity_category === 'config';
+  }
+
+  // The device's settings layout, asked on first use and again when its entity set (`key`) changes; the previous
+  // sections stay while the next answer loads or when it fails
+  _layout(dev, key) {
+    const L = this._lay;
+    if (L && L.dev === dev && L.key === key) return L;
+    const cur = { dev, key, secs: L && L.dev === dev ? L.secs : null, loading: true, err: null };
+    this._lay = cur;
+    const h = this._hass;
+    if (!h || !h.callWS) { cur.loading = false; cur.err = 'no connection'; return cur; }
+    Promise.resolve().then(() => h.callWS({ type: LAYOUT_WS, device_id: dev })).then((r) => {
+      if (this._lay !== cur) return;
+      cur.secs = layoutSections(r);
+      cur.loading = false;
+      this._ents = null;
+      this.render();
+    }, (e) => {
+      if (this._lay !== cur) return;
+      cur.loading = false;
+      cur.err = (e && e.message) || 'no answer';
+      this._ents = null;
+      this.render();
+    });
+    return cur;
   }
 
   // Library keys for entities the integration names from the library (no translation_key): the unique id is
@@ -1315,6 +1353,13 @@ class EufyCameraCard extends HTMLElement {
       this._focus(`more-${id}`);
       return;
     }
+    if (has('lretry')) {
+      this._lay = null;
+      this._ents = null;
+      this.render();
+      this._focus('more-settings');
+      return;
+    }
     const stab = has('stab');
     if (stab) {
       this._tab = stab.dataset.stab;
@@ -1641,11 +1686,10 @@ class EufyCameraCard extends HTMLElement {
     return sentence(n.charAt(0).toUpperCase() + n.slice(1));
   }
 
-  // A row's group: the GROUPS entry naming its key; a key added by `settings_include` -> Other; else More settings
-  _group(key, inc) {
-    const g = GROUPS.find(x => x[3].includes(key));
-    if (g) return { id: g[0], at: g[3].indexOf(key) };
-    return inc ? { id: 'other', at: 99 } : { id: 'more', at: 99 };
+  // A row's tab: its layout section and position there; More for an entity in no section
+  _group(id) {
+    const x = this._entities().sec[id];
+    return x ? { id: x.id, at: x.at } : { id: MORE_TAB[0], at: 0 };
   }
 
   // The setting a row depends on: { key, id, opt } with opt the controller's option it needs (null when unknown).
@@ -1717,7 +1761,7 @@ class EufyCameraCard extends HTMLElement {
     // ---- settings rows (grouped; row order is the send order) ----
     const rows = [];
     const presetLbl = v => (v === 'camera_default' ? 'Default' : `P${parseInt(v, 10) + 1}`);
-    E.rows.forEach(({ id, key, inc }) => {
+    E.rows.forEach(({ id, key }) => {
       const sSt = this._st(id);
       if (!sSt) { delete stg[key]; return; }
       if (sSt.attributes.applies_when) APPLIES.set(id, sSt.attributes.applies_when);
@@ -1735,9 +1779,9 @@ class EufyCameraCard extends HTMLElement {
       const off = !avail || !applies || (sSt.state === 'unavailable' && !(dep && stg[dep.key] !== undefined));
       if (off) delete stg[key];
       const label = this._rowLabel(id, key, sSt);
-      const g = dep ? { id: 'dep', at: 0 } : this._group(key, inc);
+      const g = dep ? { id: 'dep', at: 0 } : this._group(id);
       const icon = ROW_ICONS[key] || ROW_ICONS[key.replace(/__v\d+$|_new$/, '')] || (this._hass.entities[id] && this._hass.entities[id].icon) || sSt.attributes.icon
-        || (GROUPS.find(x => x[0] === g.id) || GROUPS[GROUPS.length - 1])[2];
+        || SECTION_ICONS[g.id] || SECTION_ICON;
       const warn = RESTARTS_LIVE.test(key) && stg[key] !== undefined && !!L;
       const base = { id: key, eid: id, label, icon, group: g, off, warn, dep: dep && dep.key, unrep: !!sSt.attributes.assumed_state && !ok(sSt) && !this._pending[key],
         sub: off ? (avail && !dep ? 'unavailable' : (avail ? why : '')) : (warn ? 'restarts live' : '') };
@@ -1797,21 +1841,24 @@ class EufyCameraCard extends HTMLElement {
           opts: opts.map(v => ({ v, l: lbl(v), on: String(shown) === v, live: String(s.value) === v })) } });
       }
     });
-    // Within a group the two-line rows come first and the one-line toggles after, so rows side by side match in height.
-    // Dependents follow their controller (the send order too); More settings by name. Groups in the configured order;
-    // a hidden group's rows (and their dependents) are left out, so nothing in them is staged or sent.
-    const gOrder = shownGroups(this._config);
+    // Within a tab the two-line rows come first and the one-line toggles after, so rows side by side match in height.
+    // Dependents follow their controller (the send order too); a section in the layout's order, More by name. Tabs in
+    // the configured order; a hidden tab's rows (and their dependents) are left out, so nothing in them is staged or
+    // sent. Until the first layout arrives no row is placed (the tab strip waits for it).
+    const lay = E.layout;
+    const secs = lay && lay.secs;
+    const gOrder = secs ? shownTabs(this._config, secs) : [];
     const gi = id => gOrder.indexOf(id);
     const deps = {};
     rows.filter(r => r.dep).forEach((r) => { (deps[r.dep] = deps[r.dep] || []).push(r); });
     const ctlKeys = new Set(rows.map(r => r.id));
     Object.keys(deps).forEach((k) => {
-      if (!ctlKeys.has(k)) { deps[k].forEach((r) => { r.dep = null; r.group = this._group(r.id, false); }); delete deps[k]; return; }
+      if (!ctlKeys.has(k)) { deps[k].forEach((r) => { r.dep = null; r.group = this._group(r.eid); }); delete deps[k]; return; }
       deps[k].sort((a, b) => !!a.tg - !!b.tg || DEP_ORDER.indexOf(a.id) - DEP_ORDER.indexOf(b.id) || a.label.localeCompare(b.label));
     });
     const top = rows.filter(r => !r.dep && gOrder.includes(r.group.id));
     top.sort((a, b) => gi(a.group.id) - gi(b.group.id)
-      || !!a.tg - !!b.tg || (a.group.id === 'more' ? a.label.localeCompare(b.label) : (a.group.at - b.group.at || a.label.localeCompare(b.label))));
+      || !!a.tg - !!b.tg || (a.group.id === MORE_TAB[0] ? a.label.localeCompare(b.label) : (a.group.at - b.group.at || a.label.localeCompare(b.label))));
     rows.length = 0;
     top.forEach((r) => {
       if (deps[r.id]) {
@@ -1827,7 +1874,7 @@ class EufyCameraCard extends HTMLElement {
       rows.push(r, ...(deps[r.id] || []));
     });
     rows.forEach(r => ctx.order.push(r.id));
-    const nMore = top.filter(r => r.group.id === 'more').length;
+    const nMore = top.filter(r => r.group.id === MORE_TAB[0]).length;
     // Settings tabs: the shown groups that have rows, in order; the open one stays while it has rows
     const tabs = [...new Set(top.map(r => r.group.id))];
     // Until the user picks a tab the first one is shown (rows found later through the registry may add earlier tabs)
@@ -2016,7 +2063,11 @@ class EufyCameraCard extends HTMLElement {
         </div>`;
 
     // ---- section tabs and sections ----
-    const setOpen = this._open === 'settings' && rows.length > 0;
+    // Before the first layout: Settings shows while the device has candidate rows, opened as a placeholder that keeps
+    // the tab strip's place (loading, or failed with Retry)
+    const setWait = !secs && E.rows.length > 0;
+    const hasSet = rows.length > 0 || setWait;
+    const setOpen = this._open === 'settings' && hasSet;
     const histOpen = this._open === 'history';
     // A tab marks staged changes (dot) and failed writes (red) of rows it hides
     const tabOf = r => (r.dep ? (rows.find(x => x.id === r.dep) || r).group.id : r.group.id);
@@ -2088,17 +2139,29 @@ class EufyCameraCard extends HTMLElement {
       return `<div class="pstats">${chips.map(([id, i, t, a]) => `<button type="button" class="pst" data-info="${escapeHtml(id)}" aria-label="${escapeHtml(a)}"><ha-icon icon="${i}"></ha-icon><span>${escapeHtml(t)}</span></button>`).join('')}</div>`;
     };
     // Rows under their group's heading; a controller's dependents in a block under it; More settings behind a toggle
+    const tabInfo = (id) => {
+      if (id === MORE_TAB[0]) return MORE_TAB;
+      const x = (secs || []).find(y => y.id === id);
+      return [id, x ? x.heading : id, SECTION_ICONS[id] || SECTION_ICON];
+    };
     const tabHtml = (id) => {
-      const g = groupInfo(id);
+      const g = tabInfo(id);
       const on = this._tab === id, m = tabMark(id);
-      const n = id === 'more' ? nMore : 0;
+      const n = id === MORE_TAB[0] ? nMore : 0;
       return `<button class="stab${on ? ' on' : ''}${m ? ` ${m}` : ''}" type="button" role="tab" data-stab="${id}" data-focus="stab-${id}" aria-selected="${on}"
         tabindex="${on ? 0 : -1}" aria-label="${escapeHtml(`${g[1]}${n ? `, ${n} settings` : ''}${m === 'err' ? ', not applied' : (m === 'stg' ? ', changed' : '')}`)}"><ha-icon icon="${g[2]}"></ha-icon><span>${g[1]}</span><i class="tdot" aria-hidden="true"></i></button>`;
     };
     const rowsHtml = () => {
-      const tn = this._tab === 'more' ? 'More settings' : (GROUPS.find(x => x[0] === this._tab) || [])[1];
-      let out = `<div class="stabs" role="tablist" aria-label="Settings">${tabs.map(tabHtml).join('')}<div class="stitle" aria-hidden="true">${escapeHtml(tn || '')}</div></div>`;
-      if (this._tab === 'power') out += statHtml();
+      if (setWait) {
+        const fail = !!(lay && lay.err);
+        return `<div class="stabs swait" aria-hidden="true"></div><div class="hmsg lwait" role="status"${fail ? '' : ' aria-busy="true"'}>${fail
+          ? `<span>Settings did not load</span><button type="button" class="btn lretry" data-lretry data-focus="lretry">Retry</button>`
+          : '<i class="spin sm" aria-hidden="true"></i><span>Loading settings</span>'}</div>`;
+      }
+      const tn = this._tab === MORE_TAB[0] ? 'More settings' : tabInfo(this._tab)[1];
+      const fit = this._tfit && this._tfit.ids === tabs.join() ? this._tfit.lvl : 0;
+      let out = `<div class="stabs${fit ? ` fit${fit}` : ''}" role="tablist" aria-label="Settings">${tabs.map(tabHtml).join('')}<div class="stitle" aria-hidden="true">${escapeHtml(tn || '')}</div></div>`;
+      if (this._tab === POWER_SECTION) out += statHtml();
       let prevTg = true;
       rows.forEach((r) => {
         if (r.dep || r.group.id !== this._tab) return;
@@ -2201,7 +2264,7 @@ class EufyCameraCard extends HTMLElement {
     const lower = `
         <div class="secs" role="group" aria-label="Sections">
           ${secBtn(SECTIONS[0], histOpen, '')}
-          ${rows.length ? secBtn(SECTIONS[1], setOpen, setMark) : ''}
+          ${hasSet ? secBtn(SECTIONS[1], setOpen, setMark) : ''}
         </div>
         ${histOpen ? `<div class="hist${/[^\d\s.:]/.test(clockTime(this._hass, new Date(2000, 0, 1, 22, 5))) ? ' wide' : ''}">${histBody}</div>` : ''}
         ${setOpen ? `<div class="ctl-rows">${rowsHtml()}</div>` : ''}`;
@@ -2233,9 +2296,29 @@ class EufyCameraCard extends HTMLElement {
     if (changed && lpLeft) { const lp = this._overEl.querySelector('.lpre'); if (lp) lp.scrollLeft = lpLeft; }
     if (changed && hLeft && hLeft[1]) { const hs = this._lowerEl.querySelector('.hstrip'); if (hs && hs.dataset.tab === hLeft[0]) hs.scrollLeft = hLeft[1]; }
     this._lazyThumbs();
+    this._fitTabs();
     this._placeDd();
     this._tick();
     if (Object.keys(this._pending).length) this._arm();
+  }
+
+  // Settings tab strip on one line: fit 0 every name, 1 the open tab's name only, 2 icons only with the open tab's
+  // name on a line below. The least that fits the longest name, so switching tabs never changes the strip.
+  _fitTabs() {
+    const s = this._lowerEl && this._lowerEl.querySelector('.stabs[role=tablist]');
+    const tabs = s ? [...s.querySelectorAll('.stab')] : [];
+    const W = s ? s.clientWidth : 0;
+    if (!W || !tabs.length) return;
+    const ctx = this._mctx || (this._mctx = document.createElement('canvas').getContext('2d'));
+    const cs = getComputedStyle(tabs[0]);
+    ctx.font = `600 ${cs.fontSize} ${cs.fontFamily}`;
+    // icon 16 + gap 4 + padding 2 x 8, and a pixel to spare
+    const named = tabs.map(t => 37 + ctx.measureText((t.querySelector('span') || {}).textContent || '').width);
+    const lvl = named.reduce((a, b) => a + b, 0) <= W ? 0 : (Math.max(...named) + (tabs.length - 1) * 38 <= W ? 1 : 2);
+    const ids = tabs.map(t => t.dataset.stab).join();
+    const was = this._tfit && this._tfit.ids === ids ? this._tfit.lvl : 0;
+    this._tfit = { ids, lvl };
+    if (lvl !== was) this.render();
   }
 
   _build() {
@@ -2777,6 +2860,14 @@ const CSS_TEXT = `
   .stab.stg .tdot, .sec.stg .tdot { display: block; }
   .stab.err .tdot, .sec.err .tdot { display: block; background: var(--cc-error); }
   .stabs { flex-wrap: wrap; }
+  /* More tabs than names fit (see _fitTabs): only the open tab named, or icons sharing the line */
+  .stabs.fit1 .stab:not(.on) span { display: none; }
+  .stabs.fit1 .stab:not(.on) { flex: 0 0 38px; padding: 0; }
+  .stabs.fit2 .stab span, .stabs.fit2 .stab.on span { display: none; }
+  .stabs.fit2 .stab, .stabs.fit2 .stab.on { flex: 1 1 0; min-width: 0; padding: 0; }
+  .stabs.fit2 .stitle { display: block; }
+  .stabs.swait { height: 34px; box-sizing: border-box; box-shadow: inset 0 -1px 0 var(--cc-line); }
+  .ctl-rows .lwait { grid-column: 1 / -1; min-height: 120px; gap: 8px; }
   .stitle { display: none; flex: 1 0 100%; padding: 4px 6px 0; font-size: var(--fs-xs); font-weight: 600; color: var(--cc-sub); }
   @container stabs (max-width: 459px) { .stab:not(.on) span { display: none; } .stab:not(.on) { flex: 0 0 38px; padding: 0; } }
   @container stabs (max-width: 299px) { .stab span { display: none; } .stab, .stab.on { flex: 1 1 0; min-width: 0; padding: 0; } .stitle { display: block; } }
@@ -2926,43 +3017,69 @@ const EDITOR_SCHEMA = [
     { value: 'auto', label: 'Auto (compact below 400 px)' }, { value: 'compact', label: 'Compact' }, { value: 'regular', label: 'Regular' }] } } },
 ];
 const EDITOR_LABELS = { entity: 'Camera', name: 'Name', history_folder: 'History folder', auto_live: 'Start live view when the dashboard opens', live_seconds: 'Live view length', layout: 'Layout',
-  settings_include: 'Settings to add', settings_exclude: 'Hidden settings', settings_groups: 'Settings groups' };
-// Group names in the editor (the tab names, More and Other said in full)
-const GROUP_EDITOR_NAMES = { more: 'More settings', other: 'Other (settings to add)' };
-// Settings tabs as HA's reorderable multi-select: a chip per shown group (drag to reorder, ✕ to hide), the rest to add
-const GROUPS_FIELD = { name: 'settings_groups', selector: { select: { multiple: true, reorder: true,
-  options: GROUP_IDS.map(id => ({ value: id, label: GROUP_EDITOR_NAMES[id] || groupInfo(id)[1] })) } } };
+  settings_include: 'Settings to add', settings_exclude: 'Hidden settings', settings_groups: 'Settings tabs' };
+// Settings tabs as HA's reorderable multi-select: a chip per shown tab (drag to reorder, ✕ to hide), the rest to add.
+// Options: the camera's layout sections, More, and any listed id the layout lacks (kept, never dropped from the list).
+const tabsField = (secs, cfg) => {
+  const opts = [...secs.map(x => ({ value: x.id, label: x.heading })), { value: MORE_TAB[0], label: 'More settings' }];
+  [].concat((cfg && cfg.settings_groups) || []).map(String).forEach((id) => {
+    if (!opts.some(o => o.value === id)) opts.push({ value: id, label: `${id} (not on this camera)` });
+  });
+  return { name: 'settings_groups', selector: { select: { multiple: true, reorder: true, options: opts } } };
+};
 const EDITOR_HELPERS = {
   history_folder: 'The camera\'s folder under Media › eufy_home_security; only when the camera was renamed after its stills were saved',
   auto_live: 'Wakes the camera on every opening: costs battery',
-  settings_include: 'Settings lists the common controls first and the rest under More settings; entities named here join the list (guard-mode actions, entry and leaving delays)',
+  settings_include: 'Settings shows the camera\'s settings by section; entities named here join them (a guard-mode action or delay under Modes, an entity in no section under More)',
   settings_exclude: 'Controls of the camera to leave out of Settings',
-  settings_groups: 'Tabs in Settings, in this order: drag to reorder, remove a group to hide it with its settings. While this list differs from the default, a group a later card version adds stays hidden; removing every group shows them all again',
+  settings_groups: 'Tabs in Settings, in this order: drag to reorder, remove a tab to hide it with its settings. While this list differs from the default, a section the integration adds later stays hidden; removing every tab shows them all again',
   live_seconds: `A started live view ends after this (default ${LIVE_S} s); the ∞ button keeps it running until stopped`,
 };
 
-// The schema with the settings pickers limited to the chosen camera's selects, numbers and switches
-const editorSchema = (hass, entity) => {
+// The schema with the settings pickers limited to the chosen camera's selects, numbers and switches; the tabs field
+// once the camera's layout is known (`secs`)
+const editorSchema = (hass, entity, secs, cfg) => {
   const reg = (hass && hass.entities) || {};
   const me = reg[entity];
   const ids = me && me.device_id ? Object.values(reg).filter(e => e.device_id === me.device_id && ROW_DOMAINS.includes(e.entity_id.split('.')[0]))
     .map(e => e.entity_id).sort() : [];
-  if (!ids.length) return { key: '', schema: [...EDITOR_SCHEMA, GROUPS_FIELD] };
+  const tabs = secs ? [tabsField(secs, cfg)] : [];
+  const tk = secs ? `|${tabs[0].selector.select.options.map(o => o.value).join()}` : '';
+  if (!ids.length) return { key: tk, schema: [...EDITOR_SCHEMA, ...tabs] };
   const pick = name => ({ name, selector: { entity: { multiple: true, include_entities: ids } } });
-  return { key: ids.join(','), schema: [...EDITOR_SCHEMA, pick('settings_include'), pick('settings_exclude'), GROUPS_FIELD] };
+  return { key: ids.join(',') + tk, schema: [...EDITOR_SCHEMA, pick('settings_include'), pick('settings_exclude'), ...tabs] };
 };
 
 class EufyCameraCardEditor extends HTMLElement {
   setConfig(config) { this._config = { ...config }; if (this._form) { this._schema(); this._form.data = this._data(); } }
+  // The chosen camera's layout sections (null until known), asked again when the device or its entity set changes
+  _secs() {
+    const h = this._hass, reg = (h && h.entities) || {};
+    const me = this._config && reg[this._config.entity];
+    const dev = me && me.device_id;
+    if (!dev || !h.callWS) return null;
+    const key = `${dev}|${deviceKey(reg, dev)}`;
+    if (!this._lay || this._lay.key !== key) {
+      const cur = this._lay = { key, secs: this._lay && this._lay.key.split('|')[0] === dev ? this._lay.secs : null };
+      Promise.resolve().then(() => h.callWS({ type: LAYOUT_WS, device_id: dev })).then((r) => {
+        if (this._lay !== cur) return;
+        cur.secs = layoutSections(r);
+        if (this._form) { this._schema(); this._form.data = this._data(); }
+      }, () => {});
+    }
+    return this._lay.secs;
+  }
   _schema() {
-    const s = editorSchema(this._hass, this._config && this._config.entity);
+    const s = editorSchema(this._hass, this._config && this._config.entity, this._secs(), this._config);
     if (s.key !== this._schemaKey || !this._form.schema) { this._schemaKey = s.key; this._form.schema = s.schema; }
   }
-  // auto_live: true is the YAML short form of 'timed'; no settings_groups shows every group in the card's order
+  // auto_live: true is the YAML short form of 'timed'; no settings_groups shows every section in the layout's order
   _data() {
     const d = { ...(this._config || {}) };
     if (d.auto_live === true) d.auto_live = 'timed';
-    d.settings_groups = shownGroups(this._config);
+    const secs = this._lay && this._lay.secs;
+    const v = d.settings_groups;
+    if (secs) d.settings_groups = v === undefined || v === null ? shownTabs(null, secs) : [...new Set([].concat(v).map(String))];
     return d;
   }
   set hass(hass) {
@@ -2977,12 +3094,14 @@ class EufyCameraCardEditor extends HTMLElement {
         const next = { ...this._config };
         Object.entries(ev.detail.value || {}).forEach(([k, v]) => {
           if (k === 'type') return;
-          // Untouched, the key stays as written (a YAML [] too); the card's order with every group, or no group
-          // left, drops it (every group shows)
+          // Untouched, the key stays as written (a YAML [] too); the layout's order with every tab, or no tab left,
+          // drops it (every tab shows)
           if (k === 'settings_groups') {
-            const list = [...new Set([].concat(v || []).map(String))].filter(id => GROUP_IDS.includes(id));
-            if (list.join() === shownGroups(this._config).join()) return;
-            if (!list.length || list.join() === GROUP_IDS.join()) delete next[k]; else next[k] = list;
+            const secs = this._lay && this._lay.secs;
+            if (!secs) return;
+            const list = [...new Set([].concat(v || []).map(String))];
+            if (list.join() === this._data().settings_groups.join()) return;
+            if (!list.length || list.join() === shownTabs(null, secs).join()) delete next[k]; else next[k] = list;
             return;
           }
           if (v === '' || v === undefined || v === null || (Array.isArray(v) && !v.length) || (k === 'layout' && v === 'auto') || (k === 'auto_live' && v === 'off') || (k === 'live_seconds' && v === LIVE_S)) delete next[k]; else next[k] = v;
