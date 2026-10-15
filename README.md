@@ -79,6 +79,8 @@ Devices added to the eufy account later: press **Refresh device list** on the
 The camera card comes with the integration: edit a dashboard → **Add card** →
 **eufy camera**
 ([Camera card](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/card.md)).
+So does a card per HomeBase: **eufy HomeBase**
+([HomeBase card](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/homebase-card.md)).
 
 ## Documentation
 
@@ -86,6 +88,7 @@ The camera card comes with the integration: edit a dashboard → **Add card** �
 |---|---|
 | [Usage](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/usage.md) | options, alarm panel, camera images, event history and videos, live video, pan/tilt, settings, signing in again, removal |
 | [Camera card](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/card.md) | the dashboard card that comes with the integration: install, options, layout, writes |
+| [HomeBase card](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/homebase-card.md) | the HomeBase's dashboard card: security mode, what each device does per mode, arming groups, settings, status |
 | [Supported devices](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/devices.md) | tested models, settings, adding a device, reporting a new device |
 | [Network and security](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/network.md) | LAN, firewall, reverse proxy, browsers, accounts, stored data |
 | [Troubleshooting](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/troubleshooting.md) | debug logging, diagnostics, repair issues, known limitations |
