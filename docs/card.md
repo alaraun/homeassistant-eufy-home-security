@@ -132,6 +132,13 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     adds one back; removing every chip shows every tab.
   - A setting that applies only in one option of another sits under it, captioned with that option (`Only in
     Custom`), and shows only while that option is chosen or picked (before Set).
+  - A choice with up to four short options is a row of segments, numbered options a slider, any other a
+    dropdown. Its list opens inside the card with at least five rows (all when fewer, up to eight): downward
+    when there is room below, else upward, else the card grows while the list is open. Long labels end with
+    `…` (the full text is read out, and shows while the option has keyboard focus). A list of more than twelve
+    options starts with a filter field: typing narrows the list and Enter picks the first match. Arrows, Home,
+    End, Page Up/Down move, typing jumps to an option starting with the typed text, Escape closes. Picking only
+    stages the value, like every setting.
   - A setting the integration makes unavailable is greyed out; one the device never reports reads
     `Not reported` until written from the card.
   - The Power tab adds a line of readings (charging, solar intensity, battery temperature, days since the last

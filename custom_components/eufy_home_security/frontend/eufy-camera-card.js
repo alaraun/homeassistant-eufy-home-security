@@ -4,7 +4,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.15-2';
+const CARD_VERSION = '2026.10.15-3';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -188,6 +188,15 @@ const OPT_ICONS = {
 // Segments for at most this many options, each short enough; a dropdown otherwise
 const SEG_MAX = 4;
 const SEG_CHARS = 12;
+// Dropdown list: rows shown at least / at most (fewer when the list is shorter), the row pitch in px (option
+// height 32 + gap 1), and the option count above which the list gets a filter field
+const DD_MIN_ROWS = 5;
+const DD_MAX_ROWS = 8;
+const DD_ROW = 33;
+const DD_FILTER = 12;
+// Filter match: every typed word occurs in the label, ignoring case and accents
+const fold = v => String(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const ddMatch = (label, q) => !q || fold(q).split(/\s+/).filter(Boolean).every(w => fold(label).includes(w));
 // entity id -> library setting key (unique id after `<serial>_`) for entities without a translation_key,
 // shared by the cards on the page; KEY_ASKS holds the running registry request per id
 const KEYS = new Map();
@@ -255,6 +264,11 @@ class EufyCameraCard extends HTMLElement {
     this._thumbs = new Set(); // station thumbnail URLs already shown (rendered with src at once)
     this._onVis = () => this._visibility();
     this._dd = null;        // setting key whose dropdown is open
+    this._ddq = '';         // its filter text
+    this._ddAt = null;      // the key whose list was last scrolled to its current option
+    this._ddGrow = 0;       // px the card grows while the open list needs more room than it has
+    this._ddTa = '';        // type-ahead text and its last key time
+    this._ddTaT = 0;
     this._lay = null;       // settings layout: { dev, key, secs, loading, err }; secs stay while the next one loads
   }
 
@@ -1245,7 +1259,7 @@ class EufyCameraCard extends HTMLElement {
     if (dd) {
       const k = dd.dataset.dd;
       this._setDd(this._dd === k ? null : k);
-      this._focus(this._dd ? `ddo-${k}-${this._ddFocusOpt(k)}` : `dd-${k}`);
+      this._focus(this._dd ? this._ddFocusKey(k) : `dd-${k}`);
       return;
     }
     if (this._dd && !path.find(n => n.classList && n.classList.contains('ddl'))) this._setDd(null);
@@ -1445,13 +1459,7 @@ class EufyCameraCard extends HTMLElement {
     }
     if (this._menuOpen && ev.key === 'Escape') { ev.preventDefault(); this._setMenu(false); this._focus('menu'); return; }
     if (this._dd && ev.key === 'Escape') { ev.preventDefault(); const k = this._dd; this._setDd(null); this._focus(`dd-${k}`); return; }
-    if (this._dd && (ev.key === 'ArrowDown' || ev.key === 'ArrowUp')) {
-      const items = [...this.content.querySelectorAll('.ddl .ddo')];
-      const at = items.indexOf(this.shadowRoot.activeElement);
-      const nx = items[at < 0 ? 0 : (at + (ev.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length];
-      if (nx) { ev.preventDefault(); nx.focus(); }
-      return;
-    }
+    if (this._dd && this._ddKey(ev, t)) return;
     if (this._pconfirm !== null && this._pconfirm !== undefined && ev.key === 'Escape') {
       ev.preventDefault();
       const i = this._pconfirm;
@@ -1495,7 +1503,94 @@ class EufyCameraCard extends HTMLElement {
   _setMenu(open) { this._menuOpen = open; this._watchOutside(open || !!this._dd); this.render(); }
 
   // One settings dropdown open at a time (key or null)
-  _setDd(key) { this._dd = key; this._watchOutside(!!key || !!this._menuOpen); this.render(); }
+  _setDd(key) {
+    if (key !== this._dd) { this._ddq = ''; this._ddAt = null; this._ddTa = ''; }
+    this._dd = key;
+    this._watchOutside(!!key || !!this._menuOpen);
+    this.render();
+  }
+
+  // The element to focus when a dropdown opens: a long list's filter field, else the staged or current option,
+  // else the first
+  _ddFocusKey(k) {
+    const l = this.content.querySelector('.ddl');
+    if (!l) return `dd-${k}`;
+    if (l.querySelector('.ddq')) return `ddq-${k}`;
+    const v = this._ddFocusOpt(k);
+    const o = v !== '' && l.querySelector(`[data-focus="${CSS.escape(`ddo-${k}-${v}`)}"]`);
+    return o ? `ddo-${k}-${v}` : ((l.querySelector('.ddo') || { dataset: {} }).dataset.focus || `dd-${k}`);
+  }
+
+  // Narrows the open list to the options matching the filter text, in place (typing keeps the field)
+  _filterDd(q) {
+    this._ddq = q;
+    const v = this.content.querySelector('.ddv');
+    if (!v) return;
+    let any = false;
+    v.querySelectorAll('.ddo').forEach((o) => { const m = ddMatch(o.getAttribute('aria-label'), q); o.hidden = !m; any = any || m; });
+    const none = v.querySelector('.ddnone');
+    if (none) none.hidden = any;
+    v.scrollTop = 0;
+  }
+
+  // Scrolls the list just enough to show an option
+  _ddReveal(o) {
+    const v = o.parentElement;
+    const top = o.offsetTop, bot = top + o.offsetHeight;
+    if (top < v.scrollTop) v.scrollTop = top;
+    else if (bot > v.scrollTop + v.clientHeight) v.scrollTop = bot - v.clientHeight;
+  }
+
+  // Keys in an open list: arrows, Home/End, PgUp/PgDn move; Enter in the filter field picks the first match;
+  // typing goes to the filter field, or jumps to the next option starting with the typed text (no filter).
+  // Returns true when the key was handled.
+  _ddKey(ev, t) {
+    const l = this.content.querySelector('.ddl');
+    // only while focus is in the list or on its button
+    if (!l || !t || ev.ctrlKey || ev.metaKey || ev.altKey || !(l.contains(t) || (t.dataset && t.dataset.dd === this._dd))) return false;
+    const q = l.querySelector('.ddq');
+    const v = l.querySelector('.ddv');
+    const items = [...l.querySelectorAll('.ddo:not([hidden])')];
+    const inQ = !!q && t === q;
+    const at = items.indexOf(t);
+    const go = (i) => {
+      ev.preventDefault();
+      const o = items[Math.max(0, Math.min(items.length - 1, i))];
+      if (o) { o.focus({ preventScroll: true }); this._ddReveal(o); }
+      return true;
+    };
+    const page = Math.max(1, Math.floor(v.clientHeight / DD_ROW) - 1);
+    const k = ev.key;
+    if (k === 'ArrowDown') return go(inQ || at < 0 ? 0 : at + 1);
+    if (k === 'ArrowUp') {
+      if (at <= 0 && q) { ev.preventDefault(); q.focus({ preventScroll: true }); return true; }
+      return inQ ? (ev.preventDefault(), true) : go(at < 0 ? items.length - 1 : at - 1);
+    }
+    if (k === 'PageDown') return go(inQ || at < 0 ? page : at + page);
+    if (k === 'PageUp') return go(at < 0 ? 0 : at - page);
+    if ((k === 'Home' || k === 'End') && !inQ) return go(k === 'Home' ? 0 : items.length - 1);
+    if (k === 'Enter' && inQ) { ev.preventDefault(); if (items[0]) items[0].click(); return true; }
+    if (k.length !== 1 || inQ) return false;
+    if (q) {
+      ev.preventDefault();
+      q.value += k;
+      q.focus({ preventScroll: true });
+      this._filterDd(q.value);
+      return true;
+    }
+    const now = Date.now();
+    if (k === ' ' && (!this._ddTa || now - this._ddTaT > 700)) return false;
+    this._ddTa = (now - this._ddTaT > 700 ? '' : this._ddTa) + fold(k);
+    this._ddTaT = now;
+    const n = items.length;
+    const from = this._ddTa.length > 1 ? Math.max(at, 0) : at + 1;
+    for (let i = 0; i < n; i += 1) {
+      const j = (from + i + n) % n;
+      if (fold(items[j].getAttribute('aria-label')).startsWith(this._ddTa)) return go(j);
+    }
+    ev.preventDefault();
+    return true;
+  }
 
   // The option to focus when a dropdown opens: the staged or current one
   _ddFocusOpt(k) {
@@ -1515,18 +1610,40 @@ class EufyCameraCard extends HTMLElement {
     document.addEventListener('pointerdown', this._outside, true);
   }
 
-  // Opens the dropdown list downward, or upward when the card has more room above (ha-card clips its content);
-  // a list longer than either side scrolls
-  _placeDd() {
+  // Sizes and places the open dropdown list inside the card (ha-card clips its content). The list shows up to
+  // DD_MAX_ROWS rows and never fewer than DD_MIN_ROWS (or all when fewer): downward when the room to the card's
+  // bottom fits it, else upward when the room above does, else the card grows by the missing height while the
+  // list is open. The size follows the full option count, so filtering keeps the box. `top`: the list's scroll
+  // position before a redraw; on opening, the current option is scrolled into view.
+  _placeDd(top) {
     const l = this._dd && this.content.querySelector('.ddl');
-    if (!l) return;
-    l.classList.remove('up');
-    l.style.maxHeight = '';
-    const cr = this.content.getBoundingClientRect(), br = l.parentElement.getBoundingClientRect();
-    const h = l.scrollHeight, below = cr.bottom - br.bottom - 6, above = br.top - cr.top - 6;
-    if (h <= below) return;
-    if (above > below) { l.classList.add('up'); if (h > above) l.style.maxHeight = `${Math.max(64, Math.floor(above))}px`; }
-    else l.style.maxHeight = `${Math.max(64, Math.floor(below))}px`;
+    let grow = 0;
+    if (l) {
+      const v = l.querySelector('.ddv');
+      const n = parseInt(l.dataset.n, 10) || 1;
+      const chrome = l.offsetHeight - v.clientHeight;
+      const full = chrome + Math.min(n, DD_MAX_ROWS) * DD_ROW - 1, least = chrome + Math.min(n, DD_MIN_ROWS) * DD_ROW - 1;
+      const cr = this.content.getBoundingClientRect(), br = l.parentElement.getBoundingClientRect();
+      // the list starts 2 px off the control and keeps 6 px from the card's edge
+      const below = Math.floor(cr.bottom - this._ddGrow - br.bottom - 8), above = Math.floor(br.top - cr.top - 8);
+      let h = full, up = false;
+      if (full > below) {
+        if (full <= above) up = true;
+        else if (least <= below) h = below;
+        else if (least <= above) { h = above; up = true; } else { h = least; grow = least - below; }
+      }
+      l.classList.toggle('up', up);
+      l.style.height = `${h}px`;
+      if (this._ddAt !== this._dd) {
+        this._ddAt = this._dd;
+        const o = v.querySelector('.ddo[aria-selected="true"]:not([hidden])');
+        if (o) v.scrollTop = Math.max(0, o.offsetTop - (v.clientHeight - o.offsetHeight) / 2);
+      } else if (top) v.scrollTop = top;
+    }
+    if (grow !== this._ddGrow) {
+      this._ddGrow = grow;
+      this.content.style.paddingBottom = grow ? `${grow}px` : '';
+    }
   }
 
   _focus(key) {
@@ -2085,11 +2202,17 @@ class EufyCameraCard extends HTMLElement {
               <input class="ctl-range${isNaN(r.shown) ? ' unk' : ''}" type="range" data-kind="${escapeHtml(r.id)}" data-focus="range-${escapeHtml(r.id)}" min="${c.min}" max="${c.max}" step="${c.step}" value="${isNaN(r.shown) ? c.min : r.shown}"
                 aria-label="${escapeHtml(label)}" aria-valuetext="${escapeHtml(r.value)}" style="--pos:${(frac(isNaN(r.shown) ? c.min : r.shown) * 100).toFixed(1)}%"${r.off ? ' disabled' : ''}>`;
     };
-    // A dropdown: the value on a button; the list opens inside the card (see _placeDd)
+    // A dropdown: the value on a button; the list opens inside the card (see _placeDd). A long list starts with a
+    // filter field; long labels ellipsize (the full text in aria-label, wrapped while keyboard-focused).
     const ddHtml = (r) => {
       const d = r.dd;
-      return `<button class="dd" type="button" data-dd="${escapeHtml(r.id)}" data-focus="dd-${escapeHtml(r.id)}" aria-haspopup="listbox" aria-expanded="${d.open}" aria-label="${escapeHtml(`${r.label}: ${d.shown}`)}"${r.off ? ' disabled' : ''}><span>${escapeHtml(d.shown)}</span><ha-icon icon="${d.open ? 'mdi:menu-up' : 'mdi:menu-down'}"></ha-icon></button>
-              ${d.open ? `<div class="ddl" role="listbox" aria-label="${escapeHtml(r.label)}">${d.opts.map(o => `<button class="ddo${o.live ? ' live' : ''}" type="button" role="option" data-kind="${escapeHtml(r.id)}" data-opt="${escapeHtml(o.v)}" data-focus="ddo-${escapeHtml(r.id)}-${escapeHtml(o.v)}" aria-selected="${o.on}"><span>${escapeHtml(o.l)}</span>${o.on ? '<ha-icon class="chk" icon="mdi:check"></ha-icon>' : ''}</button>`).join('')}</div>` : ''}`;
+      const id = escapeHtml(r.id);
+      const filt = d.opts.length > DD_FILTER;
+      const q = filt ? this._ddq : '';
+      const opts = d.opts.map(o => `<button class="ddo${o.live ? ' live' : ''}" type="button" role="option" data-kind="${id}" data-opt="${escapeHtml(o.v)}" data-focus="ddo-${id}-${escapeHtml(o.v)}" aria-label="${escapeHtml(o.l)}" aria-selected="${o.on}"${ddMatch(o.l, q) ? '' : ' hidden'}><span>${escapeHtml(o.l)}</span>${o.on ? '<ha-icon class="chk" icon="mdi:check"></ha-icon>' : ''}</button>`).join('');
+      const none = `<div class="ddnone"${d.opts.some(o => ddMatch(o.l, q)) ? ' hidden' : ''}>No match</div>`;
+      return `<button class="dd" type="button" data-dd="${id}" data-focus="dd-${id}" aria-haspopup="listbox" aria-expanded="${d.open}" aria-label="${escapeHtml(`${r.label}: ${d.shown}`)}"${r.off ? ' disabled' : ''}><span>${escapeHtml(d.shown)}</span><ha-icon icon="${d.open ? 'mdi:menu-up' : 'mdi:menu-down'}"></ha-icon></button>
+              ${d.open ? `<div class="ddl" data-n="${d.opts.length}">${filt ? `<input class="ddq" type="text" data-focus="ddq-${id}" value="${escapeHtml(q)}" placeholder="Filter" autocomplete="off" spellcheck="false" aria-label="${escapeHtml(`Filter ${r.label}`)}">` : ''}<div class="ddv" role="listbox" aria-label="${escapeHtml(r.label)}">${opts}${none}</div></div>` : ''}`;
     };
     const tgHtml = r => `<button class="tg${r.tg.on ? ' on' : ''}${r.tg.known ? '' : ' unk'}" type="button" role="switch" data-tg="${escapeHtml(r.id)}" data-focus="tg-${escapeHtml(r.id)}" aria-checked="${r.tg.on}" aria-label="${escapeHtml(r.label)}"${r.off ? ' disabled' : ''}><i></i></button>`;
     // A segment row with no option selected keeps its value text ("--", "Not reported")
@@ -2284,6 +2407,10 @@ class EufyCameraCard extends HTMLElement {
     // ... and the preset row its own
     const lp0 = this._overEl.querySelector('.lpre');
     const lpLeft = lp0 ? lp0.scrollLeft : 0;
+    // ... and the open dropdown list its own, its filter field the caret
+    const dv0 = this._lowerEl.querySelector('.ddv');
+    const ddTop = dv0 ? dv0.scrollTop : 0;
+    const qSel = active0 && active0.classList && active0.classList.contains('ddq') ? [active0.selectionStart, active0.selectionEnd] : null;
     let changed = false;
     [['hdr', this._hdrEl, hdr], ['over', this._overEl, over], ['lower', this._lowerEl, lower]].forEach(([k, el, html]) => {
       if (this._keys[k] === html) return;
@@ -2292,12 +2419,13 @@ class EufyCameraCard extends HTMLElement {
       changed = true;
     });
     if (changed && fk) this._focus(fk);
+    if (changed && qSel) { const q = this.shadowRoot.activeElement; if (q && q.classList.contains('ddq')) q.setSelectionRange(...qSel); }
     if (changed && sTop) { const sl = this._lowerEl.querySelector('.slist'); if (sl) sl.scrollTop = sTop; }
     if (changed && lpLeft) { const lp = this._overEl.querySelector('.lpre'); if (lp) lp.scrollLeft = lpLeft; }
     if (changed && hLeft && hLeft[1]) { const hs = this._lowerEl.querySelector('.hstrip'); if (hs && hs.dataset.tab === hLeft[0]) hs.scrollLeft = hLeft[1]; }
     this._lazyThumbs();
     this._fitTabs();
-    this._placeDd();
+    this._placeDd(changed ? ddTop : 0);
     this._tick();
     if (Object.keys(this._pending).length) this._arm();
   }
@@ -2400,7 +2528,12 @@ class EufyCameraCard extends HTMLElement {
       if (!ctl && !was) this._hush();
     }, true);
     const rangeOf = ev => ev.composedPath().find(n => n.classList && n.classList.contains('ctl-range'));
-    this.content.addEventListener('input', (ev) => { const r = rangeOf(ev); if (r) this._stageRange(r); });
+    this.content.addEventListener('input', (ev) => {
+      const r = rangeOf(ev);
+      if (r) this._stageRange(r);
+      const q = ev.composedPath()[0];
+      if (q && q.classList && q.classList.contains('ddq')) this._filterDd(q.value);
+    });
     this.content.addEventListener('change', (ev) => { const r = rangeOf(ev); if (r) { this._stageRange(r); this.render(); } });
     if (window.ResizeObserver) {
       this._ro = new ResizeObserver((entries) => {
@@ -2791,16 +2924,26 @@ const CSS_TEXT = `
   .dd:hover:not(:disabled) { background: color-mix(in srgb, var(--cc-text) 9%, transparent); }
   .dd:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -1px; }
   .row.staged .dd { border-color: var(--cc-accent); color: var(--cc-accent-text); font-weight: 600; }
-  .ddl { position: absolute; left: 0; right: 0; top: calc(100% + 2px); z-index: 7; display: grid; gap: 1px; padding: 4px; overflow-y: auto;
-    border-radius: 10px; background: var(--cc-bg); box-shadow: 0 4px 16px var(--cc-shadow); border: 1px solid var(--cc-line);
-    overscroll-behavior: contain; }
+  .ddl { position: absolute; left: 0; right: 0; top: calc(100% + 2px); z-index: 7; display: flex; flex-direction: column; gap: 4px;
+    box-sizing: border-box; padding: 4px; overflow: hidden; border-radius: 10px; background: var(--cc-bg);
+    box-shadow: 0 4px 16px var(--cc-shadow); border: 1px solid var(--cc-line); }
   .ddl.up { top: auto; bottom: calc(100% + 2px); }
-  .ddo { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 8px; border: 0; border-radius: 7px; cursor: pointer;
-    background: transparent; color: var(--cc-text); font-size: var(--fs-sm); text-align: left; --mdc-icon-size: 16px; }
-  .ddo span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ddq { flex: none; width: 100%; min-width: 0; height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid var(--cc-field-line);
+    border-radius: 7px; background: var(--cc-field); color: var(--cc-text); font: inherit; font-size: var(--fs-sm); }
+  .ddq::placeholder { color: var(--cc-sub); opacity: 1; }
+  .ddq:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -1px; }
+  .ddv { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 1px; overflow-x: hidden; overflow-y: auto;
+    overscroll-behavior: contain; }
+  .ddo { flex: none; display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 32px; box-sizing: border-box; padding: 0 8px;
+    border: 0; border-radius: 7px; cursor: pointer; background: transparent; color: var(--cc-text); font-size: var(--fs-sm); text-align: left;
+    --mdc-icon-size: 16px; }
+  .ddo span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ddo:focus-visible span { white-space: normal; overflow-wrap: anywhere; padding: 6px 0; }
+  .ddo[hidden], .ddnone[hidden] { display: none; }
+  .ddnone { flex: none; padding: 8px; color: var(--cc-sub); font-size: var(--fs-sm); }
   .ddo:hover, .ddo:focus-visible { background: color-mix(in srgb, var(--cc-text) 8%, transparent); outline: none; }
   .ddo[aria-selected="true"] { font-weight: 600; background: var(--cc-sel-quiet); }
-  .ddo .chk { display: flex; width: 16px; height: 16px; line-height: 0; margin-left: auto; color: var(--cc-accent-text); }
+  .ddo .chk { display: flex; flex: none; width: 16px; height: 16px; line-height: 0; margin-left: auto; color: var(--cc-accent-text); }
   .row.ddrow .rval { display: none; }
   /* Switch rows: name and toggle on one line */
   .row.tgrow { grid-template-areas: "name val"; padding-bottom: 2px; }
