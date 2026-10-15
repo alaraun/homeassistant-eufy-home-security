@@ -382,9 +382,6 @@ LIVE_PRESET_KEY: Final = "live_preset"
 LIVE_PRESET_CAMERA_DEFAULT: Final = "camera_default"
 # The station's security-mode select: translation key and unique-id key.
 SECURITY_MODE_KEY: Final = "security_mode"
-# The translation sections of mode and per-mode action labels (``selector.<key>.options``).
-GUARD_MODE_LABELS_KEY: Final = "guard_mode"
-MODE_ACTION_FLAG_LABELS_KEY: Final = "mode_action_flag"
 # The pan/tilt step buttons' translation and unique-id keys, one fixed step each.
 PAN_LEFT_KEY: Final = "pan_left"
 PAN_RIGHT_KEY: Final = "pan_right"

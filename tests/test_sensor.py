@@ -17,6 +17,7 @@ from conftest import (
     SENSOR_SN,
     add_motion_sensor,
     advance_to_poll,
+    define_custom_modes,
     entity_id_for,
     seed_setting,
     set_up_warm,
@@ -441,6 +442,9 @@ async def test_a_read_only_duration_reads_in_whole_seconds(
 ) -> None:
     """A read-only range in seconds is a duration sensor with no decimals."""
     _as_read_only(monkeypatch, "alarm_delay_custom_2")
+    define_custom_modes(
+        fake_station, {4: "Late"}
+    )  # a per-mode value of an undefined mode is unavailable
     seed_setting(fake_station, "alarm_delay_custom_2", 60)
     entry = await set_up_warm(hass, seed_warm_cache)
     registry = er.async_get(hass)

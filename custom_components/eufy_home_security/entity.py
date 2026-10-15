@@ -294,8 +294,21 @@ class EufySettingEntity(EufyDeviceEntity):
     @property
     @override
     def available(self) -> bool:
-        """Unavailable, besides the device's own reasons, while the setting does not apply."""
-        return super().available and self.setting_applies
+        """Unavailable, besides the device's own reasons, while the setting does not apply
+        or its guard mode is not one the station has (``StationConfig.is_defined``)."""
+        return super().available and self.setting_applies and self.mode_defined
+
+    @property
+    def mode_defined(self) -> bool:
+        """False only for a per-mode setting whose mode the station's configuration lacks.
+
+        True for every other setting and before the station's configuration is known.
+        """
+        mode = self._spec.mode
+        if mode is None:
+            return True
+        config = self.coordinator.station_config
+        return config is None or config.is_defined(mode)
 
     @property
     def setting_applies(self) -> bool:

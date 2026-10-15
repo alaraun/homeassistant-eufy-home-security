@@ -20,11 +20,12 @@ the stream keeps running. A chosen slot the camera no longer has shows as
 
 **Security mode** (one per station): the selected guard mode
 (``StationState.guard_mode``, Schedule while a schedule drives the station), next to the
-alarm panel's mode in force. Options are the modes it sets (``SETTABLE_MODES``) plus the
-current mode when it is another one (a custom mode, geofencing), which is shown and
-refused on write. Picking one calls ``Station.async_set_guard_mode`` and shows the mode
-the station applied; ``GuardModeChanged`` and ``StationStateChanged`` reach it through
-the coordinator, as they reach the panel.
+alarm panel's mode in force. Options are the names (``ModeInfo.name``, custom titles
+included) of the modes the station can be set to (``StationConfig.settable_modes``),
+plus the current mode when it is another one (Off, an unknown code), which is shown and
+refused on write. Picking one calls ``Station.async_set_guard_mode`` with the mode's
+code and shows the mode the station applied; ``GuardModeChanged`` and
+``StationStateChanged`` reach it through the coordinator, as they reach the panel.
 """
 
 from __future__ import annotations
@@ -46,8 +47,10 @@ from eufy_home_security import (
     DeviceBusyError,
     EufySecurityError,
     GuardMode,
+    StationConfig,
     StationState,
     UnsupportedError,
+    guard_mode_label,
     redact_serial,
 )
 
@@ -73,25 +76,25 @@ _NEEDS_CONFIRMATION_CODE = -502
 # One write at a time within this platform; the library serialises the wire per station.
 PARALLEL_UPDATES = 1
 
-# The modes the security-mode select sets, in its option order.
-SETTABLE_MODES: tuple[GuardMode, ...] = (
-    GuardMode.AWAY,
-    GuardMode.HOME,
-    GuardMode.SCHEDULE,
-    GuardMode.DISARMED,
-)
 
+def mode_choices(
+    config: StationConfig | None, current: GuardMode | int | None
+) -> dict[str, GuardMode | int]:
+    """Option name -> guard mode: the settable modes by name, then ``current`` when it is
+    not one of them. A name another mode already has gets the mode's label appended."""
+    choices: dict[str, GuardMode | int] = {}
 
-def mode_option(mode: GuardMode | int | None) -> str | None:
-    """A guard mode as a select option (``away``, ``custom_1``); OFF is ``disarmed``.
+    def add(code: GuardMode | int) -> None:
+        name = guard_mode_label(code) if config is None else config.mode_name(code)
+        if name in choices:
+            name = f"{name} ({guard_mode_label(code)})"
+        choices[name] = code
 
-    None for no mode and for a code the library does not name.
-    """
-    if not isinstance(mode, GuardMode):
-        return None
-    if mode.is_disarmed:
-        return GuardMode.DISARMED.name.lower()
-    return mode.name.lower()
+    for code in () if config is None else config.settable_modes:
+        add(code)
+    if current is not None and current not in choices.values():
+        add(current)
+    return choices
 
 
 async def async_setup_entry(
@@ -335,39 +338,49 @@ class EufySettingSelect(EufySettingEntity, SelectEntity):
 
 
 class EufySecurityModeSelect(EufyStationEntity, SelectEntity):
-    """A station's selected security mode; sets Away, Home, Schedule or Disarmed."""
+    """A station's selected security mode, by the station's mode names."""
 
     _attr_translation_key = SECURITY_MODE_KEY
 
     def __init__(self, coordinator: StationCoordinator) -> None:
         super().__init__(coordinator, SECURITY_MODE_KEY)
 
+    def _choices(self) -> dict[str, GuardMode | int]:
+        data: StationState | None = self.coordinator.data
+        current = None if data is None else data.guard_mode
+        return mode_choices(self.coordinator.station_config, current)
+
     @property
     @override
     def current_option(self) -> str | None:
-        """The selected mode as an option; None before a read or for an unknown code."""
+        """The selected mode's name; None before a read."""
         data: StationState | None = self.coordinator.data
-        return None if data is None else mode_option(data.guard_mode)
+        if data is None or data.guard_mode is None:
+            return None
+        return next(
+            (name for name, code in self._choices().items() if code == data.guard_mode), None
+        )
 
     @property
     @override
     def options(self) -> list[str]:
-        """The settable modes, then the current mode when it is not one of them."""
-        options = [mode.name.lower() for mode in SETTABLE_MODES]
-        current = self.current_option
-        if current is not None and current not in options:
-            options.append(current)
-        return options
+        """The settable modes' names, then the current mode's when it is not one of them."""
+        return list(self._choices())
 
     @override
     async def async_select_option(self, option: str) -> None:
-        """Set the mode ``option``; a mode the select only shows is refused, nothing sent.
+        """Set the mode named ``option``; a mode the select only shows is refused, nothing sent.
 
         Shows the mode the station applied. A library error becomes the alarm panel's
         translated error; a plain ``UnsupportedError`` propagates as a programming error.
         """
-        target = GuardMode.parse(option)
-        if target not in SETTABLE_MODES:
+        target = self._choices().get(option)
+        config = self.coordinator.station_config
+        if (
+            not isinstance(target, GuardMode)
+            or config is None
+            or target not in config.settable_modes
+        ):
             raise errors.security_mode_not_settable(option)
         try:
             applied = await self.coordinator.station.async_set_guard_mode(target)

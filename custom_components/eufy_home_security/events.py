@@ -11,6 +11,9 @@ shows or what the user must be told:
   (``StationCoordinator.async_apply_state``), so one dump reconciles every entity of
   that station. It arrives from a dump the station pushes unasked and from the
   read-back of a confirmed setting write.
+- ``StationConfigChanged`` makes the coordinator rebuild ``station_config`` and notify
+  its entities (``StationCoordinator.async_apply_config_changed``): the per-mode
+  entities follow the modes the station has.
 - ``StorageChanged`` replaces the station's storage record
   (``StorageCoordinator.async_apply_storage``). It arrives after every storage read,
   when a format finishes and when another client reads the record.
@@ -107,6 +110,7 @@ from eufy_home_security import (
     PresetsChanged,
     PushChanged,
     SecurityEvent,
+    StationConfigChanged,
     StationsChanged,
     StationStateChanged,
     StorageChanged,
@@ -284,6 +288,10 @@ class EventRouter:
             # postponing.
             if coordinator is not None:
                 coordinator.async_apply_state(event.state)
+        elif isinstance(event, StationConfigChanged):
+            coordinator = self._coordinators.get(event.station_sn)
+            if coordinator is not None:
+                coordinator.async_apply_config_changed()
         elif isinstance(event, StorageChanged):
             storage = self._storage.get(event.station_sn)
             # Never the set-updated-data method: it would reschedule the storage

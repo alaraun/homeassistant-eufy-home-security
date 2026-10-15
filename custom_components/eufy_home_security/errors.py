@@ -406,9 +406,9 @@ def setting_value_invalid(target: str) -> ServiceValidationError:
 
 
 def security_mode_not_settable(mode: str) -> ServiceValidationError:
-    """A security mode the select shows but does not set (a custom mode); nothing sent.
+    """A security mode the select shows but does not set (Off); nothing sent.
 
-    ``mode`` is the mode's id (``custom_1``), the only placeholder.
+    ``mode`` is the option's name, the only placeholder.
     """
     return ServiceValidationError(
         translation_domain=DOMAIN,

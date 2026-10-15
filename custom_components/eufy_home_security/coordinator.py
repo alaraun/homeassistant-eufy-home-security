@@ -15,6 +15,7 @@ from eufy_home_security import (
     EufySecurityError,
     GuardMode,
     Station,
+    StationConfig,
     StationState,
     redact_serial,
 )
@@ -68,6 +69,26 @@ class StationCoordinator(DataUpdateCoordinator[StationState]):
         # reporting one says so once rather than on every 45 s poll.
         self._logged_serialless: set[int] = set()
         self._mode_read_listeners: list[Callable[[bool], None]] = []
+        # `Station.config`, built again after a `StationConfigChanged` (`_config_stale`).
+        self._config: StationConfig | None = None
+        self._config_stale = True
+
+    @property
+    def station_config(self) -> StationConfig | None:
+        """``Station.config`` (no I/O), built once per ``StationConfigChanged``.
+
+        None before the station's own block has arrived; a None is not kept.
+        """
+        if self._config_stale or self._config is None:
+            self._config = self.station.config
+            self._config_stale = False
+        return self._config
+
+    @callback
+    def async_apply_config_changed(self) -> None:
+        """Rebuild the configuration on next use and notify the entities (``StationConfigChanged``)."""
+        self._config_stale = True
+        self.async_update_listeners()
 
     @override
     async def _async_update_data(self) -> StationState:

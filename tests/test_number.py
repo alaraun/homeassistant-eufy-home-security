@@ -10,6 +10,7 @@ from typing import Final
 import pytest
 from conftest import (
     _STATION_BLOCK,
+    define_custom_modes,
     entity_id_for,
     record_states,
     seed_setting,
@@ -665,6 +666,7 @@ async def test_every_per_mode_delay_is_an_enabled_number_written_as_its_table(
 ) -> None:
     """Each delay is an enabled config number with a translated name; a write is a table."""
     mode = key.split("_delay_", 1)[1]
+    define_custom_modes(fake_station, {3: "Night", 4: "Late", 5: "Trip"})
     seed_setting(fake_station, key, 0)
     seed_setting(fake_station, _MODE_ACTION[mode], 9)
     entry = await set_up_warm(hass, seed_warm_cache)

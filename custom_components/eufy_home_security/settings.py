@@ -110,6 +110,14 @@ class SettingEntitySpec:
         return self.translated
 
     @property
+    def mode(self) -> GuardMode | None:
+        """The guard mode of a per-mode action bit or delay; None for any other setting."""
+        if self.action is not None:
+            return self.action.mode
+        delay = mode_delay(self.setting)
+        return None if delay is None else delay[1]
+
+    @property
     def is_control(self) -> bool:
         """Whether this entity changes the setting, rather than only showing its value."""
         return self.platform in _CONTROL_PLATFORMS
