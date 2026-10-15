@@ -5,6 +5,39 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.0](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.11...v0.4.0) (2026-10-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* per-mode device action switches, entry and leaving delay numbers and delay sensors are removed and their registry entries deleted; the HomeBase card edits each device's actions and delays per mode
+* the HomeBase's alarm type control is removed; Sound alarm and Stop alarm are in the HomeBase card (library 0.4.0)
+* the keypad password status is a read-only binary sensor, disabled by default (library 0.4.0)
+
+### Features
+
+* a HomeBase card: the station and its devices per security mode, custom modes, the weekly schedule, arming groups, cross-camera tracking, the station's settings by section and its status; every change is staged behind one Set, with a confirmation for changes that affect the alarm ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+* a security mode select per HomeBase lists its modes by name, custom modes included ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+* HomeBase settings the station does not report are read from the eufy cloud's device list, refreshed hourly (library 0.4.0) ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+* HomeBases with pro alarm (T8020, T8023, T8024, T8026) get per-mode device tables in the HomeBase card, graded from the eufy app, not tested on hardware (library 0.4.0) ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+* per-mode device action switches, entry and leaving delay numbers and delay sensors are removed and their registry entries deleted; the HomeBase card edits each device's actions and delays per mode ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+* setting entities carry their section and value source (station, cloud, app default) as attributes, kept out of the recorder; settings the eufy app hides behind a warning start disabled ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+* the camera card's settings tabs follow the library's setting sections; settings_groups takes section ids ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+* websocket commands for the HomeBase configuration (modes, mode tables, schedule, cross-camera tracking, restart, sound/stop alarm) and arming groups; writes need an admin and are refused when the station changed since it was read ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+
+
+### Bug Fixes
+
+* a guard mode change on a station model the library has no data for (T8N00, T9000) is refused with an error instead of being sent (library 0.4.0) ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+* a motion sensor's React to motion switch shows and sets the state the eufy app shows; it was inverted (library 0.4.0) ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+* light switches carry the eufy app's names, so a camera no longer shows two Spotlight switches (library 0.4.0) ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+* per-mode entry and leaving delays offer only the eufy app's choices: 0, 15, 30, 45, 60, 180 and 300 s (library 0.4.0) ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+* registry entries of settings the library no longer lists are removed at setup ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+* setting names are in sentence case like the eufy app's; entity ids do not change (library 0.4.0) ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+* the camera card's settings dropdowns show five to eight options, open upward when there is no room below, and get a filter field for long lists ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+* the HomeBase's alarm type control is removed; Sound alarm and Stop alarm are in the HomeBase card (library 0.4.0) ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+* the keypad password status is a read-only binary sensor, disabled by default (library 0.4.0) ([53c6e9e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/53c6e9e4ab1c186e055b513b2fbdefb80f3d3642))
+
 ## [0.3.11](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.10...v0.3.11) (2026-10-14)
 
 
