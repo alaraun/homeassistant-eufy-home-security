@@ -15,8 +15,8 @@ Local control of eufy Security HomeBase systems and standalone eufy battery came
 alarm panel, detections, camera stills, live video, pan/tilt presets and device
 settings. The HomeBase is reached over its local P2P protocol; the eufy cloud is
 used for sign-in, the device list and device keys, and, when switched on, for the
-cloud push that standalone cameras' detections need. The protocol work is done by
-the [`eufy-home-security`](https://pypi.org/project/eufy-home-security/) library
+cloud push that detections from standalone cameras and a HomeBase 2 need. The
+protocol work is done by the [`eufy-home-security`](https://pypi.org/project/eufy-home-security/) library
 ([source](https://github.com/alaraun/python-eufy-home-security)), which Home
 Assistant installs automatically. Library bugs that show without Home Assistant go to
 [its issue tracker](https://github.com/alaraun/python-eufy-home-security/issues).

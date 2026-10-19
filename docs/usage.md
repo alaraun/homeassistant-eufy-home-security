@@ -17,7 +17,7 @@ sit in six collapsible sections.
 | | Save event videos | Off | Copies each HomeBase recording from then on into the event history; see [Event videos](#event-videos) |
 | eufy account | eufy sign-in country | Home Assistant's country | The country your eufy app signs in with; eufy lists a device only under the country it was set up or shared under. A change asks eufy once more for the devices. See [network.md](network.md#eufy-sign-in-country) |
 | | Check the eufy session every 6 hours | On | One cloud read (not a sign-in) that notices when another client ended Home Assistant's session |
-| | Cloud push for cameras without a HomeBase | Off | Receives eufy's push messages; needed for detections of a standalone camera. See [Cloud push](#cloud-push) |
+| | Cloud push for detections | Off | Receives eufy's push messages; needed for detections of a standalone camera or a HomeBase 2. See [Cloud push](#cloud-push) |
 | Extra countries (experimental) | Extra eufy sign-in countries | None | The country of each account that shared a home with this one, when it differs; one more sign-in each. Experimental: can end Home Assistant's or the eufy app's session. See [network.md](network.md#eufy-sign-in-country) |
 | | Look for devices under every sign-in country on each refresh | Off | Every device list asks every sign-in country, also one that listed no devices; may cost a sign-in. See [network.md](network.md#eufy-regions) |
 
@@ -271,12 +271,16 @@ Which cameras get these: [devices.md](devices.md#pan-tilt-presets-and-zoom).
 
 ## Cloud push
 
-**Cloud push for cameras without a HomeBase** option, off by default.
+**Cloud push for detections** option, off by default.
 
 - Home Assistant listens for eufy's push messages, as the eufy app on a phone does.
   The app keeps working.
-- Needed for a standalone camera's detections (sensors, detection event, event
-  image). A HomeBase reports its detections over the LAN without it.
+- Needed for the detections (sensors, detection event, event image) of every station
+  that does not send them over the LAN: a standalone camera, a HomeBase 2 and its
+  cameras, or a station model not yet checked. A HomeBase 3 reports its cameras'
+  detections over the LAN without it.
+- While it is off and such a station is set up, the repair **eufy detections need
+  cloud push** names the stations; its **Fix** switches the option on and reloads.
 - A detection that arrives both over the LAN and from the cloud fires once.
 - A standalone camera's detection image follows [Camera images](#camera-images):
   each detection wakes the camera.

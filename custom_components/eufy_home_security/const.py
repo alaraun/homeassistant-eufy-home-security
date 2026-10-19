@@ -78,9 +78,10 @@ MAX_RECORD_LENGTH_SECONDS: Final = 300
 # P2P sessions held to each HomeBase (the library's ``Station.max_sessions``); its range
 # and default are the library's. Applied to running stations without a reload.
 CONF_STATION_SESSIONS: Final = "station_sessions"
-# eufy's cloud push (FCM), off by default: the only path a detection of a camera
-# without a HomeBase takes to Home Assistant. Started after the platforms, in the
-# background; a change reloads the entry.
+# eufy's cloud push (FCM), off by default: the only path a detection takes from a
+# station whose ``Station.local_events`` is not verified (a camera without a HomeBase,
+# a HomeBase 2). Started after the platforms, in the background; a change reloads the
+# entry.
 CONF_CLOUD_PUSH: Final = "cloud_push"
 # Every device-list fetch asks every eufy cloud region (the library's ``scan_regions``),
 # off by default: a region that listed no devices is otherwise not asked again. A
@@ -329,6 +330,8 @@ ISSUE_CREDENTIALS_REFRESHED_LOGIN: Final = "credentials_refreshed_login"
 ISSUE_ACCOUNT_ID_MISMATCH: Final = "account_id_mismatch"
 # Cloud push is switched on but not listening; the library keeps retrying.
 ISSUE_PUSH_NOT_RUNNING: Final = "push_not_running"
+# Cloud push is off, and a served station does not push its detections over the LAN.
+ISSUE_PUSH_NEEDED: Final = "push_needed"
 # The cloud holds no key for the cipher a station named, under the station's owner.
 ISSUE_CIPHER_UNAVAILABLE: Final = "cipher_unavailable"
 # eufy serves a station a key that does not parse (the legacy RSA handshake); no

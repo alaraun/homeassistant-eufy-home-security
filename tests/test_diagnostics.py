@@ -129,6 +129,7 @@ async def test_the_diagnostics_download_has_the_cache_summary_and_session_health
     assert station["model"] == "T8030"
     assert station["connected"] is True
     assert station["last_error"] is None
+    assert station["local_events"] == "verified"
     warnings = station["lan_path_warnings"]
     assert isinstance(warnings, list)
     assert all(isinstance(warning, str) for warning in warnings)
@@ -501,6 +502,7 @@ def _stand_in_coordinator(serial: str, like: Any) -> Any:
         connected=False,
         last_error=None,
         lan_path=SimpleNamespace(warnings=[]),
+        local_events=like.local_events,
         # A HomeBase-like stand-in: held session, not standalone.
         is_standalone=False,
         connects_on_demand=False,

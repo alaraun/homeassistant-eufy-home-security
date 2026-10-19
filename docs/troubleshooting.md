@@ -55,7 +55,8 @@ an account where no device was found too.
 | eufy station needs WebRTC | eufy lists a station the eufy app reaches only over its WebRTC connection (HomeBase Professional S1 T9000, NVR T8N00), which the integration does not support yet. It and its paired devices are left out, named by model and last four serial characters; the account's other stations work | none in Home Assistant; it is checked again on every reload and **Refresh device list** |
 | eufy device not supported | eufy lists a device whose serial number is not only letters and digits; it is left out (a station with its paired devices) | none in Home Assistant; if the device shows in the eufy app, open an issue with the diagnostics download |
 | Camera event history is not kept | no host directory mounted at `/media` (Container) | see [usage.md](usage.md#event-history) |
-| eufy cloud push is not running | cloud push is on but not receiving; standalone cameras' detections are late or missing | retries by itself; check internet access and the log, or switch the option off; see [usage.md](usage.md#cloud-push) |
+| eufy detections need cloud push | cloud push is off, and a station does not send its cameras' detections over the LAN (a standalone camera, a HomeBase 2, a model not yet checked); their detection sensors stay off | **Fix** switches cloud push on and reloads; or ignore it to leave push off; see [usage.md](usage.md#cloud-push) |
+| eufy cloud push is not running | cloud push is on but not receiving; detections of standalone cameras and a HomeBase 2 are late or missing | retries by itself; check internet access and the log, or switch the option off; see [usage.md](usage.md#cloud-push) |
 
 ## Setting errors
 
@@ -71,6 +72,6 @@ an account where no device was found too.
   [network.md](network.md#homebase-sessions).
 - **Sign-out by another client** is noticed within 6 hours, or at the next command
   that needs eufy.
-- **Standalone battery cameras** report detections only with
+- **Standalone battery cameras and a HomeBase 2** report detections only with
   [Cloud push](usage.md#cloud-push) on.
 - Not supported: firmware installation.

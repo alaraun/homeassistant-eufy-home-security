@@ -30,7 +30,14 @@ from homeassistant.helpers import issue_registry as ir
 from eufy_home_security import EufySecurityError
 
 from . import errors, runtime
-from .const import DOMAIN, ISSUE_KEY_REJECTED, ISSUE_PENDING_INVITES, ISSUE_SESSION_REPLACED
+from .const import (
+    CONF_CLOUD_PUSH,
+    DOMAIN,
+    ISSUE_KEY_REJECTED,
+    ISSUE_PENDING_INVITES,
+    ISSUE_PUSH_NEEDED,
+    ISSUE_SESSION_REPLACED,
+)
 from .runtime import EufyConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
@@ -192,6 +199,49 @@ class PendingInvitesFix(RepairsFlow):
         return self.async_create_entry(data={})
 
 
+class PushNeededFix(RepairsFlow):
+    """Switch cloud push on for an account whose stations send detections only that way.
+
+    On confirmation the entry's ``cloud_push`` option is set and the entry reloaded,
+    which starts push in the background; the fix itself sends nothing.
+    """
+
+    def __init__(self, entry_id: str) -> None:
+        self._entry_id = entry_id
+
+    async def async_step_init(self, user_input: dict[str, str] | None = None) -> RepairsFlowResult:
+        """Open straight on the confirmation."""
+        return await self.async_step_confirm()
+
+    async def async_step_confirm(
+        self, user_input: dict[str, str] | None = None
+    ) -> RepairsFlowResult:
+        """Ask first, naming the stations the issue shows; on submit, set the option and
+        reload."""
+        if user_input is None:
+            entry = self.hass.config_entries.async_get_entry(self._entry_id)
+            issue = ir.async_get(self.hass).async_get_issue(
+                DOMAIN, errors.push_needed_issue_id(self._entry_id)
+            )
+            placeholders = (issue.translation_placeholders if issue is not None else None) or {}
+            return self.async_show_form(
+                step_id="confirm",
+                data_schema=vol.Schema({}),
+                description_placeholders={
+                    "account": errors.account_label(entry) if entry is not None else "",
+                    "stations": placeholders.get("stations", ""),
+                },
+            )
+        entry = _loaded_entry(self.hass, self._entry_id)
+        if entry is None:
+            return self.async_abort(reason="entry_not_loaded")
+        self.hass.config_entries.async_update_entry(
+            entry, options={**entry.options, CONF_CLOUD_PUSH: True}
+        )
+        self.hass.config_entries.async_schedule_reload(entry.entry_id)
+        return self.async_create_entry(data={})
+
+
 async def async_create_fix_flow(
     hass: HomeAssistant,
     issue_id: str,
@@ -204,4 +254,6 @@ async def async_create_fix_flow(
         return KeyRejectedFix(str(data["entry_id"]), str(data["device_id"]))
     if issue_id.startswith(f"{ISSUE_PENDING_INVITES}_") and data is not None:
         return PendingInvitesFix(str(data["entry_id"]))
+    if issue_id.startswith(f"{ISSUE_PUSH_NEEDED}_") and data is not None:
+        return PushNeededFix(str(data["entry_id"]))
     return ConfirmRepairFlow()

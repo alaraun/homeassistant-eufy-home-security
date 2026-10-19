@@ -125,12 +125,12 @@
             "data": {
               "country": "eufy sign-in country",
               "session_probe": "Check the eufy session every 6 hours",
-              "cloud_push": "Cloud push for cameras without a HomeBase"
+              "cloud_push": "Cloud push for detections"
             },
             "data_description": {
               "country": "The country your eufy app signs in with (shown on its sign-in screen). eufy lists a device only under the country it was set up or shared under. Empty means Home Assistant's country. A change asks eufy once for the devices, which can cost a sign-in.",
               "session_probe": "On by default. A minute after start and every 6 hours, one device-list read with the saved session, never a sign-in. When another app or device has ended Home Assistant's session, the repair then shows within that time. Off: noticed at the next command that needs eufy or the next restart.",
-              "cloud_push": "Off by default. Needed for the detections of a camera without a HomeBase, such as the T8170 Battery SoloCam, which sends them only through eufy's cloud. Home Assistant listens for eufy's push messages like the phone app, which keeps working. HomeBase detections still arrive locally, and one that arrives both ways fires once. The messages pass through eufy's and Google's servers and can arrive late or not at all."
+              "cloud_push": "Off by default. Needed for detections from a station that does not send them over the local network: a HomeBase 2, a camera without a HomeBase (such as the T8170 Battery SoloCam) or a model not yet checked; a repair names each one. A HomeBase 3 sends its cameras' detections locally, and one that arrives both ways fires once. Home Assistant listens for eufy's push messages like the phone app, which keeps working. The messages pass through eufy's and Google's servers and can arrive late or not at all."
             }
           },
           "more_countries": {
@@ -233,7 +233,21 @@
     },
     "push_not_running": {
       "title": "eufy cloud push is not running for {account}",
-      "description": "Cloud push is switched on for the eufy account {account}, but Home Assistant is not receiving eufy's push messages right now. Until it is, detections from cameras without a HomeBase, and changes made in the eufy app, arrive late or not at all. Local control and detections from a HomeBase keep working. Home Assistant keeps retrying by itself, and this notice clears when push runs again. If it stays, check that Home Assistant can reach the internet, and look at the log for the reason. To stop using cloud push, switch it off in the integration's options."
+      "description": "Cloud push is switched on for the eufy account {account}, but Home Assistant is not receiving eufy's push messages right now. Until it is, detections from stations that do not send them locally (a HomeBase 2, a camera without a HomeBase), and changes made in the eufy app, arrive late or not at all. Local control and detections from a HomeBase 3 keep working. Home Assistant keeps retrying by itself, and this notice clears when push runs again. If it stays, check that Home Assistant can reach the internet, and look at the log for the reason. To stop using cloud push, switch it off in the integration's options."
+    },
+    "push_needed": {
+      "title": "eufy detections need cloud push for {account}",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Switch on cloud push",
+            "description": "These stations of the eufy account {account} do not send their cameras' detections over the local network: {stations}. Their detection sensors and events stay off until cloud push is on. Confirm to switch on Cloud push for detections in the integration's options: Home Assistant reloads the eufy account and then listens for eufy's push messages, which pass through eufy's and Google's servers. To leave it off, ignore this repair; it is checked again on every reload."
+          }
+        },
+        "abort": {
+          "entry_not_loaded": "The eufy account is not loaded in Home Assistant right now. Wait until it has finished loading, then open this repair again."
+        }
+      }
     },
     "cipher_unavailable": {
       "title": "eufy has no key for {station}",

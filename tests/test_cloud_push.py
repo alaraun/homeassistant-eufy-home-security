@@ -10,12 +10,21 @@ bus does: to the subscriptions still active, which is what the client's close em
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-from conftest import add_entry, set_up_warm, setup_entry, wait_until
+from conftest import (
+    PUSHED_THUMB_PATH,
+    PUSHED_THUMBNAIL,
+    SYNTHETIC,
+    add_entry,
+    set_guard_mode,
+    set_up_warm,
+    setup_entry,
+    wait_until,
+)
 from eufy_home_security import (
     CommunicationError,
     EufySecurity,
@@ -23,18 +32,46 @@ from eufy_home_security import (
     LoginLimitedError,
     PushChanged,
 )
+from eufy_home_security.p2p import session as session_module
 from eufy_home_security.testing import FakeStation
 from homeassistant.components.alarm_control_panel import DOMAIN as ALARM_DOMAIN
+from homeassistant.components.repairs import repairs_flow_manager
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import CoreState, HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.eufy_home_security import diagnostics, errors, runtime
 from custom_components.eufy_home_security.const import (
     CONF_CLOUD_PUSH,
+    CONF_SESSION_PROBE,
     DOMAIN,
+    ISSUE_PUSH_NEEDED,
     ISSUE_PUSH_NOT_RUNNING,
 )
+
+# A HomeBase 2 with the synthetic station's tail, so its key derivation is the fake's.
+HOMEBASE_2_SN = "T8010" + SYNTHETIC.station_sn[5:]
+
+
+@pytest.fixture
+def short_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake HomeBase 2 answers no storage query: give up after a tenth of a second."""
+    monkeypatch.setattr(session_module, "STORAGE_TIMEOUT", 0.1)
+    monkeypatch.setattr(session_module, "SD_INFO_TIMEOUT", 0.1)
+
+
+@pytest.fixture
+async def fake_station(request: pytest.FixtureRequest) -> AsyncIterator[FakeStation]:
+    """The conftest station, with the serial a test passes indirectly (default HomeBase 3)."""
+    station = FakeStation(serial=getattr(request, "param", SYNTHETIC.station_sn))
+    set_guard_mode(station, station.guard_mode)
+    station.images[PUSHED_THUMB_PATH] = PUSHED_THUMBNAIL
+    await station.start()
+    yield station
+    station.stop()
 
 
 @dataclass
@@ -335,4 +372,96 @@ async def test_diagnostics_show_the_push_state_and_its_failure_type(
 
     assert data["push"] == {"running": False, "error": "CommunicationError"}
     assert "synthetic text" not in repr(data)
+    await _unload(hass, entry)
+
+
+def _push_needed(hass: HomeAssistant, entry: MockConfigEntry) -> ir.IssueEntry | None:
+    return ir.async_get(hass).async_get_issue(DOMAIN, f"{ISSUE_PUSH_NEEDED}_{entry.entry_id}")
+
+
+async def test_a_homebase_3_with_push_off_raises_no_push_needed_issue(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    push: PushHarness,
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A station graded verified sends its detections locally: no issue."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    assert _push_needed(hass, entry) is None
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("fake_station", [HOMEBASE_2_SN], indirect=True)
+@pytest.mark.usefixtures("short_storage")
+async def test_a_homebase_2_with_push_off_raises_a_fixable_push_needed_issue(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    push: PushHarness,
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A station not graded verified, push off: one fixable warning naming the station."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    issue = _push_needed(hass, entry)
+    assert issue is not None
+    assert issue.severity is ir.IssueSeverity.WARNING
+    assert issue.is_fixable is True
+    assert issue.is_persistent is False
+    assert issue.translation_key == ISSUE_PUSH_NEEDED
+    assert issue.data == {"entry_id": entry.entry_id}
+    placeholders = issue.translation_placeholders or {}
+    assert placeholders["account"] == errors.account_label(entry)
+    assert placeholders["stations"]
+    assert HOMEBASE_2_SN not in placeholders["stations"]
+
+    await _unload(hass, entry)
+    assert _push_needed(hass, entry) is None, "the issue outlived the unload"
+
+
+@pytest.mark.parametrize("fake_station", [HOMEBASE_2_SN], indirect=True)
+@pytest.mark.usefixtures("short_storage")
+async def test_a_homebase_2_with_push_on_raises_no_push_needed_issue(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    push: PushHarness,
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Push on covers the station: no issue."""
+    entry = await set_up_warm(hass, seed_warm_cache, options={CONF_CLOUD_PUSH: True})
+    await wait_until(lambda: len(push.starts) == 2)
+
+    assert _push_needed(hass, entry) is None
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("fake_station", [HOMEBASE_2_SN], indirect=True)
+@pytest.mark.usefixtures("short_storage")
+async def test_the_push_needed_fix_switches_push_on_and_reloads(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    push: PushHarness,
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Confirming sets the option, keeps the others, reloads; push starts, the issue goes."""
+    entry = await set_up_warm(hass, seed_warm_cache, options={CONF_SESSION_PROBE: False})
+    issue = _push_needed(hass, entry)
+    assert issue is not None
+    assert await async_setup_component(hass, "repairs", {})
+    manager = repairs_flow_manager(hass)
+    assert manager is not None
+
+    result = await manager.async_init(DOMAIN, data={"issue_id": issue.issue_id})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "confirm"
+    assert result["description_placeholders"] == issue.translation_placeholders
+
+    result = await manager.async_configure(result["flow_id"], {})
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options == {CONF_SESSION_PROBE: False, CONF_CLOUD_PUSH: True}
+    assert entry.state is ConfigEntryState.LOADED
+    await wait_until(lambda: any(push_ and not p2p for p2p, push_, _, _ in push.starts))
+    assert _push_needed(hass, entry) is None
     await _unload(hass, entry)

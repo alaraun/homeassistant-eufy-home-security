@@ -66,6 +66,7 @@ from eufy_home_security import (
     redact_serial,
 )
 from eufy_home_security.cloud.const import LOGIN_BUDGET, LOGIN_BUDGET_WINDOW_SECONDS, scope_country
+from eufy_home_security.devices import Support
 
 from .const import (
     CONF_COUNTRY,
@@ -129,6 +130,7 @@ from .const import (
     ISSUE_MEDIA_NOT_PERSISTENT,
     ISSUE_NO_DEVICES,
     ISSUE_PENDING_INVITES,
+    ISSUE_PUSH_NEEDED,
     ISSUE_PUSH_NOT_RUNNING,
     ISSUE_SESSION_REPLACED,
     ISSUE_STATION_P2P_ID_UNSUPPORTED,
@@ -1103,7 +1105,7 @@ def raise_account_mismatch_issue(hass: HomeAssistant, entry: ConfigEntry[Any], s
 
 def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:
     """Delete the entry's account-id-mismatch, cipher-unavailable, key-unusable,
-    no-devices, pending-invitations, login-limited and skipped-device issues.
+    no-devices, pending-invitations, login-limited, push-needed and skipped-device issues.
 
     Unload, the start of every setup attempt and entry removal call it, so an issue
     raised by an attempt that then failed (and so was never unloaded) does not
@@ -1119,6 +1121,7 @@ def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) ->
         no_devices_issue_id(entry.entry_id),
         pending_invites_issue_id(entry.entry_id),
         login_limited_issue_id(entry.entry_id),
+        push_needed_issue_id(entry.entry_id),
         *(skipped_devices_issue_id(entry.entry_id, key) for key in _SKIP_ISSUES.values()),
     )
     cancel_login_limited_expiry(hass, entry.entry_id)
@@ -1280,4 +1283,57 @@ def sync_push_issue(hass: HomeAssistant, entry: ConfigEntry[Any], *, running: bo
         severity=ir.IssueSeverity.WARNING,
         translation_key=ISSUE_PUSH_NOT_RUNNING,
         translation_placeholders={"account": account_label(entry)},
+    )
+
+
+def push_needed_issue_id(entry_id: str) -> str:
+    """The account's push-needed issue: one per entry."""
+    return f"{ISSUE_PUSH_NEEDED}_{entry_id}"
+
+
+def sync_push_needed_issue(
+    hass: HomeAssistant,
+    entry: ConfigEntry[Any],
+    stations: Iterable[Station],
+    *,
+    cloud_push: bool,
+) -> None:
+    """Name the served stations whose detections need cloud push while it is off.
+
+    A station whose ``local_events`` is not ``Support.VERIFIED`` delivers its cameras'
+    detections only through cloud push (library guide). Fixable: the fix switches the
+    option on. Not persistent; the placeholders are the account's label and the
+    stations' device names. The library's reason text is logged at debug, never shown.
+    """
+    issue_id = push_needed_issue_id(entry.entry_id)
+    needing: list[str] = []
+    if not cloud_push:
+        for station in stations:
+            evidence = station.local_events
+            if evidence.support is Support.VERIFIED:
+                continue
+            _LOGGER.debug(
+                "Detections from %s need cloud push: %s",
+                redact_serial(station.serial),
+                evidence.source,
+            )
+            device = _station_device(hass, entry, station.serial)
+            label = station_label(device) if device is not None else ""
+            needing.append(label or redact_serial(station.serial))
+    if not needing:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        data={"entry_id": entry.entry_id},
+        is_fixable=True,
+        is_persistent=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=ISSUE_PUSH_NEEDED,
+        translation_placeholders={
+            "account": account_label(entry),
+            "stations": ", ".join(sorted(needing)),
+        },
     )

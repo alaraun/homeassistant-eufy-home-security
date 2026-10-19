@@ -59,8 +59,8 @@ ENTRY_SENSOR_SN: Final = "T8900P0000000001"
 DOORBELL_SN: Final = "T8210P0000000001"
 # A camera with the generic camera profile (eufyCam 2C).
 GENERIC_CAMERA_SN: Final = "T8113P0000000001"
-# An Indoor Cam 2K Pan & Tilt: a live open only as a standalone camera.
-INDOOR_PT_SN: Final = "T8410P0000000001"
+# A T8223 camera: a live open on its own, none behind a HomeBase 3 (WebRTC there).
+WEBRTC_BEHIND_HB3_SN: Final = "T8223P0000000001"
 # A Floodlight Cam E340: pan/tilt, presets and zoom from its eufy-app handler.
 FLOODLIGHT_PTZ_SN: Final = "T8425P0000000001"
 # A HomeBase 2 with the synthetic station's tail, so its key derivation is the fake's.
@@ -226,24 +226,23 @@ async def test_a_camera_whose_open_the_library_lacks_behind_its_station_gets_no_
 ) -> None:
     """The gate is the device on its station, not the model alone.
 
-    A T8410's profile grades live video declared (its standalone open), but the
-    library has no open for it behind a HomeBase: camera entity, no stream feature,
-    no broadcast.
+    A T8223's profile grades live video declared, but the library has no open for it
+    behind a HomeBase 3: camera entity, no stream feature, no broadcast.
     """
-    model_profile = profile_for_serial(INDOOR_PT_SN)
+    model_profile = profile_for_serial(WEBRTC_BEHIND_HB3_SN)
     assert model_profile is not None
     assert model_profile.support(Capability.LIVE_STREAM) is not Support.UNKNOWN
-    _pair(fake_station, fake_cloud, INDOOR_PT_SN)
+    _pair(fake_station, fake_cloud, WEBRTC_BEHIND_HB3_SN)
     entry = await set_up_warm(hass, seed_warm_cache)
 
     station = entry.runtime_data.coordinators[fake_station.serial].station
-    assert station.live_support(INDOOR_PT_SN).support is Support.UNKNOWN
-    assert _CAMERA_ENTITIES <= _entities_of(hass, INDOOR_PT_SN)
-    state = _camera_state(hass, INDOOR_PT_SN)
+    assert station.live_support(WEBRTC_BEHIND_HB3_SN).support is Support.UNKNOWN
+    assert _CAMERA_ENTITIES <= _entities_of(hass, WEBRTC_BEHIND_HB3_SN)
+    state = _camera_state(hass, WEBRTC_BEHIND_HB3_SN)
     assert not state.attributes["supported_features"] & CameraEntityFeature.STREAM
     streams = runtime.streaming(entry)
     assert streams is not None
-    assert not streams.has_camera(INDOOR_PT_SN)
+    assert not streams.has_camera(WEBRTC_BEHIND_HB3_SN)
     assert streams.has_camera(SYNTHETIC.camera_sn)
 
 

@@ -137,6 +137,8 @@ async def async_get_config_entry_diagnostics(
                 type(station.last_error).__name__ if station.last_error is not None else None
             ),
             "lan_path_warnings": [warning.value for warning in station.lan_path.warnings],
+            # Whether the station pushes its cameras' detections over the LAN.
+            "local_events": station.local_events.support.value,
             "standalone": station.is_standalone,
             "on_demand": station.connects_on_demand,
             "sub_devices": [device.as_redacted_dict() for device in station.sub_devices],

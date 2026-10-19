@@ -429,6 +429,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     # devices of a scope no longer in use.
     _LOGGER.debug("Device list from %s", eufy.device_list_source)
     stale_devices.async_remove_unlisted(hass, entry, runtime.listed_serials(eufy))
+    errors.sync_push_needed_issue(
+        hass,
+        entry,
+        (coordinator.station for coordinator in coordinators.values()),
+        cloud_push=cloud_push,
+    )
 
     start_errors = await eufy.async_start(p2p=True, push=False)
 
