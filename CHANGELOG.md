@@ -5,6 +5,23 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.1](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.0...v0.4.1) (2026-10-19)
+
+
+### Features
+
+* a repair names the stations whose detections need cloud push (a HomeBase 2, a standalone camera) while it is off; its fix switches cloud push on ([7fbc6e8](https://github.com/alaraun/homeassistant-eufy-home-security/commit/7fbc6e8527117257dfa9a283f8b064b1a0d8947c))
+* diagnostics show whether each station sends its detections over the LAN ([7fbc6e8](https://github.com/alaraun/homeassistant-eufy-home-security/commit/7fbc6e8527117257dfa9a283f8b064b1a0d8947c))
+
+
+### Bug Fixes
+
+* a camera's state is Streaming while a live view of it plays ([f2ec2f3](https://github.com/alaraun/homeassistant-eufy-home-security/commit/f2ec2f3609e428a13738caf75a01cde8b512977d))
+* a live view the camera refuses fails at once instead of waiting for the first frame (library 0.4.1) ([7fbc6e8](https://github.com/alaraun/homeassistant-eufy-home-security/commit/7fbc6e8527117257dfa9a283f8b064b1a0d8947c))
+* live view for cameras paired to a HomeBase 2 or 3 that the eufy app opens through the HomeBase, such as the T8600 (declared, not tested; library 0.4.1) ([7fbc6e8](https://github.com/alaraun/homeassistant-eufy-home-security/commit/7fbc6e8527117257dfa9a283f8b064b1a0d8947c))
+* the cloud push option is named "Cloud push for detections" and no longer says a HomeBase 2's detections arrive locally ([7fbc6e8](https://github.com/alaraun/homeassistant-eufy-home-security/commit/7fbc6e8527117257dfa9a283f8b064b1a0d8947c))
+* the T8210C, T8510P and T8520P get their settings and live view (library 0.4.1) ([7fbc6e8](https://github.com/alaraun/homeassistant-eufy-home-security/commit/7fbc6e8527117257dfa9a283f8b064b1a0d8947c))
+
 ## [0.4.0](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.3.11...v0.4.0) (2026-10-15)
 
 
