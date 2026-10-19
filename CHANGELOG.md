@@ -5,6 +5,20 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.2](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.1...v0.4.2) (2026-10-19)
+
+
+### Features
+
+* a HomeBase 2 detection shows the picture its cloud push names, a recognised face or an event picture, as the camera's event image (declared, not tested) ([0a4cecd](https://github.com/alaraun/homeassistant-eufy-home-security/commit/0a4cecd45cd4014197d19175f18fb444f2f906ad))
+* a later push that names a more specific kind of a detection turns that kind's sensor on and fires the detection event again ([0a4cecd](https://github.com/alaraun/homeassistant-eufy-home-security/commit/0a4cecd45cd4014197d19175f18fb444f2f906ad))
+
+
+### Bug Fixes
+
+* a HomeBase 2 detection that eufy reports as a person, pet or vehicle shows as that kind instead of motion (library 0.4.2) ([0a4cecd](https://github.com/alaraun/homeassistant-eufy-home-security/commit/0a4cecd45cd4014197d19175f18fb444f2f906ad))
+* several cloud pushes of one HomeBase 2 detection count as one detection (library 0.4.2) ([0a4cecd](https://github.com/alaraun/homeassistant-eufy-home-security/commit/0a4cecd45cd4014197d19175f18fb444f2f906ad))
+
 ## [0.4.1](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.0...v0.4.1) (2026-10-19)
 
 
