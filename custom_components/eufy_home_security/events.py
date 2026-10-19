@@ -54,12 +54,16 @@ shows or what the user must be told:
   entities when one consumes it (``detections.station_event_consumed``). Every other
   one fires the ``eufy_home_security_event`` bus event, with six fixed keys and a
   device registry id, never a serial. An enriching copy and an unauthenticated alarm
-  stop fire nothing. Nothing is dispatched outside the consuming window, from after
+  stop fire nothing, except an enriching copy whose detection is more specific than
+  every copy of that occurrence dispatched so far (``detections.is_kind_upgrade``):
+  a motion push followed by the same detection as a person goes to the device's
+  entities again. The router remembers the rank dispatched per occurrence for the
+  last ``DELIVERED_OCCURRENCES`` occurrences. Nothing is dispatched outside the consuming window, from after
   the platforms are forwarded to the start of unload: an event then goes to the bus.
   The library has already de-duplicated every event it delivers, so the router keeps
-  no seen-set. Each one received for a station this entry serves is counted by
-  cipher for the diagnostics. A camera detection carrying a media path also goes to
-  the snapshot manager, enriching copies included.
+  no seen-set beyond those ranks. Each one received for a station this entry serves is counted by
+  cipher for the diagnostics. A camera detection carrying a media path or naming a
+  picture also goes to the snapshot manager, enriching copies included.
 - ``AlarmChanged`` goes to that station's panel and alarm event on its alarm signal,
   inside the consuming window. The library has already authenticated and ordered
   it, so it needs no check here. Outside the window it is dropped: it is not a push,
@@ -85,6 +89,7 @@ Nothing here logs in or calls the cloud.
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Final
 
@@ -134,6 +139,10 @@ if TYPE_CHECKING:
 CIPHER_COUNTER_KEYS: Final = ("gcm", "ecb", "cloud")
 
 _LOGGER = logging.getLogger(__name__)
+
+# How many occurrences the router remembers the dispatched detection rank of: the
+# library's deduplicator admits an enrichment within seconds of the first copy.
+DELIVERED_OCCURRENCES: Final = 256
 
 
 def _cipher_key(event: SecurityEvent) -> str:
@@ -186,6 +195,9 @@ class EventRouter:
         self._reload_pending = False
         # Per station serial, the pending "unavailable" mark of a lost session.
         self._pending_loss: dict[str, CALLBACK_TYPE] = {}
+        # Per occurrence (dedupe key), the highest detection rank dispatched to its
+        # device's entities; the oldest is forgotten first.
+        self._delivered_ranks: OrderedDict[str, int] = OrderedDict()
         entry.async_on_unload(self._async_cancel_pending_losses)
 
     def loss_pending(self, station_sn: str) -> bool:
@@ -381,7 +393,7 @@ class EventRouter:
         key = _cipher_key(event)
         _LOGGER.debug(
             "Push received for %s of %s: msg %s:%s, cipher %s, detection %s, enriches %s,"
-            " media %s, record %s",
+            " media %s, record %s, pictures %s",
             _subject(event),
             redact_serial(event.station_sn),
             event.msg_type,
@@ -391,6 +403,7 @@ class EventRouter:
             event.enriches,
             ",".join(sorted(event.media_paths)) or "none",
             event.record_id is not None,
+            ",".join(event.picture_sources) or "none",
         )
         if event.station_sn is not None and event.station_sn in self._coordinators:
             counts = self._events_by_cipher.setdefault(
@@ -433,7 +446,11 @@ class EventRouter:
                 if self._recordings is not None:
                     # The detection's recording, once it has finished (recordings.py).
                     self._recordings.async_detection(coordinator.station.serial, event)
-        if detections.dropped_without_trace(event):
+        occurrence = event.dedupe_key
+        upgrade = occurrence is not None and detections.is_kind_upgrade(
+            event, self._delivered_ranks.get(occurrence)
+        )
+        if not upgrade and detections.dropped_without_trace(event):
             _LOGGER.debug(
                 "Push for %s dropped: %s",
                 _subject(event),
@@ -455,14 +472,21 @@ class EventRouter:
                 kinds[event.device_sn], event
             ):
                 _LOGGER.debug(
-                    "Push for %s dispatched to its device entities", redact_serial(event.device_sn)
+                    "Push for %s dispatched to its device entities%s",
+                    redact_serial(event.device_sn),
+                    ", a more specific kind of a delivered detection" if upgrade else "",
                 )
+                self._note_delivered(event)
                 async_dispatcher_send(
                     self._hass,
                     detections.device_signal(self._entry.entry_id, event.device_sn),
                     event,
                 )
                 return
+        if upgrade:
+            # An enrichment no device entity consumes is no new detection: no fallback.
+            _LOGGER.debug("Push for %s dropped: enriching copy, not consumed", _subject(event))
+            return
         if (
             self._consuming
             and coordinator is not None
@@ -487,6 +511,17 @@ class EventRouter:
                 self._fallback_reason(event, coordinator),
             )
         self._fire_fallback(event, coordinator)
+
+    def _note_delivered(self, event: SecurityEvent) -> None:
+        """Remember the rank of a device detection dispatched for its occurrence."""
+        key = event.dedupe_key
+        rank = detections.detection_rank(event)
+        if key is None or rank is None:
+            return
+        self._delivered_ranks[key] = max(rank, self._delivered_ranks.get(key, rank))
+        self._delivered_ranks.move_to_end(key)
+        while len(self._delivered_ranks) > DELIVERED_OCCURRENCES:
+            self._delivered_ranks.popitem(last=False)
 
     def _fallback_reason(self, event: SecurityEvent, coordinator: StationCoordinator | None) -> str:
         """Why a push went to the fallback bus event, for its DEBUG line only."""

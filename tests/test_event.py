@@ -1108,7 +1108,11 @@ async def test_an_ecb_detection_of_a_new_occurrence_is_still_shown(
     fake_station.push_camera_event(DetectionType.PERSON, cipher=FrameCipher.ECB)
     await wait_until(lambda: deduplicator.dropped_duplicates == 1)
 
-    fake_station.push_camera_event(DetectionType.MOTION, cipher=FrameCipher.ECB)
+    # A new occurrence: another time. One second apart is the same occurrence to the
+    # library whatever its kind.
+    motion = _occurrence(now_ms(), "cccccccccccccccccccccccccccccccc")
+    motion["event_type"] = int(DetectionType.MOTION)
+    _send_p2p(fake_station, motion, thumb=False, cipher=FrameCipher.ECB)
     await wait_until(lambda: len(detection_states) == 2)
 
     state = hass.states.get(entity_id)
@@ -1228,7 +1232,13 @@ def _occurrence(t_ms: int, unique_id: str) -> dict[str, object]:
     }
 
 
-def _send_p2p(fake_station: FakeStation, inner: dict[str, object], *, thumb: bool) -> None:
+def _send_p2p(
+    fake_station: FakeStation,
+    inner: dict[str, object],
+    *,
+    thumb: bool,
+    cipher: FrameCipher = FrameCipher.GCM,
+) -> None:
     """The station's own copy over P2P, with its bound thumbnail record when ``thumb``."""
     payload = dict(inner)
     if thumb:
@@ -1242,7 +1252,7 @@ def _send_p2p(fake_station: FakeStation, inner: dict[str, object], *, thumb: boo
     fake_station.send_json(
         FrameType.NOTIFY_PAYLOAD,
         {"cmd": 2037, "payload": json.dumps(payload)},
-        cipher=FrameCipher.GCM,
+        cipher=cipher,
     )
 
 

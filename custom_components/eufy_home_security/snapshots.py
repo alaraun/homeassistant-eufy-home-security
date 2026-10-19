@@ -65,6 +65,14 @@ only decides what Home Assistant shows, and when it asks:
   The push pair of one detection captures and fetches once. An unauthenticated push
   never wakes a camera. Owed attempts are dropped at unload. The same ordering rules
   apply as for any detection.
+- **A push's own picture.** A detection push with no still to look up (no
+  ``record_id``, no ``thumb_path``) that names a picture (``picture_sources``: the
+  cloud's face crop, the push's ``pic_url``), as a HomeBase 2 person push does, shows
+  that picture in the thumbnail tier (``image_source`` ``push_picture``), fetched through
+  ``EufySecurity.async_push_image``. It never wakes a camera and never logs in. Only an
+  authenticated push, and only a JPEG, is shown. An enriching copy that adds a source
+  fetches that source; one already fetched for the shown occurrence is not fetched
+  again. hd_only shows no push picture: it is no trigger frame.
 - **One media operation per station at a time.** Each station has one worker
   that fetches its cameras' stills in turn, so Home Assistant never opens more than one
   short-lived session per station (the station ends sessions past about ten). A
@@ -127,6 +135,8 @@ from eufy_home_security import (
     EufySecurityError,
     ImageSource,
     LiveStreamLimitError,
+    PushImage,
+    PushPictureSource,
     RecordNotFoundError,
     SecurityEvent,
     Station,
@@ -209,6 +219,8 @@ class StillSource(StrEnum):
     LIVE = "live"
     # A standalone camera's live keyframe taken for a detection: its HD tier.
     DETECTION_LIVE = "detection_live"
+    # A picture a detection push names: the cloud's face crop or the push's pic_url.
+    PUSH_PICTURE = "push_picture"
 
 
 def image_signal(entry_id: str, device_sn: str) -> SignalType[()]:
@@ -396,6 +408,9 @@ class _CameraStill:
     recorded_time: datetime | None = None
     # When the shown image was stored (UTC), strictly increasing per camera.
     stored_time: datetime | None = None
+    # The occurrence whose push pictures were fetched, and their sources.
+    push_occurrence: str | None = None
+    push_fetched: frozenset[PushPictureSource] = frozenset()
 
 
 @dataclass(slots=True)
@@ -435,6 +450,8 @@ class SnapshotManager:
         yield_media: Callable[[str], Awaitable[None]],
         cache: StillCache | None = None,
         history: EventHistory | None = None,
+        push_image: Callable[[SecurityEvent, PushPictureSource], Awaitable[PushImage]]
+        | None = None,
     ) -> None:
         """``yield_media`` ends the live view holding a station's media slot (``async_open_media``).
 
@@ -444,8 +461,10 @@ class SnapshotManager:
         queues the first job), and never imports ``streaming.py``: the dependency runs
         one way only. ``cache`` receives every stored still (``still_cache.py``), and so
         does ``history`` (``history.py``), with the still's own moment and kind.
+        ``push_image`` is the client's ``async_push_image``; None shows no push picture.
         """
         self._hass = hass
+        self._push_image = push_image
         self._entry = entry
         self._cache = cache
         self._history = history
@@ -576,6 +595,7 @@ class SnapshotManager:
             self._camera_image is CameraImageMode.THUMBNAIL
             and event.record_id is None
             and event.thumb_path is None
+            and not event.picture_sources
         ):
             _ignored(device_sn, "no thumbnail to look up, camera image is thumbnail only")
             return
@@ -1036,6 +1056,8 @@ class SnapshotManager:
             _LOGGER.debug("Thumbnail of %s: skipped, camera image is HD only", serial)
         elif self._shows_trigger_frame_of(camera, occurrence):
             _LOGGER.debug("Thumbnail of %s: skipped, its trigger frame is already shown", serial)
+        elif event.record_id is None and event.thumb_path is None and event.picture_sources:
+            await self._async_push_picture(camera, device_sn, event, when, seq)
         else:
             _LOGGER.debug("Thumbnail of %s: looking up", serial)
             start = time.monotonic()
@@ -1157,6 +1179,78 @@ class SnapshotManager:
             and (occurrence is None or camera.retry_occurrence != occurrence)
         ):
             self._schedule_thumbnail_retry(station, camera, device_sn, event, when, seq)
+
+    async def _async_push_picture(
+        self,
+        camera: _CameraStill,
+        device_sn: str,
+        event: SecurityEvent,
+        when: int,
+        seq: int,
+    ) -> None:
+        """Show the first picture ``event`` names that this occurrence has not fetched.
+
+        Sources are tried in the push's order (the face crop first); each fetched one is
+        noted for the occurrence, shown or not, so a later copy fetches only a new one.
+        """
+        serial = redact_serial(device_sn)
+        occurrence = event.dedupe_key
+        if self._push_image is None:
+            _LOGGER.debug("Push picture of %s: skipped, no picture fetcher", serial)
+            return
+        if not event.authenticated:
+            _LOGGER.debug("Push picture of %s: skipped, unauthenticated push", serial)
+            return
+        if occurrence is None or occurrence != camera.push_occurrence:
+            camera.push_occurrence = occurrence
+            camera.push_fetched = frozenset()
+        for source in event.picture_sources:
+            if source in camera.push_fetched:
+                continue
+            camera.push_fetched |= {source}
+            start = time.monotonic()
+            try:
+                async with asyncio.timeout(THUMBNAIL_TIMEOUT_SECONDS):
+                    picture = await self._push_image(event, source)
+            except (EufySecurityError, TimeoutError) as err:
+                _LOGGER.debug(
+                    "Push picture of %s: %s failed (%s), in %.1f s",
+                    serial,
+                    source.value,
+                    errors.failure_reason(err),
+                    _elapsed(start),
+                )
+                continue
+            if not picture.is_jpeg:
+                _LOGGER.debug("Push picture of %s: %s is not a JPEG, ignored", serial, source.value)
+                continue
+            if not self._still_current(camera, occurrence, when, event.authenticated, seq):
+                _LOGGER.debug(
+                    "Push picture of %s: superseded by a newer detection, in %.1f s",
+                    serial,
+                    _elapsed(start),
+                )
+                return
+            _LOGGER.debug(
+                "Push picture of %s: %s shown (%d bytes), in %.1f s",
+                serial,
+                source.value,
+                len(picture.data),
+                _elapsed(start),
+            )
+            self._store(
+                camera,
+                device_sn,
+                picture.data,
+                StillSource.PUSH_PICTURE,
+                when,
+                occurrence,
+                authenticated=event.authenticated,
+                kind=_event_kind(event),
+                seq=seq,
+            )
+            return
+        _LOGGER.debug("Push picture of %s: nothing new to show", serial)
 
     def _schedule_thumbnail_retry(
         self,

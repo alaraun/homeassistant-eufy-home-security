@@ -91,6 +91,7 @@ A detection after a button press replaces the button's image.
 | `thumbnail` | a detection's event thumbnail | the detection's time |
 | `trigger_frame` | the first frame of a HomeBase detection's recording (HD) | the detection's time |
 | `detection_live` | a live picture a camera without a HomeBase took for a detection (HD) | the detection's time |
+| `push_picture` | the picture a detection's cloud push names: a recognised face or an event picture (see [Cloud push](#cloud-push)) | the detection's time |
 | `live` | a **Capture live image** press, or the live image of a camera with none | none |
 
 A detection's HD image is `trigger_frame` or `detection_live` with `triggered_at` set
@@ -281,7 +282,15 @@ Which cameras get these: [devices.md](devices.md#pan-tilt-presets-and-zoom).
   detections over the LAN without it.
 - While it is off and such a station is set up, the repair **eufy detections need
   cloud push** names the stations; its **Fix** switches the option on and reloads.
-- A detection that arrives both over the LAN and from the cloud fires once.
+- A detection that arrives both over the LAN and from the cloud fires once. When a
+  later push of the same detection names a more specific kind (motion, then a
+  person, pet, vehicle or identified person), that kind's sensor turns on and the
+  detection event fires again with the new kind.
+- A HomeBase 2 detection push carries no picture path of the station; when it names a
+  picture of its own (the face eufy recognised, or an event picture), that picture is
+  the camera's event image (`image_source` `push_picture`), fetched from eufy's cloud
+  without waking the camera. Not with the Event image choice HD only. Declared from
+  the eufy app's behaviour, not tested on a HomeBase 2.
 - A standalone camera's detection image follows [Camera images](#camera-images):
   each detection wakes the camera.
 - Push messages pass through eufy's and Google's servers (see

@@ -96,7 +96,8 @@ async def async_setup_entry(
 
 
 class EufyDetectionEvent(EufyPushAvailability, EufyDeviceEntity, EventEntity):
-    """What one camera detected, fired once per occurrence."""
+    """What one camera detected, fired once per occurrence and again when a later push
+    names a more specific kind of it."""
 
     entity_description = EventEntityDescription(
         key=DETECTION_EVENT_KEY,

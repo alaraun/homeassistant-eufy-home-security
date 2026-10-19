@@ -103,6 +103,23 @@ DETECTION_CLASSES: Final[Mapping[str, frozenset[DetectionType]]] = MappingProxyT
     }
 )
 
+# How specific each detection is: a later push of one occurrence that names a higher
+# rank upgrades it (the library's order: motion < person, pet, vehicle < stranger <
+# identified person). A detection missing here is never an upgrade.
+DETECTION_RANK: Final[Mapping[DetectionType, int]] = MappingProxyType(
+    {
+        DetectionType.MOTION: 0,
+        DetectionType.PERSON: 1,
+        DetectionType.PET: 1,
+        DetectionType.DOG: 1,
+        DetectionType.DOG_LICK: 1,
+        DetectionType.DOG_POOP: 1,
+        DetectionType.VEHICLE: 1,
+        DetectionType.STRANGER_PERSON: 2,
+        DetectionType.IDENTITY_PERSON: 3,
+    }
+)
+
 # The detection event entity's declared event types, in a fixed order. Derived
 # from the mapping, so a type it fires is always declared: ``_trigger_event`` raises
 # on an undeclared one.
@@ -265,6 +282,21 @@ def detection_event_type(event: SecurityEvent) -> str | None:
     return DETECTION_EVENT_TYPES.get(detection)
 
 
+def detection_rank(event: SecurityEvent) -> int | None:
+    """How specific ``event``'s detection is (:data:`DETECTION_RANK`); None outside it."""
+    detection = event.detection
+    return None if detection is None else DETECTION_RANK.get(detection)
+
+
+def is_kind_upgrade(event: SecurityEvent, delivered_rank: int | None) -> bool:
+    """Whether the enriching copy ``event`` names a more specific detection than the
+    occurrence's copies delivered so far (``delivered_rank``; None: none delivered)."""
+    rank = detection_rank(event)
+    return (
+        event.enriches and delivered_rank is not None and rank is not None and rank > delivered_rank
+    )
+
+
 def device_event_consumed(kind: DeviceKind | None, event: SecurityEvent) -> bool:
     """Whether an entity of a paired device of ``kind`` consumes the device event ``event``.
 
@@ -284,16 +316,21 @@ def snapshot_wanted(kind: DeviceKind | None, event: SecurityEvent) -> bool:
     A catalogued detection of a device with detection entities (the camera entity is
     built for the same devices) that the library can find a still for: a ``record_id``
     alone lets the library find the thumbnail in the event's history row, and a bound
-    thumbnail or recording (its trigger frame) names one directly. A crop is not a
-    thumbnail source. An enriching copy counts: it is the same detection with what an
-    earlier copy lacked. This reads library attributes only, no payload keys.
+    thumbnail or recording (its trigger frame) names one directly. A push that names a
+    picture of its own (``picture_sources``: a face crop, its ``pic_url``) counts too.
+    A crop is not a thumbnail source. An enriching copy counts: it is the same
+    detection with what an earlier copy lacked. This reads library attributes only, no
+    payload keys.
     The caller has already checked that the device is paired to the station that
     delivered the event.
     """
     if not has_detection_entities(kind) or detection_event_type(event) is None:
         return False
     return (
-        event.record_id is not None or event.thumb_path is not None or event.video_path is not None
+        event.record_id is not None
+        or event.thumb_path is not None
+        or event.video_path is not None
+        or bool(event.picture_sources)
     )
 
 
@@ -371,7 +408,8 @@ def dropped_without_trace(event: SecurityEvent) -> bool:
     """Whether ``event`` fires nothing at all: no entity event and no fallback bus event.
 
     An enriching copy is an occurrence already delivered, arriving again with media
-    paths. An alarm push whose phase the library withholds is an
+    paths, a picture or another kind; the router still delivers one that names a more
+    specific kind (:func:`is_kind_upgrade`). An alarm push whose phase the library withholds is an
     unauthenticated stop, which a forged ECB frame could send.
     """
     if event.enriches:

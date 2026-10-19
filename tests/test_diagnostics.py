@@ -39,6 +39,7 @@ from eufy_home_security.diagnostics import (
     SECURITY_STATIONS,
 )
 from eufy_home_security.exceptions import CommunicationError
+from eufy_home_security.p2p import FrameType
 from eufy_home_security.testing import (
     SYNTHETIC,
     FakeCloud,
@@ -285,7 +286,19 @@ async def test_diagnostics_count_events_received_by_cipher_after_deduplication(
     await wait_until(lambda: router.events_received_by_cipher(SYNTHETIC.station_sn)["gcm"] == 1)
     fake_station.push_camera_event(DetectionType.PERSON)
     await wait_until(lambda: deduplicator.dropped_duplicates == 1)
-    fake_station.push_camera_event(DetectionType.MOTION, cipher=FrameCipher.ECB)
+    # A new occurrence under ECB: another time (one second is one occurrence, any kind).
+    motion = {
+        "msg_type": 18,
+        "event_type": int(DetectionType.MOTION),
+        "device_sn": SYNTHETIC.camera_sn,
+        "channel": 0,
+        "trigger_time": now_ms(),
+    }
+    fake_station.send_json(
+        FrameType.NOTIFY_PAYLOAD,
+        {"cmd": 2037, "payload": json.dumps(motion)},
+        cipher=FrameCipher.ECB,
+    )
     await wait_until(lambda: router.events_received_by_cipher(SYNTHETIC.station_sn)["ecb"] == 1)
 
     router.handle(detection_event(DetectionType.PERSON, t_ms=now_ms(), cipher=None))

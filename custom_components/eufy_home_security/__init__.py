@@ -358,6 +358,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         yield_media=stream_manager.async_yield_media,
         cache=cache,
         history=event_history,
+        push_image=eufy.async_push_image,
     )
     snapshots.async_restore(cached)
     entry.async_on_unload(snapshots.async_stop)
