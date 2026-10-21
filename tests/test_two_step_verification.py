@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 from conftest import cloud_calls, set_up_warm
-from eufy_home_security import EufySecurity, SessionCache
+from eufy_home_security import AuthenticationError, EufySecurity, SessionCache
 from eufy_home_security.cloud import const as cloud_const
 from eufy_home_security.testing import SYNTHETIC, FakeCloud
 from homeassistant.config_entries import SOURCE_USER, ConfigEntry, ConfigEntryState
@@ -164,6 +164,30 @@ async def test_a_wrong_code_asks_again_and_the_right_one_signs_in(
     assert fake.codes == ["000000", CODE]
 
     await _unload_all(hass)
+
+
+async def test_a_refused_code_answer_returns_to_the_sign_in_form(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+) -> None:
+    """eufy refuses the answer itself: back to the credentials form with its own error,
+    no further sign-in, no entry."""
+    fake = two_step(monkeypatch, fake_cloud)
+    result = await _add(hass)
+    assert result["step_id"] == "verify_code"
+    logins = fake_cloud.calls.count("login")
+
+    fake_cloud.login_error = AuthenticationError("refused")
+    result = await _code(hass, result)
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"base": "verification_refused"}
+    assert fake_cloud.calls.count("login") == logins + 1
+    assert fake.codes == []
+    assert hass.config_entries.async_entries(DOMAIN) == []
 
 
 async def test_an_empty_code_is_refused_without_a_sign_in(

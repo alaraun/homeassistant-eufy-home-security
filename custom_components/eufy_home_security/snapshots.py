@@ -142,6 +142,7 @@ from eufy_home_security import (
     Station,
     UnsupportedError,
     VideoCodec,
+    VideoEncryptedPictureError,
     picture_codec,
     redact_serial,
 )
@@ -1212,6 +1213,13 @@ class SnapshotManager:
             try:
                 async with asyncio.timeout(THUMBNAIL_TIMEOUT_SECONDS):
                     picture = await self._push_image(event, source)
+            except VideoEncryptedPictureError:
+                _LOGGER.debug(
+                    "Push picture of %s: %s is protected by Video Encryption, not shown",
+                    serial,
+                    source.value,
+                )
+                continue
             except (EufySecurityError, TimeoutError) as err:
                 _LOGGER.debug(
                     "Push picture of %s: %s failed (%s), in %.1f s",

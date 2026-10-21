@@ -54,6 +54,7 @@
       "invalid_email": "That is not an email address. Check it and try again; nothing was sent to eufy.",
       "login_challenge": "eufy wants a captcha for this sign-in. Sign in once in the eufy app on your phone, then try again here.",
       "invalid_verify_code": "eufy did not accept the code. Enter the newest code from eufy's e-mail; a new one may be on its way.",
+      "verification_refused": "eufy did not accept the verification code and ended this sign-in. Sign in again to get a new code by e-mail, and enter it once. Repeated failed sign-ins lock the account for 24 hours.",
       "invalid_auth": "eufy rejected the email or password; check both. Repeated failed sign-ins lock the account for 24 hours.",
       "login_limited": "eufy is temporarily refusing sign-ins for this account. Wait before trying again: each attempt restarts the wait, and repeated attempts can lock the account for 24 hours.",
       "session_replaced": "Another app, device or integration signed in with this account and eufy ended the earlier session. Close that other client or wait, then try again.",

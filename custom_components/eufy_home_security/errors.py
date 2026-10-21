@@ -54,6 +54,7 @@ from eufy_home_security import (
     KeyRejectedError,
     LiveStreamLimitError,
     LoginChallengeError,
+    LoginVerificationError,
     RateLimitedError,
     RefreshCooldownError,
     RegionStatus,
@@ -77,6 +78,7 @@ from .const import (
     ERROR_LOGIN_LIMITED,
     ERROR_SESSION_REJECTED,
     ERROR_SESSION_REPLACED,
+    ERROR_VERIFICATION_REFUSED,
     EXC_AUTH_FAILED,
     EXC_CACHE_UNAVAILABLE,
     EXC_CAMERA_UNAVAILABLE,
@@ -411,8 +413,8 @@ def flow_error_key(err: EufySecurityError) -> str:
     """The config-flow form error for a library error met while signing in.
 
     Checked most specific first, because the classes nest:
-    ``LoginChallengeError`` and ``SessionRejectedError`` are ``AuthenticationError``
-    but the password was right, and ``LoginLimitedError`` and ``RefreshCooldownError``
+    ``LoginChallengeError``, ``SessionRejectedError`` and ``LoginVerificationError`` (eufy
+    refused the code answer) are ``AuthenticationError`` but the password was right, and ``LoginLimitedError`` and ``RefreshCooldownError``
     are both ``RateLimitedError``. Everything else, transport and station errors
     included, means eufy could not be reached or could not finish: that key is the
     catch-all, so the error's type and message are logged at WARNING (the form text
@@ -423,6 +425,8 @@ def flow_error_key(err: EufySecurityError) -> str:
         return ERROR_LOGIN_CHALLENGE
     if isinstance(err, SessionRejectedError):
         return ERROR_SESSION_REJECTED
+    if isinstance(err, LoginVerificationError):
+        return ERROR_VERIFICATION_REFUSED
     if isinstance(err, AuthenticationError):
         return ERROR_INVALID_AUTH
     if isinstance(err, RateLimitedError):

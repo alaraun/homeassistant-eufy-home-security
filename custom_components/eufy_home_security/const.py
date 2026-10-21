@@ -219,6 +219,9 @@ ERROR_SESSION_REPLACED: Final = "session_replaced"
 ERROR_CANNOT_CONNECT: Final = "cannot_connect"
 # eufy did not take the two-step code (wrong or expired); a new one may be on its way.
 ERROR_INVALID_VERIFY_CODE: Final = "invalid_verify_code"
+# eufy refused the code answer outright and dropped the pending sign-in; a new sign-in
+# e-mails a new code.
+ERROR_VERIFICATION_REFUSED: Final = "verification_refused"
 # eufy accepted the sign-in, then refused the session even after one more sign-in.
 ERROR_SESSION_REJECTED: Final = "session_rejected"
 

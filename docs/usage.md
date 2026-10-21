@@ -289,8 +289,9 @@ Which cameras get these: [devices.md](devices.md#pan-tilt-presets-and-zoom).
 - A HomeBase 2 detection push carries no picture path of the station; when it names a
   picture of its own (the face eufy recognised, or an event picture), that picture is
   the camera's event image (`image_source` `push_picture`), fetched from eufy's cloud
-  without waking the camera. Not with the Event image choice HD only. Declared from
-  the eufy app's behaviour, not tested on a HomeBase 2.
+  without waking the camera. eufy's encoded pictures are decoded; a picture protected
+  by the camera's Video Encryption setting is not shown. Not with the Event image
+  choice HD only. Declared from the eufy app's behaviour, not tested on a HomeBase 2.
 - A standalone camera's detection image follows [Camera images](#camera-images):
   each detection wakes the camera.
 - Push messages pass through eufy's and Google's servers (see

@@ -10,6 +10,7 @@ cloud serves no pictures.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any, Final
 
@@ -32,6 +33,7 @@ from eufy_home_security import (
     PushMessageType,
     PushPictureSource,
     SecurityEvent,
+    VideoEncryptedPictureError,
 )
 from eufy_home_security.testing import FakeStation
 from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
@@ -261,16 +263,19 @@ async def test_an_enriching_copy_fetches_only_the_source_it_adds(
     assert pictures == [PushPictureSource.FACE, PushPictureSource.PIC_URL]
 
 
+@pytest.mark.parametrize("encrypted", [False, True], ids=["no_face", "video_encryption"])
 async def test_a_failed_source_falls_to_the_next_one(
     hass: HomeAssistant,
+    caplog: pytest.LogCaptureFixture,
+    encrypted: bool,
     monkeypatch: pytest.MonkeyPatch,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
     pictures: list[PushPictureSource],
 ) -> None:
-    """A face the cloud keeps no picture of, and a pic_url that is no JPEG: nothing shown;
-    the next detection's JPEG pic_url is shown."""
+    """A face the cloud keeps no picture of (or one under Video Encryption), and a pic_url
+    that is no JPEG: nothing shown; the next detection's JPEG pic_url is shown."""
     asked: list[PushPictureSource] = []
     scene: list[tuple[bytes, str]] = [(b"GIF89a", "image/gif")]
 
@@ -280,13 +285,18 @@ async def test_a_failed_source_falls_to_the_next_one(
         assert source is not None
         asked.append(source)
         if source is PushPictureSource.FACE:
-            raise EmptyResponseError(0, "no face picture")
+            raise (
+                EmptyResponseError(0, "no face picture")
+                if not encrypted
+                else VideoEncryptedPictureError("V8 picture")
+            )
         data, content_type = scene[0]
         return PushImage(
             source=source, device_sn=event.device_sn, data=data, content_type=content_type
         )
 
     monkeypatch.setattr(EufySecurity, "async_push_image", fetch)
+    caplog.set_level(logging.DEBUG, logger="custom_components.eufy_home_security.snapshots")
     entry = await set_up_warm(hass, seed_warm_cache)
     manager = _manager(entry)
 
@@ -295,6 +305,7 @@ async def test_a_failed_source_falls_to_the_next_one(
     )
     await wait_until(lambda: len(asked) == 2 and not manager.busy)
     assert manager.image_for(SYNTHETIC.camera_sn) is None
+    assert ("protected by Video Encryption" in caplog.text) is encrypted
 
     scene[0] = (SCENE_JPEG, "image/jpeg")
     entry.runtime_data.router.handle(

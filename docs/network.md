@@ -81,7 +81,9 @@ location /api/hls/ {
 - An account with two-step verification asks for a code at each new sign-in. eufy
   sends it by e-mail, and the setup, re-authentication and **Reconfigure** dialogs ask
   for it after the password. The session is saved; a restart signs in again only
-  after eufy ended it.
+  after eufy ended it. A wrong code is asked again; when eufy refuses the answer and
+  ends that sign-in, the dialog goes back to the password: signing in again e-mails a
+  new code.
 
 ## eufy sign-in country
 
