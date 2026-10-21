@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.4](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.3...v0.4.4) (2026-10-21)
+
+
+### Bug Fixes
+
+* a camera that sends its settings and guard mode under eufy's fixed key or unencrypted (seen on a T8414) connects and shows them instead of staying unavailable; not tested on a T8414 (library 0.4.4) ([issue 114](https://github.com/alaraun/homeassistant-eufy-home-security/issues/114)) ([c782804](https://github.com/alaraun/homeassistant-eufy-home-security/commit/c782804c22c21a5e2b9aa73c58b31fa643ef9824))
+
 ## [0.4.3](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.2...v0.4.3) (2026-10-21)
 
 
