@@ -5,6 +5,15 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.3](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.2...v0.4.3) (2026-10-21)
+
+
+### Bug Fixes
+
+* a HomeBase 2 detection picture in eufy's encoded formats is shown; one protected by Video Encryption is skipped (library 0.4.3) ([ffe6f19](https://github.com/alaraun/homeassistant-eufy-home-security/commit/ffe6f194d50c8424a20480e8e3ac76adaed60ab6))
+* a verification code eufy refuses shows its own message and asks to sign in again for a new code, instead of saying the email or password is wrong ([ffe6f19](https://github.com/alaraun/homeassistant-eufy-home-security/commit/ffe6f194d50c8424a20480e8e3ac76adaed60ab6))
+* signing in with two-step verification answers the code the way the eufy app does, so an e-mailed code is accepted (declared, not tested on a live account; library 0.4.3) ([ffe6f19](https://github.com/alaraun/homeassistant-eufy-home-security/commit/ffe6f194d50c8424a20480e8e3ac76adaed60ab6))
+
 ## [0.4.2](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.1...v0.4.2) (2026-10-19)
 
 
