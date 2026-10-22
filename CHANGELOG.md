@@ -5,6 +5,21 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.5](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.4...v0.4.5) (2026-10-22)
+
+
+### Features
+
+* **card:** `picture: auto | landscape | portrait`; a doorbell's tall picture shows whole ([issue 104](https://github.com/alaraun/homeassistant-eufy-home-security/issues/104)) ([5219ebe](https://github.com/alaraun/homeassistant-eufy-home-security/commit/5219ebee5e1605224aa34628a321becafa8e0593))
+* **card:** `show_header`, `show_history` and `show_settings` options; with all three off the card is the picture alone ([issue 106](https://github.com/alaraun/homeassistant-eufy-home-security/issues/106)) ([5219ebe](https://github.com/alaraun/homeassistant-eufy-home-security/commit/5219ebee5e1605224aa34628a321becafa8e0593))
+* **card:** a doorbell ring badge and `live_buttons` on the live view bar (a door lock, a gate) ([5219ebe](https://github.com/alaraun/homeassistant-eufy-home-security/commit/5219ebee5e1605224aa34628a321becafa8e0593))
+* **card:** several cameras in one card with a camera list ([issue 86](https://github.com/alaraun/homeassistant-eufy-home-security/issues/86)) ([5219ebe](https://github.com/alaraun/homeassistant-eufy-home-security/commit/5219ebee5e1605224aa34628a321becafa8e0593))
+
+
+### Bug Fixes
+
+* setting and guard-mode changes on a camera that answers under eufy's fixed key (seen on a T8414) confirm instead of reporting "did not confirm"; not tested on a T8414 (library 0.4.5) ([issue 114](https://github.com/alaraun/homeassistant-eufy-home-security/issues/114)) ([9924875](https://github.com/alaraun/homeassistant-eufy-home-security/commit/99248759a7bb12667e6c04394544eabad2754dfc))
+
 ## [0.4.4](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.3...v0.4.4) (2026-10-21)
 
 
