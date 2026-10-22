@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.22-2';
+const CARD_VERSION = '2026.10.22-3';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -1198,7 +1198,8 @@ class EufyCameraCard extends HTMLElement {
   _hush() {
     clearTimeout(this._quietT);
     this._quietT = null;
-    if (this._pic && this._live && this._live.video && !this._preOpen) this._pic.classList.add('quiet');
+    // The camera list keeps them: its chip must not move under the open list
+    if (this._pic && this._live && this._live.video && !this._preOpen && this._dd !== CAM_DD) this._pic.classList.add('quiet');
   }
 
   // ok: a confirmation (neutral, check icon) rather than a failure
@@ -1675,6 +1676,7 @@ class EufyCameraCard extends HTMLElement {
   // One settings dropdown open at a time (key or null)
   _setDd(key) {
     if (key !== this._dd) { this._ddq = ''; this._ddAt = null; this._ddTa = ''; }
+    if (this._dd === CAM_DD && key !== CAM_DD) this._awake(true);
     this._dd = key;
     this._watchOutside(!!key || !!this._menuOpen);
     this.render();
@@ -1776,6 +1778,7 @@ class EufyCameraCard extends HTMLElement {
     if (!on) return;
     this._outside = (ev) => {
       if (ev.composedPath().includes(this)) return;
+      if (this._dd === CAM_DD) this._awake(true);
       this._menuOpen = false; this._dd = null; this._watchOutside(false); this.render();
     };
     document.addEventListener('pointerdown', this._outside, true);
@@ -2212,7 +2215,8 @@ class EufyCameraCard extends HTMLElement {
     const camOpen = multi && this._dd === CAM_DD;
     const camLbl = escapeHtml(`Camera: ${name}, choose one of ${this._cams.length}`);
     const camBtn = cls2 => `<button type="button" class="${cls2}" data-dd="${CAM_DD}" data-focus="dd-${CAM_DD}" aria-haspopup="listbox" aria-expanded="${camOpen}" aria-label="${camLbl}">`;
-    const nameHtml = multi ? `${camBtn('name camsel')}<span>${escapeHtml(name)}</span><ha-icon icon="${camOpen ? 'mdi:menu-up' : 'mdi:menu-down'}"></ha-icon></button>`
+    // In full screen only the picture shows: the chip there is the list's one button
+    const nameHtml = multi && !this._isFull() ? `${camBtn('name camsel')}<span>${escapeHtml(name)}</span><ha-icon icon="${camOpen ? 'mdi:menu-up' : 'mdi:menu-down'}"></ha-icon></button>`
       : `<div class="name">${escapeHtml(name)}</div>`;
     const actsHtml = `<div class="acts${nStaged ? '' : ' off" inert aria-hidden="true'}">
               <button class="btn icon" type="button" data-act="cancel" data-focus="act-cancel" aria-label="Cancel the changes"><ha-icon icon="mdi:close"></ha-icon></button>
@@ -2287,7 +2291,8 @@ class EufyCameraCard extends HTMLElement {
       tl = chip('tl', '', `<ha-icon icon="${srcKind === 'live' ? 'mdi:camera-iris' : 'mdi:motion-sensor'}"></ha-icon><span>${escapeHtml(t)}</span>`, `Still: ${t}`);
     }
     // Recording a clip: its own chip with the seconds so far; it stays while the live controls are faded
-    // On the picture when the header is hidden or the picture is in full screen (the header is not shown there)
+    // On the picture when the header is hidden or the picture is in full screen (the header is not shown there);
+    // in full screen after the status chip, so the live dot stays at the far left when the controls fade
     const camChip = multi && (!showHdr || this._isFull()) ? `${camBtn('chip camchip')}<ha-icon icon="mdi:cctv"></ha-icon><span>${escapeHtml(name)}</span><ha-icon icon="${camOpen ? 'mdi:menu-up' : 'mdi:menu-down'}"></ha-icon></button>` : '';
     const recChip = recording && !vItem ? chip('', 'rec recc', `<i class="dot"></i><span class="rw">REC</span><span class="tv" data-rect>${this._recSeconds()} s</span>`, 'Recording a clip') : '';
     const centre = vItem ? (vPic && vPic.src ? '' : '<div class="ctr wake" role="status"><i class="spin"></i></div>') : !avail
@@ -2386,7 +2391,7 @@ class EufyCameraCard extends HTMLElement {
     ? `<video class="stillimg hvid" src="${escapeHtml(vPic.src)}"${vPoster ? ` poster="${escapeHtml(vPoster)}"` : ''} controls autoplay muted playsinline preload="metadata" aria-label="${escapeHtml(`${this._histLabel(vItem).kind} video, ${this._histLabel(vItem).when}`)}"></video>`
     : `<img class="stillimg" src="${escapeHtml(vPic.src)}" alt="" draggable="false">`) : ''}</div>` : ''}
         <div class="ovl${L ? ' live' : ''}${aimOK ? ' aim' : ''}${vItem && vItem.video ? ' hvo' : ''}">
-          ${toast ? '' : (vItem ? tl : `<div class="crow">${camChip}${tl}${recChip}${tr}</div>`)}${centre}${vItem ? '' : bar + lpre}
+          ${toast ? '' : (vItem ? tl : `<div class="crow">${this._isFull() ? tl + camChip : camChip + tl}${recChip}${tr}</div>`)}${centre}${vItem ? '' : bar + lpre}
           ${!vItem && (pad || zpill) ? `<div class="ptzw">${zpill}${pad}</div>` : ''}
           ${toast}
         </div>`;
@@ -2661,8 +2666,9 @@ class EufyCameraCard extends HTMLElement {
     if (changed && hLeft && hLeft[1]) { const hs = this._lowerEl.querySelector('.hstrip'); if (hs && hs.dataset.tab === hLeft[0]) hs.scrollLeft = hLeft[1]; }
     this._lazyThumbs();
     this._fitTabs();
-    this._placeDd(changed ? ddTop : 0);
+    // The live countdown first: its text sets the LIVE chip's width, and the camera chip (the list's anchor) follows it
     this._tick();
+    this._placeDd(changed ? ddTop : 0);
     if (Object.keys(this._pending).length) this._arm();
   }
 
