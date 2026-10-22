@@ -67,7 +67,8 @@ settings_groups:                 # optional: Settings tabs to show, in this orde
   header is a list of the cameras; the picture, live view, History and Settings follow the chosen one. Choosing
   another camera ends a running live view and drops changes not yet Set; `auto_live` starts the chosen camera's
   view. `name`, `history_folder` and the `<role>_entity` keys apply to the first camera only. The card starts at
-  the first camera when the page loads.
+  the first camera when the page loads. In full screen the list is a name chip on the picture, and a running
+  live view goes on with the chosen camera.
 - `show_header`, `show_history`, `show_settings`: with all three off the card is the picture alone, with the
   play button, the live controls and the chips over it (for a popup or a wall display). Without the header its
   menu (`Record a clip` while idle, `New still`, `Refresh event image`) is not offered; with several cameras the

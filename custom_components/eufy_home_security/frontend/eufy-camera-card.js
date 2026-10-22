@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.22-1';
+const CARD_VERSION = '2026.10.22-2';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -386,10 +386,13 @@ class EufyCameraCard extends HTMLElement {
     this.render();
   }
 
-  // The camera list's choice: the sections that are open stay open and load for the new camera
+  // The camera list's choice: the sections that are open stay open and load for the new camera. In full screen a
+  // running live view goes on with the chosen camera (timed or continuous as before).
   _switchCam(id) {
     if (!this._cams.includes(id) || (this._config && this._config.entity === id)) return;
+    const carry = this._isFull() && this._live ? this._live.continuous : null;
     this._useCam(id);
+    if (carry !== null) { this._autoDone = true; this._start(carry); }
     if (this._open === 'history') {
       this._stationTab = STATION_SUPPORT.get(id) !== false;
       this._loadHistory();
@@ -1789,19 +1792,20 @@ class EufyCameraCard extends HTMLElement {
     const cam = !!l && l.classList.contains('camdd');
     const anc = cam ? this.content.querySelector(`[data-dd="${CAM_DD}"]`) : (l && l.parentElement);
     let grow = 0;
+    const fs = cam && this._isFull();
     if (l && anc) {
       const v = l.querySelector('.ddv');
       const n = parseInt(l.dataset.n, 10) || 1;
       const chrome = l.offsetHeight - v.clientHeight;
       const full = chrome + Math.min(n, DD_MAX_ROWS) * DD_ROW - 1, least = chrome + Math.min(n, DD_MIN_ROWS) * DD_ROW - 1;
-      const cr = this.content.getBoundingClientRect(), br = anc.getBoundingClientRect();
+      const cr = (fs ? this._pic : this.content).getBoundingClientRect(), br = anc.getBoundingClientRect();
       // the list starts 2 px off the control and keeps 6 px from the card's edge
       const below = Math.floor(cr.bottom - this._ddGrow - br.bottom - 8), above = Math.floor(br.top - cr.top - 8);
       let h = full, up = false;
       if (full > below) {
         if (full <= above) up = true;
         else if (least <= below) h = below;
-        else if (least <= above) { h = above; up = true; } else { h = least; grow = least - below; }
+        else if (least <= above) { h = above; up = true; } else if (fs) { up = above > below; h = Math.max(above, below); } else { h = least; grow = least - below; }
       }
       l.classList.toggle('up', up);
       l.style.height = `${h}px`;
@@ -2283,7 +2287,8 @@ class EufyCameraCard extends HTMLElement {
       tl = chip('tl', '', `<ha-icon icon="${srcKind === 'live' ? 'mdi:camera-iris' : 'mdi:motion-sensor'}"></ha-icon><span>${escapeHtml(t)}</span>`, `Still: ${t}`);
     }
     // Recording a clip: its own chip with the seconds so far; it stays while the live controls are faded
-    const camChip = multi && !showHdr ? `${camBtn('chip camchip')}<ha-icon icon="mdi:cctv"></ha-icon><span>${escapeHtml(name)}</span><ha-icon icon="${camOpen ? 'mdi:menu-up' : 'mdi:menu-down'}"></ha-icon></button>` : '';
+    // On the picture when the header is hidden or the picture is in full screen (the header is not shown there)
+    const camChip = multi && (!showHdr || this._isFull()) ? `${camBtn('chip camchip')}<ha-icon icon="mdi:cctv"></ha-icon><span>${escapeHtml(name)}</span><ha-icon icon="${camOpen ? 'mdi:menu-up' : 'mdi:menu-down'}"></ha-icon></button>` : '';
     const recChip = recording && !vItem ? chip('', 'rec recc', `<i class="dot"></i><span class="rw">REC</span><span class="tv" data-rect>${this._recSeconds()} s</span>`, 'Recording a clip') : '';
     const centre = vItem ? (vPic && vPic.src ? '' : '<div class="ctr wake" role="status"><i class="spin"></i></div>') : !avail
       ? '<div class="ctr off"><ha-icon icon="mdi:cctv-off"></ha-icon><span>Unavailable</span></div>'
@@ -2708,6 +2713,8 @@ class EufyCameraCard extends HTMLElement {
     // The full-screen button's icon and label follow the state
     document.addEventListener('fullscreenchange', () => {
       if (!this.isConnected) return;
+      const host = this._isFull() ? this._pic : this.content;
+      if (this._ddEl.parentNode !== host) host.appendChild(this._ddEl);
       if (this._stream) this._stream.fitMode = this._fit();
       this.render();
     });
