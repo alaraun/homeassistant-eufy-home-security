@@ -1,10 +1,11 @@
-// eufy camera card: a tile-style header, a 16:9 picture that shows the still until live view is started,
-// pan/tilt/zoom and presets on the picture (cameras that have them), its history, and the camera's settings (staged; Set sends).
+// eufy camera card: a tile-style header, the picture (16:9, or the camera's own portrait shape) that shows the still
+// until live view is started, pan/tilt/zoom and presets on the picture (cameras that have them), its history, and the
+// camera's settings (staged; Set sends). Several cameras: the name opens a list to switch; every part follows it.
 // Entities come from the camera's device (translation_key, else the library key in the unique id), so only
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.15-3';
+const CARD_VERSION = '2026.10.22-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -42,6 +43,34 @@ const PRESET_SLOTS = 5;
 const HOLD_MS = 600;
 // Sections under the picture, as tabs: id, label, icon. One open at a time; pressing the open one closes it.
 const SECTIONS = [['history', 'History', 'mdi:history'], ['settings', 'Settings', 'mdi:cog-outline']];
+// The dropdown key of the camera list (several cameras); never a setting key (those are library keys)
+const CAM_DD = '__cam';
+// Picture shape: `picture` auto | landscape | portrait. Landscape is a 16:9 frame filled edge to edge; portrait
+// takes the camera's own ratio (PORTRAIT_RATIO before it is known), between PORTRAIT_MIN and 1, the whole picture
+// shown. Auto is portrait when the camera's picture is narrower than AUTO_PORTRAIT (width / height).
+const PICTURE_MODES = ['auto', 'landscape', 'portrait'];
+const PORTRAIT_RATIO = 3 / 4;
+const PORTRAIT_MIN = 9 / 16;
+const AUTO_PORTRAIT = 0.95;
+// camera entity -> its picture's width / height (still or live video), shared by the cards on the page and kept in
+// the browser (localStorage, RATIO_KEY + entity id) so a portrait card has its shape from the first render
+const RATIO = new Map();
+const RATIO_KEY = 'eufy-camera-card.ratio.';
+const ratioOf = (id) => {
+  if (!RATIO.has(id)) {
+    let r = NaN;
+    try { r = parseFloat(window.localStorage.getItem(RATIO_KEY + id)); } catch (e) { /* no storage */ }
+    RATIO.set(id, r > 0 ? r : NaN);
+  }
+  return RATIO.get(id);
+};
+// The doorbell's Ring event (translation_key doorbell) shows as Ringing this long after a press
+const RING_MS = 60000;
+// Live view buttons (`live_buttons`): the second press within LACT_ARM_MS sends; the first only asks
+const LACT_ARM_MS = 4000;
+const LACT_DOMAINS = ['lock', 'cover', 'button', 'input_button', 'script', 'scene', 'switch'];
+// lock.open when the lock can open its latch (LockEntityFeature.OPEN)
+const LOCK_OPEN = 1;
 const IMG_CACHE = 40;
 // Still request sizes (16:9): HA scales a camera JPEG to the smallest libjpeg factor at least this large
 const STILL_WIDTHS = [640, 960, 1280, 1920];
@@ -232,6 +261,30 @@ const clockTime = (hass, d) => {
   return d.toLocaleTimeString(lang, o);
 };
 const human = (s) => { const t = String(s || '').replace(/_/g, ' '); return t.charAt(0).toUpperCase() + t.slice(1); };
+// The configured cameras in order: `entity`, then `entities` (ids or { entity }), each once
+const camList = (c) => [...new Set([c && c.entity, ...[].concat((c && c.entities) || []).map(x => (x && typeof x === 'object' ? x.entity : x))]
+  .filter(x => typeof x === 'string' && x))];
+// A live view button's call, label and icon for an entity's state: { domain, service, verb, icon } or null
+const liveAction = (st) => {
+  const dom = st.entity_id.split('.')[0];
+  if (dom === 'lock') {
+    if (((st.attributes.supported_features || 0) & LOCK_OPEN) === LOCK_OPEN) return { domain: 'lock', service: 'open', verb: 'Open', icon: 'mdi:door-open' };
+    return st.state === 'unlocked' || st.state === 'open'
+      ? { domain: 'lock', service: 'lock', verb: 'Lock', icon: 'mdi:lock-outline' }
+      : { domain: 'lock', service: 'unlock', verb: 'Unlock', icon: 'mdi:lock-open-variant-outline' };
+  }
+  if (dom === 'cover') {
+    if (st.state === 'closed' || st.state === 'closing') return { domain: 'cover', service: 'open_cover', verb: 'Open', icon: 'mdi:gate-open' };
+    if (st.state === 'open' || st.state === 'opening') return { domain: 'cover', service: 'close_cover', verb: 'Close', icon: 'mdi:gate' };
+    return { domain: 'cover', service: 'toggle', verb: 'Toggle', icon: 'mdi:gate' };
+  }
+  if (dom === 'button' || dom === 'input_button') return { domain: dom, service: 'press', verb: 'Press', icon: 'mdi:gesture-tap-button' };
+  if (dom === 'script') return { domain: 'script', service: 'turn_on', verb: 'Run', icon: 'mdi:script-text-play-outline' };
+  if (dom === 'scene') return { domain: 'scene', service: 'turn_on', verb: 'Activate', icon: 'mdi:palette-outline' };
+  if (dom === 'switch') return st.state === 'on' ? { domain: 'switch', service: 'turn_off', verb: 'Turn off', icon: 'mdi:toggle-switch-outline' }
+    : { domain: 'switch', service: 'turn_on', verb: 'Turn on', icon: 'mdi:toggle-switch-off-outline' };
+  return null;
+};
 const ok = (st) => !!st && !INVALID.includes(String(st.state).toLowerCase());
 const num = (st) => (ok(st) ? parseFloat(st.state) : NaN);
 const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -270,6 +323,8 @@ class EufyCameraCard extends HTMLElement {
     this._ddTa = '';        // type-ahead text and its last key time
     this._ddTaT = 0;
     this._lay = null;       // settings layout: { dev, key, secs, loading, err }; secs stay while the next one loads
+    this._cams = [];        // the configured cameras; this._config is the card's config for the shown one
+    this._lact = null;      // { id, until } while a live view button waits for its second press
   }
 
   static getConfigElement() { return document.createElement('eufy-camera-card-editor'); }
@@ -280,10 +335,42 @@ class EufyCameraCard extends HTMLElement {
   }
 
   setConfig(config) {
-    if (!config || !config.entity) throw new Error('entity (camera.*) is required');
+    const cams = camList(config);
+    if (!cams.length) throw new Error('entity (camera.*) is required');
+    this._raw = config;
+    this._cams = cams;
+    this._useCam(this._config && cams.includes(this._config.entity) ? this._config.entity : cams[0]);
+  }
+
+  // The config for camera `id`: name, history folder and `<role>_entity` overrides belong to the first camera
+  _camConfig(id) {
+    const c = { ...this._raw, entity: id };
+    if (id !== this._cams[0]) Object.keys(c).filter(k => k === 'name' || k === 'history_folder' || /_entity$/.test(k)).forEach((k) => { delete c[k]; });
+    return c;
+  }
+
+  _show(k) { return !this._raw || this._raw[`show_${k}`] !== false; }
+
+  // Shows camera `id`: its live view, staged changes, history and settings state start fresh (a running view
+  // of the previous camera ends)
+  _useCam(id) {
     this._stop('');
-    this._config = config;
+    this._config = this._camConfig(id);
     this._ents = null;
+    this._pending = {};
+    this._shown = {};
+    this._menuOpen = false;
+    if (this._dd) { this._dd = null; this._watchOutside(false); }
+    this._moves = [];
+    this._busy = {};
+    this._zoomTarget = undefined;
+    this._atPreset = null;
+    this._psave = null;
+    this._rec = null;
+    this._recStop = false;
+    this._sfetch = new Map();
+    this._lact = null;
+    clearTimeout(this._ringT);
     this._stg = {};
     this._keys = {};
     this._autoDone = false;
@@ -297,6 +384,50 @@ class EufyCameraCard extends HTMLElement {
     this._pfull = undefined;
     this._pconfirm = null;
     this.render();
+  }
+
+  // The camera list's choice: the sections that are open stay open and load for the new camera
+  _switchCam(id) {
+    if (!this._cams.includes(id) || (this._config && this._config.entity === id)) return;
+    this._useCam(id);
+    if (this._open === 'history') {
+      this._stationTab = STATION_SUPPORT.get(id) !== false;
+      this._loadHistory();
+      if (this._htab === 'station' && this._stationTab) this._loadStation();
+      this.render();
+    }
+    this._autoTry();
+  }
+
+  // A camera's name: the configured name for the first camera, else the camera entity's name or its device's
+  _camName(id) {
+    const h = this._hass, st = h && h.states[id];
+    const n = id === this._cams[0] && this._raw ? this._raw.name : undefined;
+    if (typeof n === 'string' && n.trim()) return n.trim();
+    if (n && typeof n === 'object' && st && h && typeof h.formatEntityName === 'function') {
+      try { const r = h.formatEntityName(st, Array.isArray(n) ? n : [n]); if (r) return r; } catch (e) { /* default below */ }
+    }
+    const e = h && h.entities && h.entities[id];
+    const d = e && e.device_id && h.devices ? h.devices[e.device_id] : null;
+    return (st && st.attributes.friendly_name) || (d && (d.name_by_user || d.name)) || id;
+  }
+
+  // The camera's picture size, from a loaded still or the live video: kept per camera (see RATIO)
+  _noteRatio(id, w, h) {
+    if (!(w > 0 && h > 0)) return;
+    const r = w / h, was = ratioOf(id);
+    if (Math.abs(was - r) < 0.01) return;
+    RATIO.set(id, r);
+    try { window.localStorage.setItem(RATIO_KEY + id, r.toFixed(4)); } catch (e) { /* no storage */ }
+    if (this._config && this._config.entity === id && this.content) this.render();
+  }
+
+  // The picture frame: { portrait, ratio } from `picture` and the camera's known ratio
+  _shape() {
+    const mode = PICTURE_MODES.includes(this._config.picture) ? this._config.picture : 'auto';
+    const r = ratioOf(this._config.entity);
+    if (mode === 'landscape' || (mode === 'auto' && !(r < AUTO_PORTRAIT))) return { portrait: false, ratio: 16 / 9 };
+    return { portrait: true, ratio: r < 1 ? Math.max(PORTRAIT_MIN, r) : PORTRAIT_RATIO };
   }
 
   set hass(hass) {
@@ -326,14 +457,15 @@ class EufyCameraCard extends HTMLElement {
   }
 
   // Preloads a picture so the old one stays until the new one is ready. Returns { src, err } for the slot.
-  _image(slot, url) {
+  // `onSize(width, height)` runs when the picture has loaded.
+  _image(slot, url, onSize) {
     if (!url) { delete this._shown[slot]; return { src: null, err: true }; }
     let s = this._imgs.get(url);
     if (!s) {
       if (this._imgs.size > IMG_CACHE) [...this._imgs.keys()].slice(0, this._imgs.size - IMG_CACHE).forEach(k => this._imgs.delete(k));
       this._imgs.set(url, s = 'loading');
       const im = new Image();
-      im.onload = () => { this._imgs.set(url, 'ok'); this.render(); };
+      im.onload = () => { this._imgs.set(url, 'ok'); if (onSize) onSize(im.naturalWidth, im.naturalHeight); this.render(); };
       im.onerror = () => { this._imgs.set(url, 'err'); this.render(); };
       im.src = url;
     }
@@ -357,7 +489,7 @@ class EufyCameraCard extends HTMLElement {
       // camera_proxy scales only with both width and height; one bucket per card size so a resize rarely refetches
       const need = (this._width || 480) * Math.min(window.devicePixelRatio || 1, 2);
       const w = STILL_WIDTHS.find(x => x >= need) || STILL_WIDTHS[STILL_WIDTHS.length - 1];
-      q += `&width=${w}&height=${Math.round((w * 9) / 16)}`;
+      q += `&width=${w}&height=${Math.round(w / this._shape().ratio)}`;
       return `${base}${base.includes('?') ? '&' : '?'}${q}`;
     }
     return `${u}${u.includes('?') ? '&' : '?'}${q}`;
@@ -414,6 +546,9 @@ class EufyCameraCard extends HTMLElement {
     this._timer = null;
     clearTimeout(this._toastT);
     clearTimeout(this._quietT);
+    clearTimeout(this._ringT);
+    clearTimeout(this._lactT);
+    this._lact = null;
     clearInterval(this._recT);
     this._recT = null;
     if (this._thumbIo) this._thumbIo.disconnect();
@@ -443,7 +578,8 @@ class EufyCameraCard extends HTMLElement {
       && (e.entity_category === 'config' || e.entity_category === 'diagnostic' || e.entity_id.startsWith('binary_sensor.'))).map(e => e.entity_id));
     const inc = new Set([].concat(c.settings_include || [])), exc = new Set([].concat(c.settings_exclude || []));
     // entity id -> { id: section, at: position in it }
-    const lay = dev ? this._layout(dev, deviceKey(reg, dev)) : null;
+    // No Settings section: the layout is never asked for
+    const lay = dev && this._show('settings') ? this._layout(dev, deviceKey(reg, dev)) : null;
     out.layout = lay;
     out.sec = {};
     ((lay && lay.secs) || []).forEach(x => x.ids.forEach((id, at) => { if (!out.sec[id]) out.sec[id] = { id: x.id, at }; }));
@@ -455,6 +591,7 @@ class EufyCameraCard extends HTMLElement {
       if (st && st.attributes.restored) { out.restored.push(id); return; }
       if (tk === 'preset_image') { out.presetAll.push(id); const i = st && st.attributes.preset_index; if (i !== undefined) out.presetImages[i] = id; return; }
       if (tk === 'capture_preset') { out.presetAll.push(id); const m = id.match(/_(\d+)$/); if (m) out.presetButtons[m[1]] = id; return; }
+      if (tk === 'doorbell' && dom === 'event') { out.ring = id; return; }
       const role = ROLES[tk];
       // Settings mirrored as read-only sensors reuse the control's translation_key: take the writable domain only
       if (role && (!out[role] || dom !== 'sensor')) out[role] = id;
@@ -540,7 +677,9 @@ class EufyCameraCard extends HTMLElement {
 
   _watched() {
     const E = this._entities();
-    const ids = [E.camera, E.battery, E.charging, E.solarCharging, E.detected, E.recorded, ...POWER_STATS.map(x => E[x[0]])];
+    const ids = [E.camera, E.battery, E.charging, E.solarCharging, E.detected, E.recorded, E.ring, ...POWER_STATS.map(x => E[x[0]])];
+    [].concat(this._config.live_buttons || []).forEach(id => ids.push(id));
+    if (this._cams.length > 1) this._cams.forEach(id => ids.push(id));
     Object.keys(ROLES).forEach(k => ids.push(E[ROLES[k]]));
     E.rows.forEach(r => ids.push(r.id));
     E.presetAll.forEach(id => ids.push(id));
@@ -1004,6 +1143,8 @@ class EufyCameraCard extends HTMLElement {
     if (!L.video && now - L.started > START_TIMEOUT_MS) { this._stop('No picture from the camera'); return; }
     const txt = L.until ? mmss(Math.ceil((L.until - now) / 1000)) : '∞';
     this.content.querySelectorAll('[data-tick]').forEach((n) => { if (n.textContent !== txt) n.textContent = txt; });
+    const v = L.video && this._liveVideo();
+    if (v) this._noteRatio(this._config.entity, v.videoWidth, v.videoHeight);
     const ws = `${Math.floor((now - L.started) / 1000)} s`;
     this.content.querySelectorAll('[data-wake]').forEach((n) => { if (n.textContent !== ws) n.textContent = ws; });
   }
@@ -1023,7 +1164,7 @@ class EufyCameraCard extends HTMLElement {
     if (!L || !ev.detail) return;
     this._applyMute();  // a player that rendered a new <video> (after an error) starts unmuted
     if (ev.detail.hasAudio) L.audio = true;
-    if (ev.detail.hasVideo && !L.video) { L.video = true; this.render(); this._awake(true); return; }
+    if (ev.detail.hasVideo && !L.video) { L.video = true; this.render(); this._awake(true); setTimeout(() => this._tick(), 300); return; }
     // The lone WebRTC player reports no video only when it failed (go2rtc error): try HLS once
     if (ev.detail.hasVideo === false && !L.video && L.player === 'web_rtc') { this._attachPlayer(L, 'hls'); return; }
     // HLS reports no video when its first playlist request failed and does not retry: ask again; HA's stream
@@ -1058,12 +1199,35 @@ class EufyCameraCard extends HTMLElement {
   }
 
   // ok: a confirmation (neutral, check icon) rather than a failure
-  _toast(text, ok) {
+  _toast(text, ok, icon) {
     this._toastText = text;
     this._toastOk = !!ok;
+    this._toastIcon = icon || null;
     clearTimeout(this._toastT);
     this._toastT = setTimeout(() => { this._toastText = ''; this.render(); }, TOAST_MS);
     if (this.content) this.render();
+  }
+
+  // A live view button (`live_buttons`): the first press asks (toast), a second one within LACT_ARM_MS calls the
+  // entity's action (liveAction)
+  _liveButton(id) {
+    const h = this._hass, st = this._st(id);
+    const a = st && st.state !== 'unavailable' ? liveAction(st) : null;
+    if (!h || !a) return;
+    const nm = st.attributes.friendly_name || id;
+    clearTimeout(this._lactT);
+    this._awake(true);
+    if (!this._lact || this._lact.id !== id || Date.now() >= this._lact.until) {
+      this._lact = { id, until: Date.now() + LACT_ARM_MS };
+      this._lactT = setTimeout(() => { this._lact = null; this.render(); }, LACT_ARM_MS);
+      this._toast(`Press again to ${a.verb.toLowerCase()} ${nm}`, true, 'mdi:gesture-tap');
+      return;
+    }
+    this._lact = null;
+    this._toastText = '';
+    this.render();
+    Promise.resolve(h.callService(a.domain, a.service, { entity_id: id }))
+      .then(() => this._toast(`${a.verb}: ${nm}`, true), e => this._toast((e && e.message) || 'Not applied'));
   }
 
   // ================== VIEW CONTROLS (immediate) ==================
@@ -1263,6 +1427,8 @@ class EufyCameraCard extends HTMLElement {
       return;
     }
     if (this._dd && !path.find(n => n.classList && n.classList.contains('ddl'))) this._setDd(null);
+    const la = has('lact');
+    if (la) { this._liveButton(la.dataset.lact); this._focus(`lact-${la.dataset.lact}`); return; }
     const lv = has('live');
     if (lv) {
       const v = lv.dataset.live;
@@ -1386,6 +1552,7 @@ class EufyCameraCard extends HTMLElement {
     const opt = has('opt');
     if (opt) {
       const [kind, v] = [opt.dataset.kind, opt.dataset.opt];
+      if (kind === CAM_DD) { this._setDd(null); this._switchCam(v); this._focus(`dd-${CAM_DD}`); return; }
       const live = this._ctx && this._ctx[kind];
       if (live !== undefined && String(live) === v) delete this._stg[kind]; else this._stg[kind] = v;
       const fromDd = this._dd === kind;
@@ -1480,9 +1647,9 @@ class EufyCameraCard extends HTMLElement {
     if (ev.key === 'Escape' && Object.keys(this._stg).length) { ev.preventDefault(); this._stg = {}; this.render(); }
   }
 
-  // The card's 16:9 frame is filled edge to edge; full screen shows the whole picture (a screen of another
-  // shape, a phone held upright) with bars instead of cutting its sides
-  _fit() { return this._isFull() ? 'contain' : 'cover'; }
+  // The card's 16:9 frame is filled edge to edge; full screen and a portrait frame show the whole picture (a screen
+  // or frame of another shape) with bars instead of cutting its sides
+  _fit() { return this._isFull() || (this._config && this._shape().portrait) ? 'contain' : 'cover'; }
 
   // The picture is in full screen. document.fullscreenElement names the card host (shadow retargeting), so the
   // card's own root is asked.
@@ -1594,6 +1761,7 @@ class EufyCameraCard extends HTMLElement {
 
   // The option to focus when a dropdown opens: the staged or current one
   _ddFocusOpt(k) {
+    if (k === CAM_DD) return this._config.entity;
     const r = this._ctx && this._ctx.rows && this._ctx.rows[k];
     const v = this._stg[k] !== undefined ? this._stg[k] : (this._ctx ? this._ctx[k] : undefined);
     return r && v !== undefined ? String(v) : '';
@@ -1617,13 +1785,16 @@ class EufyCameraCard extends HTMLElement {
   // position before a redraw; on opening, the current option is scrolled into view.
   _placeDd(top) {
     const l = this._dd && this.content.querySelector('.ddl');
+    // The camera list sits at the card's level (its button is in the header or on the picture)
+    const cam = !!l && l.classList.contains('camdd');
+    const anc = cam ? this.content.querySelector(`[data-dd="${CAM_DD}"]`) : (l && l.parentElement);
     let grow = 0;
-    if (l) {
+    if (l && anc) {
       const v = l.querySelector('.ddv');
       const n = parseInt(l.dataset.n, 10) || 1;
       const chrome = l.offsetHeight - v.clientHeight;
       const full = chrome + Math.min(n, DD_MAX_ROWS) * DD_ROW - 1, least = chrome + Math.min(n, DD_MIN_ROWS) * DD_ROW - 1;
-      const cr = this.content.getBoundingClientRect(), br = l.parentElement.getBoundingClientRect();
+      const cr = this.content.getBoundingClientRect(), br = anc.getBoundingClientRect();
       // the list starts 2 px off the control and keeps 6 px from the card's edge
       const below = Math.floor(cr.bottom - this._ddGrow - br.bottom - 8), above = Math.floor(br.top - cr.top - 8);
       let h = full, up = false;
@@ -1634,6 +1805,12 @@ class EufyCameraCard extends HTMLElement {
       }
       l.classList.toggle('up', up);
       l.style.height = `${h}px`;
+      if (cam) {
+        const w = Math.min(Math.max(br.width + 40, 240), cr.width - 16);
+        l.style.width = `${w}px`;
+        l.style.left = `${Math.max(8, Math.min(br.left - cr.left, cr.width - 8 - w))}px`;
+        l.style.top = `${up ? br.top - cr.top - 2 - h : br.bottom - cr.top + 2}px`;
+      }
       if (this._ddAt !== this._dd) {
         this._ddAt = this._dd;
         const o = v.querySelector('.ddo[aria-selected="true"]:not([hidden])');
@@ -1847,6 +2024,8 @@ class EufyCameraCard extends HTMLElement {
     const canLive = this._canLive(st);
     if (!avail && this._live) { this._stop('Camera unavailable'); return; }
     const L = this._live;
+    const multi = this._cams.length > 1;
+    const showHdr = this._show('header');
     const recording = avail && this._recording();
     if (!recording) this._recStop = false;
     const recStop = recording && this._recStop;
@@ -1859,16 +2038,25 @@ class EufyCameraCard extends HTMLElement {
     const evSt = this._st(E.detection);
     const evMs = ok(evSt) ? Date.parse(evSt.state) : NaN;
     const evType = evSt && evSt.attributes.event_type;
+    // A doorbell's Ring event: Ringing for RING_MS after a press, then its time while it is the newest event
+    const ringSt = this._st(E.ring);
+    const ringMs = ok(ringSt) ? Date.parse(ringSt.state) : NaN;
+    const ringAge = Date.now() - ringMs;
+    const ringing = avail && ringAge > -5000 && ringAge < RING_MS;
+    clearTimeout(this._ringT);
+    if (ringing) this._ringT = setTimeout(() => { if (this.isConnected) this.render(); }, RING_MS - ringAge + 50);
     let word, wcls = '';
     if (!avail) { word = 'Unavailable'; wcls = ' err'; }
     else if (L && !L.video) { word = 'Starting live view'; wcls = ' pending'; }
     else if (L) { word = L.continuous ? 'Live · continuous' : 'Live'; wcls = ' live'; }
     else if (recording) { word = 'Recording'; wcls = ' live'; }
+    else if (ringing) { word = 'Ringing'; wcls = ' det'; }
     else if (active) { word = active[1]; wcls = ' det'; }
     else word = 'Idle';
     const detail = [];
-    if (!L && !active && evType && !isNaN(evMs)) detail.push(`${EVENT_WORD[evType] || human(evType)} ${this._ago(evMs)}`);
-    const cls = !avail ? 'off' : (L || recording ? 'live' : (active ? 'det' : 'idle'));
+    if (!L && !active && !ringing && !isNaN(ringMs) && (isNaN(evMs) || ringMs >= evMs)) detail.push(`Ring ${this._ago(ringMs)}`);
+    else if (!L && !active && !ringing && evType && !isNaN(evMs)) detail.push(`${EVENT_WORD[evType] || human(evType)} ${this._ago(evMs)}`);
+    const cls = !avail ? 'off' : (L || recording ? 'live' : (active || ringing ? 'det' : 'idle'));
 
     // ---- action (staged) ----
     const actP = this._pending.act;
@@ -1996,7 +2184,7 @@ class EufyCameraCard extends HTMLElement {
     const tabs = [...new Set(top.map(r => r.group.id))];
     // Until the user picks a tab the first one is shown (rows found later through the registry may add earlier tabs)
     if (!this._tabPicked || !tabs.includes(this._tab)) this._tab = tabs[0];
-    if (this._dd && !rows.some(r => r.dd && r.dd.open)) { this._dd = null; this._watchOutside(!!this._menuOpen); }
+    if (this._dd && (this._dd === CAM_DD ? !multi : !rows.some(r => r.dd && r.dd.open))) { this._dd = null; this._watchOutside(!!this._menuOpen); }
 
     // ---- presets (go to: immediate) ----
     const presetIdx = this._presetIdx(E);
@@ -2015,7 +2203,17 @@ class EufyCameraCard extends HTMLElement {
     const shownWord = stg.act ? `→ ${ACTIONS[stg.act].label}` : (actSt.status === 'pending' ? `${ACTIONS[actSt.value].label} · sending`
       : (actSt.status === 'failed' ? 'Not applied' : word));
     const wordCls = stg.act ? ' staged' : (actSt.status === 'pending' ? ' pending' : (actSt.status === 'failed' ? ' err' : wcls));
-    const badge = L || recording ? ['live', 'mdi:record'] : (active ? ['det', active[2]] : null);
+    const badge = L || recording ? ['live', 'mdi:record'] : (ringing ? ['det', 'mdi:bell-ring'] : (active ? ['det', active[2]] : null));
+    // Several cameras: the name opens the camera list (on the picture when the header is hidden)
+    const camOpen = multi && this._dd === CAM_DD;
+    const camLbl = escapeHtml(`Camera: ${name}, choose one of ${this._cams.length}`);
+    const camBtn = cls2 => `<button type="button" class="${cls2}" data-dd="${CAM_DD}" data-focus="dd-${CAM_DD}" aria-haspopup="listbox" aria-expanded="${camOpen}" aria-label="${camLbl}">`;
+    const nameHtml = multi ? `${camBtn('name camsel')}<span>${escapeHtml(name)}</span><ha-icon icon="${camOpen ? 'mdi:menu-up' : 'mdi:menu-down'}"></ha-icon></button>`
+      : `<div class="name">${escapeHtml(name)}</div>`;
+    const actsHtml = `<div class="acts${nStaged ? '' : ' off" inert aria-hidden="true'}">
+              <button class="btn icon" type="button" data-act="cancel" data-focus="act-cancel" aria-label="Cancel the changes"><ha-icon icon="mdi:close"></ha-icon></button>
+              <button class="btn primary${nStaged && this._restartWarn() ? ' warn' : ''}" type="button" data-act="set" data-focus="act-set" aria-label="Set: ${escapeHtml(nStaged ? this._hint() : '')}">Set<span class="cnt${nStaged > 1 ? '' : ' none'}" aria-hidden="true">${nStaged > 1 ? nStaged : 0}</span></button>
+            </div>`;
     const liveMenu = !avail || !canLive ? [] : (L
       ? [['live', 'pin', L.continuous ? `Stop after ${mmss(this._liveSeconds())}` : 'Keep live (continuous)', L.continuous ? 'mdi:timer-outline' : 'mdi:all-inclusive'],
         ['live', 'full', 'Full screen', 'mdi:fullscreen'], ['live', 'stop', 'Stop live view', 'mdi:stop']]
@@ -2030,7 +2228,7 @@ class EufyCameraCard extends HTMLElement {
               <ha-icon icon="${i}"></ha-icon><span>${escapeHtml(l)}</span>${k === 'action' && stg.act === v ? '<ha-icon class="chk" icon="mdi:check"></ha-icon>' : ''}</button>`).join('')}
           </div>` : '';
     const btnLabel = `${word}${detail.length ? ` · ${detail.join(' · ')}` : ''}; actions`;
-    const hdr = `
+    const hdr = !showHdr ? '' : `
         <div class="hdr${nStaged ? ' staging' : ''}">
           <div class="tline">
             <div class="title">
@@ -2040,19 +2238,17 @@ class EufyCameraCard extends HTMLElement {
                 ${menu}
               </div>
               <div class="htext">
-                <div class="name">${escapeHtml(name)}</div>
+                ${nameHtml}
                 <div class="hsub"><span class="g"><span class="st${wordCls}">${escapeHtml(shownWord)}</span></span>${detail.map(d => `<span class="g"><i class="sep">·</i><span>${escapeHtml(d)}</span></span>`).join('')}</div>
               </div>
             </div>
-            <div class="acts${nStaged ? '' : ' off" inert aria-hidden="true'}">
-              <button class="btn icon" type="button" data-act="cancel" data-focus="act-cancel" aria-label="Cancel the changes"><ha-icon icon="mdi:close"></ha-icon></button>
-              <button class="btn primary${nStaged && this._restartWarn() ? ' warn' : ''}" type="button" data-act="set" data-focus="act-set" aria-label="Set: ${escapeHtml(nStaged ? this._hint() : '')}">Set<span class="cnt${nStaged > 1 ? '' : ' none'}" aria-hidden="true">${nStaged > 1 ? nStaged : 0}</span></button>
-            </div>
+            ${actsHtml}
           </div>
         </div>`;
 
     // ---- picture overlay ----
-    const still = this._image('still', this._picUrl(st, true));
+    const camId = E.camera;
+    const still = this._image('still', this._picUrl(st, true), (w, ht) => this._noteRatio(camId, w, ht));
     const srcKind = st && st.attributes.image_source;
     const stillMs = st && st.attributes.triggered_at ? Date.parse(st.attributes.triggered_at) : NaN;
     const chip = (pos, c2, inner, label, info) => `<${info ? `button type="button" data-info="${escapeHtml(info)}"` : 'span'} class="chip ${pos}${c2 ? ` ${c2}` : ''}" aria-label="${escapeHtml(label)}">${inner}</${info ? 'button' : 'span'}>`;
@@ -2087,6 +2283,7 @@ class EufyCameraCard extends HTMLElement {
       tl = chip('tl', '', `<ha-icon icon="${srcKind === 'live' ? 'mdi:camera-iris' : 'mdi:motion-sensor'}"></ha-icon><span>${escapeHtml(t)}</span>`, `Still: ${t}`);
     }
     // Recording a clip: its own chip with the seconds so far; it stays while the live controls are faded
+    const camChip = multi && !showHdr ? `${camBtn('chip camchip')}<ha-icon icon="mdi:cctv"></ha-icon><span>${escapeHtml(name)}</span><ha-icon icon="${camOpen ? 'mdi:menu-up' : 'mdi:menu-down'}"></ha-icon></button>` : '';
     const recChip = recording && !vItem ? chip('', 'rec recc', `<i class="dot"></i><span class="rw">REC</span><span class="tv" data-rect>${this._recSeconds()} s</span>`, 'Recording a clip') : '';
     const centre = vItem ? (vPic && vPic.src ? '' : '<div class="ctr wake" role="status"><i class="spin"></i></div>') : !avail
       ? '<div class="ctr off"><ha-icon icon="mdi:cctv-off"></ha-icon><span>Unavailable</span></div>'
@@ -2104,12 +2301,22 @@ class EufyCameraCard extends HTMLElement {
     const sv = this._psave;
     const nSet = presetIdx.length;
     const pFull = nSet >= PRESET_SLOTS || this._pfull === nSet;
+    // The configured live view buttons (a door lock for a doorbell), after the view's own
+    if (this._lact && Date.now() >= this._lact.until) this._lact = null;
+    const lacts = [].concat(this._config.live_buttons || []).filter(id => typeof id === 'string' && LACT_DOMAINS.includes(id.split('.')[0])).map((id) => {
+      const bs = this._st(id), a = bs && liveAction(bs);
+      if (!a) return '';
+      const nm = bs.attributes.friendly_name || id, armed = !!this._lact && this._lact.id === id;
+      const reg = this._hass.entities && this._hass.entities[id];
+      return `<button type="button" class="lb lact${armed ? ' arm' : ''}" data-lact="${escapeHtml(id)}" data-focus="lact-${escapeHtml(id)}" aria-label="${escapeHtml(armed ? `Press again to ${a.verb.toLowerCase()} ${nm}` : `${a.verb} ${nm}`)}"${bs.state === 'unavailable' ? ' disabled' : ''}><ha-icon icon="${escapeHtml((reg && reg.icon) || a.icon)}"></ha-icon></button>`;
+    }).join('');
     const bar = L ? `<div class="lbar" role="group" aria-label="Live view">
             <button type="button" class="lb" data-live="stop" data-focus="live-stop" aria-label="Stop live view"><ha-icon icon="mdi:stop"></ha-icon></button>
             <button type="button" class="lb opt2${L.continuous ? ' on' : ''}" data-live="pin" data-focus="live-pin" aria-pressed="${L.continuous}" aria-label="Continuous live view"><ha-icon icon="mdi:all-inclusive"></ha-icon></button>
             <button type="button" class="lb rec${recording ? ' on' : ''}" data-live="rec" data-focus="live-rec" aria-label="${recording ? 'Stop recording' : 'Record a clip'}"${recStop ? ' disabled' : ''}><ha-icon icon="${recording ? 'mdi:stop' : 'mdi:record-rec'}"></ha-icon></button>
             ${L.video ? `<button type="button" class="lb" data-live="mute" data-focus="live-mute" aria-pressed="${!L.muted}" aria-label="${L.muted ? 'Unmute' : 'Mute'}"><ha-icon icon="${L.muted ? 'mdi:volume-off' : 'mdi:volume-high'}"></ha-icon></button>` : ''}
             ${canPre ? `<button type="button" class="lb${this._preOpen ? ' on' : ''}" data-live="presets" data-focus="live-presets" aria-expanded="${!!this._preOpen}" aria-label="Presets"><ha-icon icon="mdi:crosshairs-gps"></ha-icon></button>` : ''}
+            ${lacts ? `<i class="lsep" aria-hidden="true"></i>${lacts}` : ''}
             <button type="button" class="lb opt2" data-live="full" data-focus="live-full" aria-label="${this._isFull() ? 'Exit full screen' : 'Full screen'}"><ha-icon icon="${this._isFull() ? 'mdi:fullscreen-exit' : 'mdi:fullscreen'}"></ha-icon></button>
           </div>` : '';
     // Presets over the live picture, above the bar: the camera turns there at once (the move lane)
@@ -2167,14 +2374,14 @@ class EufyCameraCard extends HTMLElement {
             ${zShown > zMin ? `<button type="button" class="zr${this._busy['zoom-reset'] ? ' busy' : ''}" data-zoom="reset" data-focus="zoom-reset" aria-label="Reset zoom to ${fmtZoom(zMin)}"${dis ? ' disabled' : ''}><ha-icon icon="mdi:restore"></ha-icon><span>${escapeHtml(fmtZoom(zMin))}</span></button>` : ''}
           </div>` : '';
     // The message takes the chip line for TOAST_MS: one line, the chips step aside
-    const toast = this._toastText ? `<div class="toast${this._toastOk ? ' ok' : ''}" role="status" aria-label="${escapeHtml(this._toastText)}"><ha-icon icon="${this._toastOk ? 'mdi:check-circle-outline' : 'mdi:alert-circle-outline'}"></ha-icon><span>${escapeHtml(this._toastText)}</span></div>` : '';
+    const toast = this._toastText ? `<div class="toast${this._toastOk ? ' ok' : ''}" role="status" aria-label="${escapeHtml(this._toastText)}"><ha-icon icon="${this._toastIcon || (this._toastOk ? 'mdi:check-circle-outline' : 'mdi:alert-circle-outline')}"></ha-icon><span>${escapeHtml(this._toastText)}</span></div>` : '';
     const over = `
         <div class="still${L && L.video ? ' gone' : ''}${L && !L.video ? ' dim' : ''}">${still.src ? `<img class="stillimg" src="${escapeHtml(still.src)}" alt="" draggable="false">` : ''}</div>
         ${vItem ? `<div class="still hview">${vPic && vPic.src ? (vItem.video
     ? `<video class="stillimg hvid" src="${escapeHtml(vPic.src)}"${vPoster ? ` poster="${escapeHtml(vPoster)}"` : ''} controls autoplay muted playsinline preload="metadata" aria-label="${escapeHtml(`${this._histLabel(vItem).kind} video, ${this._histLabel(vItem).when}`)}"></video>`
     : `<img class="stillimg" src="${escapeHtml(vPic.src)}" alt="" draggable="false">`) : ''}</div>` : ''}
         <div class="ovl${L ? ' live' : ''}${aimOK ? ' aim' : ''}${vItem && vItem.video ? ' hvo' : ''}">
-          ${toast ? '' : (vItem ? tl : `<div class="crow">${tl}${recChip}${tr}</div>`)}${centre}${vItem ? '' : bar + lpre}
+          ${toast ? '' : (vItem ? tl : `<div class="crow">${camChip}${tl}${recChip}${tr}</div>`)}${centre}${vItem ? '' : bar + lpre}
           ${!vItem && (pad || zpill) ? `<div class="ptzw">${zpill}${pad}</div>` : ''}
           ${toast}
         </div>`;
@@ -2183,9 +2390,10 @@ class EufyCameraCard extends HTMLElement {
     // Before the first layout: Settings shows while the device has candidate rows, opened as a placeholder that keeps
     // the tab strip's place (loading, or failed with Retry)
     const setWait = !secs && E.rows.length > 0;
-    const hasSet = rows.length > 0 || setWait;
+    const showHist = this._show('history');
+    const hasSet = this._show('settings') && (rows.length > 0 || setWait);
     const setOpen = this._open === 'settings' && hasSet;
-    const histOpen = this._open === 'history';
+    const histOpen = showHist && this._open === 'history';
     // A tab marks staged changes (dot) and failed writes (red) of rows it hides
     const tabOf = r => (r.dep ? (rows.find(x => x.id === r.dep) || r).group.id : r.group.id);
     const tabMark = id => (rows.some(r => tabOf(r) === id && r.st.status === 'failed') ? 'err'
@@ -2384,18 +2592,41 @@ class EufyCameraCard extends HTMLElement {
       ? `${hBar}<div class="hmsg">Loading…</div>`
       : `${hBar}${hShown.length ? `<div class="hstrip${/[^\d\s.:]/.test(clockTime(this._hass, new Date(2000, 0, 1, 22, 5))) ? ' wide' : ''}" data-tab="${this._htab}-${hf.pic ? 'p' : ''}${hf.vid ? 'v' : ''}">${hShown.map(histTile).join('')}${hMore}</div>` : `<div class="hmsg">${escapeHtml(hEmpty)}</div>`}`;
     const setMark = setOpen ? '' : (rows.some(r => r.st.status === 'failed') ? 'err' : (rows.some(r => r.staged || r.st.status === 'pending') ? 'stg' : ''));
-    const lower = `
+    // Without the header, Cancel / Set overlay the section tabs' right end while something is staged
+    const lower = !showHist && !hasSet ? '' : `
         <div class="secs" role="group" aria-label="Sections">
-          ${secBtn(SECTIONS[0], histOpen, '')}
+          ${showHist ? secBtn(SECTIONS[0], histOpen, '') : ''}
           ${hasSet ? secBtn(SECTIONS[1], setOpen, setMark) : ''}
+          ${showHdr ? '' : actsHtml}
         </div>
         ${histOpen ? `<div class="hist${/[^\d\s.:]/.test(clockTime(this._hass, new Date(2000, 0, 1, 22, 5))) ? ' wide' : ''}">${histBody}</div>` : ''}
         ${setOpen ? `<div class="ctl-rows">${rowsHtml()}</div>` : ''}`;
+
+    let camDd = '';
+    if (camOpen) {
+      const filt = this._cams.length > DD_FILTER, q = filt ? this._ddq : '';
+      const names = this._cams.map(id => [id, this._camName(id)]);
+      const opts = names.map(([id, l]) => {
+        const on = id === E.camera, cs = this._st(id);
+        return `<button class="ddo" type="button" role="option" data-kind="${CAM_DD}" data-opt="${escapeHtml(id)}" data-focus="ddo-${CAM_DD}-${escapeHtml(id)}" aria-label="${escapeHtml(l)}" aria-selected="${on}"${ddMatch(l, q) ? '' : ' hidden'}><ha-icon class="cami" icon="${!cs || cs.state === 'unavailable' ? 'mdi:cctv-off' : 'mdi:cctv'}"></ha-icon><span>${escapeHtml(l)}</span>${on ? '<ha-icon class="chk" icon="mdi:check"></ha-icon>' : ''}</button>`;
+      }).join('');
+      const none = `<div class="ddnone"${names.some(([, l]) => ddMatch(l, q)) ? ' hidden' : ''}>No match</div>`;
+      camDd = `<div class="ddl camdd" data-n="${this._cams.length}">${filt ? `<input class="ddq" type="text" data-focus="ddq-${CAM_DD}" value="${escapeHtml(q)}" placeholder="Filter" autocomplete="off" spellcheck="false" aria-label="Filter cameras">` : ''}<div class="ddv" role="listbox" aria-label="Camera">${opts}${none}</div></div>`;
+    }
 
     const compact = this._config.layout === 'compact' || (this._config.layout !== 'regular' && this._width !== undefined && this._width < COMPACT_W);
     this.content.classList.toggle('compact', compact);
     this._pic.classList.toggle('live', !!L);
     this._pic.classList.toggle('has-ptz', !!(E.hasPan || E.zoom));
+    this.content.classList.toggle('nohdr', !showHdr);
+    // The frame: 16:9, or the camera's portrait ratio (a CSS variable, so full screen still overrides it)
+    const shape = this._shape();
+    const ratio = shape.portrait ? shape.ratio.toFixed(4) : '';
+    this._pic.classList.toggle('portrait', shape.portrait);
+    if (this._pic.style.getPropertyValue('--pic-ratio') !== ratio) {
+      if (ratio) this._pic.style.setProperty('--pic-ratio', ratio); else this._pic.style.removeProperty('--pic-ratio');
+    }
+    if (this._stream && this._stream.fitMode !== this._fit()) this._stream.fitMode = this._fit();
     const active0 = this.shadowRoot.activeElement;
     const fk = active0 && active0.dataset ? active0.dataset.focus : null;
     // The station list keeps its scroll position when it is drawn again (a row's spinner, a refresh)
@@ -2408,11 +2639,11 @@ class EufyCameraCard extends HTMLElement {
     const lp0 = this._overEl.querySelector('.lpre');
     const lpLeft = lp0 ? lp0.scrollLeft : 0;
     // ... and the open dropdown list its own, its filter field the caret
-    const dv0 = this._lowerEl.querySelector('.ddv');
+    const dv0 = this.content.querySelector('.ddv');
     const ddTop = dv0 ? dv0.scrollTop : 0;
     const qSel = active0 && active0.classList && active0.classList.contains('ddq') ? [active0.selectionStart, active0.selectionEnd] : null;
     let changed = false;
-    [['hdr', this._hdrEl, hdr], ['over', this._overEl, over], ['lower', this._lowerEl, lower]].forEach(([k, el, html]) => {
+    [['hdr', this._hdrEl, hdr], ['over', this._overEl, over], ['lower', this._lowerEl, lower], ['dd', this._ddEl, camDd]].forEach(([k, el, html]) => {
       if (this._keys[k] === html) return;
       el.innerHTML = html;
       this._keys[k] = html;
@@ -2454,7 +2685,7 @@ class EufyCameraCard extends HTMLElement {
     this.content = document.createElement('div');
     // not `card-content`: ha-card pads that class, and the picture runs edge to edge
     this.content.className = 'cc';
-    this.content.innerHTML = '<div class="hwrap"></div><div class="pic"><div class="vslot"></div><div class="over"></div></div><div class="lower"></div>';
+    this.content.innerHTML = '<div class="hwrap"></div><div class="pic"><div class="vslot"></div><div class="over"></div></div><div class="lower"></div><div class="ddhost"></div>';
     const style = document.createElement('style');
     style.textContent = CSS_TEXT;
     card.append(style, this.content);
@@ -2464,6 +2695,7 @@ class EufyCameraCard extends HTMLElement {
     this._vslot = this.content.querySelector('.vslot');
     this._overEl = this.content.querySelector('.over');
     this._lowerEl = this.content.querySelector('.lower');
+    this._ddEl = this.content.querySelector('.ddhost');
     this.content.addEventListener('click', ev => this._onClick(ev));
     this.content.addEventListener('keydown', ev => this._onKey(ev));
     // In full screen the wheel zooms (the page cannot scroll there anyway); in the card it scrolls the page
@@ -2593,7 +2825,7 @@ const CSS_TEXT = `
     --fs-md: var(--ha-font-size-l, 16px);
   }
   ha-card { overflow: hidden; }
-  .cc { container-type: inline-size; }
+  .cc { position: relative; container-type: inline-size; }
   button { font: inherit; -webkit-tap-highlight-color: transparent; }
 
   /* Header in HA tile style; Cancel / Set overlay the title line's right end while staging */
@@ -2654,6 +2886,15 @@ const CSS_TEXT = `
   .badge.det { background: var(--cc-det); }
   .badge.det ha-icon { color: var(--black-color, #000); }
   /* Opens down over the picture, so it stays inside the card (ha-card clips its content) */
+  /* Several cameras: the name is the camera list's button */
+  .name.camsel { display: flex; align-items: center; gap: 2px; max-width: 100%; padding: 0; margin: 0; border: 0; border-radius: 4px; cursor: pointer;
+    background: none; color: inherit; text-align: left; }
+  .name.camsel span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .name.camsel ha-icon { display: flex; flex: none; width: 20px; height: 20px; line-height: 0; color: var(--cc-sub); --mdc-icon-size: 20px; }
+  .name.camsel:hover span { text-decoration: underline; text-decoration-color: var(--cc-line); }
+  .name.camsel:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
+  .ddl.camdd, .ddl.camdd.up { right: auto; bottom: auto; }
+  .camdd .cami { display: flex; flex: none; width: 18px; height: 18px; line-height: 0; color: var(--cc-sub); --mdc-icon-size: 18px; }
   .menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 6; min-width: 210px; padding: 4px; border-radius: 12px;
     background: var(--cc-bg); box-shadow: 0 4px 16px var(--cc-shadow); border: 1px solid var(--cc-line);
     display: grid; gap: 2px; }
@@ -2667,9 +2908,14 @@ const CSS_TEXT = `
 
   /* Picture: a fixed 16:9 frame, so cards side by side line up whatever each camera can do */
   /* The picture is its own size container: in full screen the overlay sizes follow the screen, not the card */
-  .pic { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: #111; color: #fff; container-type: inline-size; }
+  .pic { position: relative; aspect-ratio: var(--pic-ratio, 16 / 9); overflow: hidden; background: #111; color: #fff; container-type: inline-size; }
   .pic:fullscreen { aspect-ratio: auto; width: 100%; height: 100%; background: #000; }
   .pic:fullscreen .stillimg { object-fit: contain; }
+  /* Portrait: the camera's own ratio, at most 80 % of the screen height (a wide card), the whole picture shown */
+  /* width 100 %: a capped height must not narrow the frame (aspect-ratio would carry the cap over to the width) */
+  .pic.portrait { width: 100%; max-height: 80vh; }
+  .pic.portrait:fullscreen { max-height: none; }
+  .pic.portrait .stillimg { object-fit: contain; }
   .vslot, .still, .over { position: absolute; inset: 0; }
   .vslot ha-camera-stream, .vslot ha-web-rtc-player, .vslot ha-hls-player { display: block; width: 100%; height: 100%; }
   .vslot ha-web-rtc-player, .vslot ha-hls-player { --video-max-height: 100%; }
@@ -2698,6 +2944,7 @@ const CSS_TEXT = `
   .crow { position: absolute; left: 10px; top: 10px; right: 10px; display: flex; gap: 6px; min-width: 0; pointer-events: none; }
   .crow > .chip { position: static; flex: none; max-width: 100%; pointer-events: auto; }
   .crow > .chip.tl { flex: 0 1 auto; min-width: 0; }
+  .crow > .chip.camchip { flex: 0 1 auto; min-width: 0; max-width: 50%; padding-right: 4px; }
   .chip.hi ha-icon { color: var(--cc-bat-hi); } .chip.mid ha-icon { color: var(--cc-bat-mid); } .chip.lo ha-icon { color: var(--cc-bat-lo); }
   .chip.rec { gap: 6px; padding: 0 10px 0 9px; font-weight: 600; letter-spacing: 0.02em; }
   .chip.rec .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cc-live); box-shadow: 0 0 6px var(--cc-live); animation: pulse 2s ease-in-out infinite; }
@@ -2734,6 +2981,15 @@ const CSS_TEXT = `
   .lb.rec.on:hover { background: color-mix(in srgb, var(--cc-live) 75%, transparent); }
   .lb.rec:disabled { cursor: default; opacity: 0.6; }
   .lb.rec.on ha-icon { color: #fff; }
+  /* Live view buttons after a divider; a pressed one waiting for its second press carries an accent ring */
+  .lsep { flex: none; width: 1px; margin: 6px 3px; background: rgba(255, 255, 255, 0.3); }
+  .lb.lact.arm { background: color-mix(in srgb, var(--cc-accent) 55%, transparent); box-shadow: inset 0 0 0 2px #fff; }
+  .lb.lact:disabled { cursor: default; opacity: 0.5; }
+  /* With live view buttons the bar wraps upward inside the picture, clear of the pan/tilt and zoom controls */
+  .lbar:has(.lact) { flex-wrap: wrap-reverse; max-width: calc(100% - 26px); }
+  .has-ptz .lbar:has(.lact) { max-width: calc(100% - 156px); }
+  @container (max-width: 339px) { .has-ptz .lbar:has(.lact) { max-width: calc(100% - 134px); } }
+  .secs > .acts { left: auto; padding-left: 10px; background: linear-gradient(90deg, transparent, var(--cc-bg) 10px); }
   .chip.recc { gap: 5px; }
   /* Narrow pictures: the recording chip keeps its dot and seconds */
   @container (max-width: 359px) { .chip.recc .rw { display: none; } }
@@ -2846,7 +3102,7 @@ const CSS_TEXT = `
 
   /* Section tabs, the first level: a segmented control with equal widths and fixed labels, so a tab stays under
      the pointer */
-  .secs { display: flex; gap: 2px; margin: 8px 10px; padding: 2px; border-radius: 10px;
+  .secs { position: relative; display: flex; gap: 2px; margin: 8px 10px; padding: 2px; border-radius: 10px;
     background: var(--cc-track); container: secs / inline-size; }
   .sec { position: relative; flex: 1 1 0; display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; height: 30px;
     padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--cc-sub); font-size: var(--fs-sm); font-weight: 500;
@@ -3151,15 +3407,23 @@ const CSS_TEXT = `
 // ================== EDITOR ==================
 const EDITOR_SCHEMA = [
   { name: 'entity', selector: { entity: { filter: [{ domain: 'camera', integration: DOMAIN }] } } },
+  { name: 'entities', selector: { entity: { multiple: true, filter: [{ domain: 'camera', integration: DOMAIN }] } } },
   { name: 'name', selector: { entity_name: {} }, context: { entity: 'entity' } },
+  { name: 'picture', selector: { select: { mode: 'dropdown', options: [
+    { value: 'auto', label: 'Auto (portrait for a portrait camera)' }, { value: 'landscape', label: 'Landscape (16:9)' }, { value: 'portrait', label: 'Portrait' }] } } },
+  { name: 'show_header', selector: { boolean: {} } },
+  { name: 'show_history', selector: { boolean: {} } },
+  { name: 'show_settings', selector: { boolean: {} } },
   { name: 'auto_live', selector: { select: { mode: 'dropdown', options: [
     { value: 'off', label: 'Off: start by hand' }, { value: 'timed', label: 'Timed live view' }, { value: 'continuous', label: 'Continuous live view' }] } } },
   { name: 'live_seconds', selector: { number: { min: 30, max: 900, step: 10, mode: 'box', unit_of_measurement: 's' } } },
+  { name: 'live_buttons', selector: { entity: { multiple: true, filter: [{ domain: LACT_DOMAINS }] } } },
   { name: 'history_folder', selector: { text: {} } },
   { name: 'layout', selector: { select: { mode: 'dropdown', options: [
     { value: 'auto', label: 'Auto (compact below 400 px)' }, { value: 'compact', label: 'Compact' }, { value: 'regular', label: 'Regular' }] } } },
 ];
-const EDITOR_LABELS = { entity: 'Camera', name: 'Name', history_folder: 'History folder', auto_live: 'Start live view when the dashboard opens', live_seconds: 'Live view length', layout: 'Layout',
+const EDITOR_LABELS = { entity: 'Camera', entities: 'More cameras', picture: 'Picture shape', show_header: 'Header',
+  show_history: 'History', show_settings: 'Settings', live_buttons: 'Live view buttons', name: 'Name', history_folder: 'History folder', auto_live: 'Start live view when the dashboard opens', live_seconds: 'Live view length', layout: 'Layout',
   settings_include: 'Settings to add', settings_exclude: 'Hidden settings', settings_groups: 'Settings tabs' };
 // Settings tabs as HA's reorderable multi-select: a chip per shown tab (drag to reorder, ✕ to hide), the rest to add.
 // Options: the camera's layout sections, More, and any listed id the layout lacks (kept, never dropped from the list).
@@ -3171,6 +3435,10 @@ const tabsField = (secs, cfg) => {
   return { name: 'settings_groups', selector: { select: { multiple: true, reorder: true, options: opts } } };
 };
 const EDITOR_HELPERS = {
+  entities: 'With more than one camera, the name opens a list to switch cameras; history and settings follow. Name and history folder apply to the first camera',
+  picture: 'Auto takes the shape of the camera\'s picture (a portrait doorbell shows upright); portrait shows the whole picture, at most 80 % of the screen high',
+  show_header: 'Name, status and the camera menu; off with History and Settings off leaves the picture alone. Several cameras: the name moves onto the picture',
+  live_buttons: 'Buttons on the live view bar, e.g. a door lock (Open or Unlock) for a doorbell, a gate, a script; each needs a second press within 4 s',
   history_folder: 'The camera\'s folder under Media › eufy_home_security; only when the camera was renamed after its stills were saved',
   auto_live: 'Wakes the camera on every opening: costs battery',
   settings_include: 'Settings shows the camera\'s settings by section; entities named here join them (a guard-mode action or delay under Modes, an entity in no section under More)',
@@ -3183,9 +3451,9 @@ const EDITOR_HELPERS = {
 // once the camera's layout is known (`secs`)
 const editorSchema = (hass, entity, secs, cfg) => {
   const reg = (hass && hass.entities) || {};
-  const me = reg[entity];
-  const ids = me && me.device_id ? Object.values(reg).filter(e => e.device_id === me.device_id && ROW_DOMAINS.includes(e.entity_id.split('.')[0]))
-    .map(e => e.entity_id).sort() : [];
+  const devs = new Set(camList({ ...(cfg || {}), entity }).map(id => reg[id] && reg[id].device_id).filter(Boolean));
+  const ids = Object.values(reg).filter(e => devs.has(e.device_id) && ROW_DOMAINS.includes(e.entity_id.split('.')[0]))
+    .map(e => e.entity_id).sort();
   const tabs = secs ? [tabsField(secs, cfg)] : [];
   const tk = secs ? `|${tabs[0].selector.select.options.map(o => o.value).join()}` : '';
   if (!ids.length) return { key: tk, schema: [...EDITOR_SCHEMA, ...tabs] };
@@ -3198,7 +3466,7 @@ class EufyCameraCardEditor extends HTMLElement {
   // The chosen camera's layout sections (null until known), asked again when the device or its entity set changes
   _secs() {
     const h = this._hass, reg = (h && h.entities) || {};
-    const me = this._config && reg[this._config.entity];
+    const me = this._config && reg[camList(this._config)[0]];
     const dev = me && me.device_id;
     if (!dev || !h.callWS) return null;
     const key = `${dev}|${deviceKey(reg, dev)}`;
@@ -3213,13 +3481,16 @@ class EufyCameraCardEditor extends HTMLElement {
     return this._lay.secs;
   }
   _schema() {
-    const s = editorSchema(this._hass, this._config && this._config.entity, this._secs(), this._config);
+    const s = editorSchema(this._hass, this._config && camList(this._config)[0], this._secs(), this._config);
     if (s.key !== this._schemaKey || !this._form.schema) { this._schemaKey = s.key; this._form.schema = s.schema; }
   }
-  // auto_live: true is the YAML short form of 'timed'; no settings_groups shows every section in the layout's order
+  // auto_live: true is the YAML short form of 'timed'; no settings_groups shows every section in the layout's order;
+  // show_* default on, picture auto
   _data() {
     const d = { ...(this._config || {}) };
     if (d.auto_live === true) d.auto_live = 'timed';
+    ['header', 'history', 'settings'].forEach((k) => { if (d[`show_${k}`] === undefined) d[`show_${k}`] = true; });
+    if (!PICTURE_MODES.includes(d.picture)) d.picture = 'auto';
     const secs = this._lay && this._lay.secs;
     const v = d.settings_groups;
     if (secs) d.settings_groups = v === undefined || v === null ? shownTabs(null, secs) : [...new Set([].concat(v).map(String))];
@@ -3247,7 +3518,7 @@ class EufyCameraCardEditor extends HTMLElement {
             if (!list.length || list.join() === shownTabs(null, secs).join()) delete next[k]; else next[k] = list;
             return;
           }
-          if (v === '' || v === undefined || v === null || (Array.isArray(v) && !v.length) || (k === 'layout' && v === 'auto') || (k === 'auto_live' && v === 'off') || (k === 'live_seconds' && v === LIVE_S)) delete next[k]; else next[k] = v;
+          if (v === '' || v === undefined || v === null || (Array.isArray(v) && !v.length) || (k === 'layout' && v === 'auto') || (k === 'picture' && v === 'auto') || (/^show_/.test(k) && v === true) || (k === 'auto_live' && v === 'off') || (k === 'live_seconds' && v === LIVE_S)) delete next[k]; else next[k] = v;
         });
         this._config = next;
         this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: next }, bubbles: true, composed: true }));
@@ -3265,6 +3536,6 @@ if (!customElements.get('eufy-camera-card')) customElements.define('eufy-camera-
 window.customCards = window.customCards || [];
 if (!window.customCards.some(c => c.type === 'eufy-camera-card')) {
   window.customCards.push({ type: 'eufy-camera-card', name: 'eufy camera',
-    description: 'Still until started, timed or continuous live view, pan/tilt/zoom, presets and the camera\'s settings (staged)', preview: false });
+    description: 'Still until started, timed or continuous live view, pan/tilt/zoom, presets, history and the camera\'s settings (staged); one or several cameras', preview: false });
 }
 console.info(`%c eufy-camera-card %c ${CARD_VERSION} `, 'background:#273a60;color:#fff', 'background:#ddd;color:#000');

@@ -29,7 +29,7 @@ Assistant installs automatically. Library bugs that show without Home Assistant 
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/alaraun/homeassistant-eufy-home-security/main/docs/images/camera-card.png" alt="A eufy camera with live view and setting controls on a dashboard" width="600">
-  <br><sub>The camera card that comes with the integration: live view, pan/tilt, presets, history and settings.</sub>
+  <br><sub>The camera card that comes with the integration: one or several cameras, live view, pan/tilt, presets, history and settings.</sub>
 </p>
 
 ## Requirements

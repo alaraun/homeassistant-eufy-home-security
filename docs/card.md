@@ -1,8 +1,9 @@
 # eufy-camera-card
 
-One card per eufy camera (`eufy_home_security` integration). It shows the camera's still until live view is
-started, pan/tilt/zoom and presets on the picture for cameras that have them, a record button, its saved history
-and the recordings on its HomeBase, and the camera's settings.
+A card for one or several eufy cameras (`eufy_home_security` integration). It shows the camera's still until live
+view is started, pan/tilt/zoom and presets on the picture for cameras that have them, a record button, its saved
+history and the recordings on its HomeBase, and the camera's settings. With several cameras a list on the name
+switches between them.
 
 ## Install
 
@@ -31,7 +32,15 @@ Every option is also in the card editor.
 ```yaml
 type: custom:eufy-camera-card
 entity: camera.front_door        # the eufy camera entity
+entities:                        # optional: more cameras; the name opens a list to switch between them
+  - camera.backyard
 name: Front door                 # optional: the header name (default: the camera's name)
+picture: auto                    # optional: auto | landscape | portrait
+show_header: true                # optional: false hides the header (name, status, camera menu)
+show_history: true               # optional: false hides History
+show_settings: true              # optional: false hides Settings
+live_buttons:                    # optional: buttons on the live view bar (lock, cover, button, script, scene, switch)
+  - lock.front_door
 live_seconds: 120                # optional: length of a started live view (default 120 s)
 auto_live: timed                 # optional: start live view when the dashboard opens: timed | continuous (true = timed)
 history_folder: Front_door       # optional: the camera's history folder, when it differs from the device name
@@ -54,6 +63,25 @@ settings_groups:                 # optional: Settings tabs to show, in this orde
   colours. The controls drawn over the picture stay white on dark glass.
 - `<role>_entity` keys override an entity the card finds on the camera's device (`zoom_entity`,
   `battery_entity`, `panLeft_entity`, …).
+- `entities`: the cameras after `entity` (or all of them, without `entity`). With two or more, the name in the
+  header is a list of the cameras; the picture, live view, History and Settings follow the chosen one. Choosing
+  another camera ends a running live view and drops changes not yet Set; `auto_live` starts the chosen camera's
+  view. `name`, `history_folder` and the `<role>_entity` keys apply to the first camera only. The card starts at
+  the first camera when the page loads.
+- `show_header`, `show_history`, `show_settings`: with all three off the card is the picture alone, with the
+  play button, the live controls and the chips over it (for a popup or a wall display). Without the header its
+  menu (`Record a clip` while idle, `New still`, `Refresh event image`) is not offered; with several cameras the
+  camera list moves to a name chip on the picture; ✕ / Set for staged settings sit at the right end of the
+  History / Settings tabs. Without Settings the card does not ask the integration for the settings layout.
+- `picture`: `landscape` is the fixed 16:9 frame, filled edge to edge. `portrait` takes the camera's own shape
+  (3:4 until the card has seen a picture), shows the whole picture and is at most 80 % of the screen high, with
+  bars at the sides when the card is wider. `auto` (default) is portrait for a camera whose picture is taller
+  than wide (a doorbell), else landscape; the card reads the shape from the still and the live video and keeps it
+  in the browser, so the next visit starts in the right shape.
+- `live_buttons`: entities offered on the live view bar, after the view's own buttons, e.g. the door lock beside
+  a doorbell. A press asks `Press again to …`; a second press within 4 s calls: a lock `lock.open` when it can
+  open its latch, else `lock.unlock` / `lock.lock`; a cover `cover.open_cover` / `cover.close_cover`; a button
+  `button.press` (or `input_button.press`); a script or scene `turn_on`; a switch `turn_on` / `turn_off`.
 
 ## Battery rule
 
@@ -70,8 +98,9 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
 
 - **Header:** the camera button, the name and one status line (`Idle · Person 5 min ago`, `Live`, `Recording`,
   `Unavailable`, …). The button opens a menu: live view (timed or continuous), stop, `Record a clip`, `New still`
-  and `Refresh event image`.
-- **Picture:** a fixed 16:9 frame. Top left says what the still is (`Event · 2 h ago`, `Snapshot`, `No still yet`)
+  and `Refresh event image`. A doorbell reads `Ringing` (a bell on the button) for a minute after a press, then
+  `Ring 5 min ago` while the ring is its newest event.
+- **Picture:** a 16:9 frame, or the camera's portrait shape (see `picture`). Top left says what the still is (`Event · 2 h ago`, `Snapshot`, `No still yet`)
   or `● LIVE 1:42` while live; next to it the battery chip (charging and solar charging shown on its icon).
   - Idle: a play button (timed live view) and ∞ (continuous). A camera without live video shows
     `No live view for this model` instead, and its menu has no live view or `Record a clip`.
@@ -150,6 +179,7 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   (`eufy_home_security.record`), Stop recording (`eufy_home_security.stop_recording`), Save view and Replace (`eufy_home_security.save_preset`, then the picture over
   the websocket command `eufy_home_security/preset_image`) and the Station Play/Save. Pan/tilt steps run one at a time; up to 3 presses wait
   their turn.
+- **Live view buttons** (`live_buttons`): immediate on the second press.
 - **Staged:** settings, `New still` and `Refresh event image`. ✕ / Set appear in the header; Set sends one write
   at a time. A row reads `sending` until the entity reports the value, `Not applied` after 30 s or on a refused
   write (the integration's message shows on the picture), and `may still apply` when the device did not confirm
