@@ -5,6 +5,21 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.6](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.5...v0.4.6) (2026-10-23)
+
+
+### Features
+
+* video smart locks (T8530, T8531, T8532, T853A, T85M0, T85M1, T85M2, T85V0) get the camera, detection and still entities, as the eufy app shows them as cameras; not tested on a video smart lock ([9effc3f](https://github.com/alaraun/homeassistant-eufy-home-security/commit/9effc3fde921ad0564313a2c18a003dda40efab2))
+
+
+### Bug Fixes
+
+* live view over the local connection is decided per device as the eufy app decides it: a Video Doorbell C30 behind a HomeBase 3 opens on the firmware the app streams it locally; a camera the app reaches only over WebRTC (such as some standalone T8170 from firmware 3.4.0.0) shows "No live view for this model", and the T7000 and T8040 stations raise the station-needs-WebRTC repair (library 0.4.6) ([issue 108](https://github.com/alaraun/homeassistant-eufy-home-security/issues/108)) ([7735c91](https://github.com/alaraun/homeassistant-eufy-home-security/commit/7735c91c61d3928177b2bb156bc4036124a8b998))
+* setting and guard-mode changes on a camera that answers with a plain reply code (seen on a T8414) confirm instead of reporting "did not confirm"; not tested on a T8414 (library 0.4.6) ([issue 114](https://github.com/alaraun/homeassistant-eufy-home-security/issues/114)) ([7735c91](https://github.com/alaraun/homeassistant-eufy-home-security/commit/7735c91c61d3928177b2bb156bc4036124a8b998))
+* the devices of a home shared with Share Home are found, listed per home as in the eufy app; not yet tested on a Share Home account (library 0.4.6) ([issue 45](https://github.com/alaraun/homeassistant-eufy-home-security/issues/45)) ([7735c91](https://github.com/alaraun/homeassistant-eufy-home-security/commit/7735c91c61d3928177b2bb156bc4036124a8b998))
+* the eufyCam S3 Pro (T8162) and the T8144, T8452, T8453 get camera and detection entities, the T8215 and T8217 count as doorbells with a ring event, and the baby cameras T8352, T8354 and the T8790 count as cameras, as in the eufy app (library 0.4.6) ([issue 123](https://github.com/alaraun/homeassistant-eufy-home-security/issues/123)) ([7735c91](https://github.com/alaraun/homeassistant-eufy-home-security/commit/7735c91c61d3928177b2bb156bc4036124a8b998))
+
 ## [0.4.5](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.4...v0.4.5) (2026-10-22)
 
 
