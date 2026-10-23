@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.23-2';
+const CARD_VERSION = '2026.10.23-3';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -1411,7 +1411,8 @@ class EufyCameraCard extends HTMLElement {
   // Asks to replace preset `i` with the current view (a held press, the context-menu key, Shift+F10, right click)
   _askReplace(i) {
     clearTimeout(this._holdT);
-    if (this._psave || !this._live || !this._live.video || !this._preOpen) return;
+    // A camera that cannot store a preset has no Save current view button: nothing to replace with
+    if (this._psave || !this._live || !this._live.video || !this._preOpen || !this._entities().saveView) return;
     this._pconfirm = i;
     this._awake(true);
     this.render();
@@ -2415,7 +2416,7 @@ class EufyCameraCard extends HTMLElement {
               ${src ? `<img src="${escapeHtml(src)}" alt="" draggable="false">` : '<ha-icon icon="mdi:crosshairs-gps"></ha-icon>'}
               <span class="pn">P${i + 1}${i === defIdx ? ' <ha-icon icon="mdi:home-outline"></ha-icon>' : ''}</span>
             </button>`;
-    }).join('')}${saveTile()}</div>`);
+    }).join('')}${E.saveView ? saveTile() : ''}</div>`);
     const dis = !avail;
     // Pan/tilt and go-to only while the live picture shows: without it a move has no visible effect (the still
     // stays) and the camera turns back to its default preset once idle. Zoom stays: it is kept for the next view.

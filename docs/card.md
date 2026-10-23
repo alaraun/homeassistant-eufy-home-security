@@ -129,6 +129,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
       `Replace Pn`; confirming stores the current view over that preset, with its picture; ✕ or Esc keeps it.
     - While a save runs the pan/tilt pad and the other tiles wait; a camera with presets but none set shows the
       tile alone.
+    - `Save view` and `Replace` need the camera's **Save current view** button: a camera that cannot store a
+      preset (T8173), or one whose button is disabled, offers neither.
   - While the live picture plays, its controls, the battery chip and the time fade 4 s after the last touch or click
     (every width, full screen too) and a red dot at the top left stays; a tap or click on the picture brings them
     back, another hides them. Keyboard focus shows them too; a recording's `● REC` chip stays.
