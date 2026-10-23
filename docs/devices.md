@@ -55,8 +55,8 @@ model list (declared from eufy's own model data):
 
 | Kind | Entities |
 |---|---|
-| Camera, doorbell | camera with stills, detection sensors and event, **Capture live image** and **Refresh event image** buttons; a doorbell also its ring event. Live video where the library sends the live open the eufy app uses for that model on its station; pan/tilt, presets and zoom as [below](#pan-tilt-presets-and-zoom) (declared from the eufy app, not tested) |
-| HomeBase, keypad, lock, sensor, other | none of a camera |
+| Camera, doorbell, video smart lock (T8530, T8531, T8532, T853A, T85M0, T85M1, T85M2, T85V0: the eufy app shows them as cameras) | camera with stills, detection sensors and event, **Capture live image** and **Refresh event image** buttons; a doorbell also its ring event. Live video where the library sends the live open the eufy app uses for that model on its station; pan/tilt, presets and zoom as [below](#pan-tilt-presets-and-zoom) (declared from the eufy app, not tested) |
+| HomeBase, keypad, other lock, sensor, other | none of a camera |
 
 No live video yet: cameras behind a HomeBase 4, NVR or other recorder station, dual-lens
 cameras, cameras the eufy app streams only over WebRTC (decided per camera, station and firmware as the

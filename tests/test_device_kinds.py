@@ -1,8 +1,8 @@
 """Entities per device kind of the library's model list.
 
-Only a camera or a doorbell gets camera, image, detection, button, preset or
-pan/tilt entities. Every other paired device (keypad, lock, sensor, any other
-product) gets its device entry with the status diagnostics, its firmware entity and
+Only a camera, a doorbell or a video smart lock gets camera, image, detection, button,
+preset or pan/tilt entities. Every other paired device (keypad, other lock, sensor, any
+other product) gets its device entry with the status diagnostics, its firmware entity and
 the settings the library lists for its model. A model with the library's generic
 profile (every capability unknown) gets no live stream.
 """
@@ -29,7 +29,7 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
-from custom_components.eufy_home_security import runtime
+from custom_components.eufy_home_security import detections, runtime
 from custom_components.eufy_home_security.const import (
     BATTERY_KEY,
     CAMERA_KEY,
@@ -57,6 +57,8 @@ LOCK_SN: Final = "T8510P0000000001"
 OTHER_SN: Final = "T7401P0000000001"
 ENTRY_SENSOR_SN: Final = "T8900P0000000001"
 DOORBELL_SN: Final = "T8210P0000000001"
+# A video smart lock: kind LOCK, filed under the eufy app's cameras.
+VIDEO_LOCK_SN: Final = "T8530P0000000001"
 # A camera with the generic camera profile (eufyCam 2C).
 GENERIC_CAMERA_SN: Final = "T8113P0000000001"
 # A T8223 camera: a live open on its own, none behind a HomeBase 3 (WebRTC there).
@@ -178,6 +180,30 @@ async def test_a_doorbell_gets_the_camera_entities_and_the_ring_event(
     entities = _entities_of(hass, DOORBELL_SN)
     assert _CAMERA_ENTITIES | _STATUS_ENTITIES | {("event", DOORBELL_EVENT_KEY)} <= entities
     assert not {key for _, key in entities} & _PTZ_KEYS
+
+
+async def test_a_video_smart_lock_gets_the_camera_entities_and_stays_a_lock(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A lock the eufy app files under its cameras gets a camera's entities, no ring event.
+
+    Its kind stays the library's LOCK (the HomeBase card's per-mode actions read it).
+    """
+    model = model_for_serial(VIDEO_LOCK_SN)
+    assert model is not None and model.kind is DeviceKind.LOCK
+    assert detections.device_kind(VIDEO_LOCK_SN) is DeviceKind.LOCK
+    assert detections.entity_kind(VIDEO_LOCK_SN) is DeviceKind.CAMERA
+    assert detections.entity_kind(LOCK_SN) is DeviceKind.LOCK
+    _pair(fake_station, fake_cloud, VIDEO_LOCK_SN)
+    await set_up_warm(hass, seed_warm_cache)
+
+    entities = _entities_of(hass, VIDEO_LOCK_SN)
+    assert _CAMERA_ENTITIES | _STATUS_ENTITIES <= entities
+    assert ("event", DOORBELL_EVENT_KEY) not in entities
 
 
 def _camera_state(hass: HomeAssistant, serial: str) -> State:

@@ -60,6 +60,10 @@ DETECTION_ENTITY_KINDS: Final[frozenset[DeviceKind]] = frozenset(
     {DeviceKind.CAMERA, DeviceKind.DOORBELL}
 )
 
+# The eufy app's product category under which every model gets a camera card and live
+# view, whatever its kind (a video smart lock: kind LOCK).
+CAMERA_CATEGORY: Final = "Camera"
+
 # Each detection the event entity fires, and the event type it fires. The dog
 # detections fire ``pet``, so no detection that lights the pet sensor falls to the
 # fallback. Anything missing here (a doorbell press, crying, a sound) is not a
@@ -197,8 +201,25 @@ def device_kind(serial: str) -> DeviceKind | None:
     return model.kind if model is not None else None
 
 
+def entity_kind(serial: str) -> DeviceKind | None:
+    """The kind the platforms and the router treat the device ``serial`` as.
+
+    The library's kind, except that a model the eufy app files under its cameras
+    (``CAMERA_CATEGORY``) while its kind gets no detection entities (a video smart
+    lock) counts as a camera. :func:`device_kind` stays the library's kind.
+    """
+    kind = device_kind(serial)
+    if kind in DETECTION_ENTITY_KINDS:
+        return kind
+    model = model_for_serial(serial)
+    if model is not None and CAMERA_CATEGORY in model.categories:
+        return DeviceKind.CAMERA
+    return kind
+
+
 def paired_device_kinds(station: Station) -> dict[str, DeviceKind | None]:
-    """Every device of ``station`` that has a serial, in ``Station.devices`` order, by kind.
+    """Every device of ``station`` that has a serial, in ``Station.devices`` order, by
+    :func:`entity_kind`.
 
     ``Station.devices`` is the paired list, preceded, for a standalone station (a
     battery camera without a HomeBase), by the station's own device view, whose
@@ -207,7 +228,7 @@ def paired_device_kinds(station: Station) -> dict[str, DeviceKind | None]:
     to them. A device with no serial has no identity, so no entity and no route.
     """
     return {
-        device.device_sn: device_kind(device.device_sn)
+        device.device_sn: entity_kind(device.device_sn)
         for device in station.devices
         if device.device_sn
     }
