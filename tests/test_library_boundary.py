@@ -1123,6 +1123,7 @@ _PLATFORM_MODULES = frozenset(
         "number",
         "select",
         "sensor",
+        "siren",
         "switch",
         "text",
         "update",

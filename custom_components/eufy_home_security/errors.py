@@ -47,6 +47,7 @@ from eufy_home_security import (
     CloudInvite,
     CloudProblem,
     CommandError,
+    CommandNotAppliedError,
     ConnectionChanged,
     CredentialsRefreshed,
     EufySecurityError,
@@ -114,6 +115,10 @@ from .const import (
     EXC_SETTING_NOT_APPLIED,
     EXC_SETTING_UNCONFIRMED,
     EXC_SETTING_VALUE_INVALID,
+    EXC_SIREN_DURATION_INVALID,
+    EXC_SIREN_NOT_CONFIRMED,
+    EXC_SIREN_REJECTED,
+    EXC_SIREN_UNSUPPORTED,
     EXC_STATION_KEY_REJECTED,
     EXC_STATION_KEY_UNUSABLE,
     EXC_STATION_UNREACHABLE,
@@ -394,6 +399,67 @@ def setting_value_invalid(target: str) -> ServiceValidationError:
         translation_domain=DOMAIN,
         translation_key=EXC_SETTING_VALUE_INVALID,
         translation_placeholders={"target": target},
+    )
+
+
+def siren_failed(
+    err: EufySecurityError,
+    target: str,
+    *,
+    on_demand: bool = False,
+) -> HomeAssistantError:
+    """A siren start or stop the device did not confirm, refused, or could not receive.
+
+    The order of :func:`arm_failed`, with the siren's own keys where the device
+    answered:
+
+    - :func:`is_session_replaced_failure`: ``session_replaced_see_repairs``.
+    - ``CameraWakeError``: the station could not wake the camera.
+    - ``CommandNotAppliedError``: acknowledged, never confirmed; the siren may or may
+      not have changed.
+    - ``CommandError`` (any other, a -108 ``CommandUnsupportedError`` included): the
+      device answered with an error.
+    - ``UnsupportedError``: refused before sending (the alarm is not offered here, or the
+      device is not paired to this station).
+    - ``KeyRejectedError``, ``CipherUnusableError``, ``CloudError``: the station's key
+      repairs or the cloud, as for a setting write.
+    - Anything else (``DeviceTimeoutError``, ``CommunicationError``): the station did not
+      answer; with ``on_demand`` the camera may be asleep.
+
+    ``target`` is the only placeholder: the entity's name, never a serial or library text.
+    """
+    if is_session_replaced_failure(err):
+        key = EXC_SESSION_REPLACED_SEE_REPAIRS
+    elif isinstance(err, CameraWakeError):
+        key = EXC_ON_DEMAND_UNREACHABLE
+    elif isinstance(err, CommandNotAppliedError):
+        key = EXC_SIREN_NOT_CONFIRMED
+    elif isinstance(err, CommandError):
+        key = EXC_SIREN_REJECTED
+    elif isinstance(err, UnsupportedError):
+        key = EXC_SIREN_UNSUPPORTED
+    elif isinstance(err, KeyRejectedError):
+        key = EXC_STATION_KEY_REJECTED
+    elif isinstance(err, CipherUnusableError):
+        key = EXC_STATION_KEY_UNUSABLE
+    elif isinstance(err, CloudError):
+        key = EXC_CLOUD_UNAVAILABLE
+    else:
+        key = EXC_ON_DEMAND_UNREACHABLE if on_demand else EXC_STATION_UNREACHABLE
+    return HomeAssistantError(
+        translation_domain=DOMAIN,
+        translation_key=key,
+        translation_placeholders={"target": target},
+    )
+
+
+def siren_duration_invalid(longest: int) -> ServiceValidationError:
+    """A HomeBase siren duration above the longest the library sends (``longest`` s);
+    nothing sent. The placeholder is that length only."""
+    return ServiceValidationError(
+        translation_domain=DOMAIN,
+        translation_key=EXC_SIREN_DURATION_INVALID,
+        translation_placeholders={"max": str(longest)},
     )
 
 

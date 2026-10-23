@@ -310,6 +310,15 @@ EXC_RECORDING_NOT_RUNNING: Final = "recording_not_running"
 EXC_RECORDING_STOPPED_EMPTY: Final = "recording_stopped_empty"
 # A security mode the select shows but cannot set (a custom mode, geofencing).
 EXC_SECURITY_MODE_NOT_SETTABLE: Final = "security_mode_not_settable"
+# A siren command the device acknowledged but never confirmed.
+EXC_SIREN_NOT_CONFIRMED: Final = "siren_not_confirmed"
+# A siren command the device answered with an error (a -108 receipt included).
+EXC_SIREN_REJECTED: Final = "siren_rejected"
+# A siren command the library refused before sending: the alarm is not offered, or the
+# device is not paired to the station in eufy's latest device list.
+EXC_SIREN_UNSUPPORTED: Final = "siren_unsupported"
+# A HomeBase siren duration above the longest the library sends; nothing was sent.
+EXC_SIREN_DURATION_INVALID: Final = "siren_duration_invalid"
 
 # Repair issue translation keys (the top-level "issues" key of strings.json). Each
 # issue id is the key followed by the entry id, and for a station's issue the
@@ -392,6 +401,13 @@ TILT_UP_KEY: Final = "tilt_up"
 TILT_DOWN_KEY: Final = "tilt_down"
 # The "Save current view" button's translation and unique-id key.
 SAVE_VIEW_KEY: Final = "save_view"
+# The siren's translation and unique-id key: a camera's own siren, or the HomeBase's.
+SIREN_KEY: Final = "siren"
+# How long a camera siren sounds after a start (Station.async_trigger_device_alarm, as
+# the eufy app's alarm button).
+DEVICE_SIREN_SECONDS: Final = 30
+# The HomeBase siren's length when turn_on names no duration.
+STATION_SIREN_DEFAULT_SECONDS: Final = 30
 # How long a HomeBase session may be down before its entities show unavailable: the
 # library reconnects within about a second, so a drop that recovers within this is no
 # outage (library guide, Availability).

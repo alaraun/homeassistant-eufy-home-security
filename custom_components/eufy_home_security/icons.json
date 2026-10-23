@@ -112,6 +112,14 @@
       "recorded_events": {
         "default": "mdi:record-rec"
       }
+    },
+    "siren": {
+      "siren": {
+        "default": "mdi:alarm-light-outline",
+        "state": {
+          "on": "mdi:alarm-light"
+        }
+      }
     }
   },
   "services": {

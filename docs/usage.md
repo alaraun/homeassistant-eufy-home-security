@@ -31,6 +31,25 @@ reloads the integration.
 - Schedule and the Custom modes are shown, never set.
 - A mode changed in the eufy app shows within 45 s.
 
+## Sirens
+
+- **Siren** of a camera: where the eufy app offers the camera's model an alarm, a
+  standalone camera included. Its `available_tones` are the alarms the app offers that
+  model on its station: `sound`, `light`, `sound_and_light`. No `tone`: the app's
+  preselected alarm.
+  - It sounds for 30 s; no duration or volume.
+  - Its state is assumed (the library reports none): on once the camera confirms the
+    start, off 30 s later or after turning it off. Turning it off after it went quiet
+    shows off, with no error.
+  - Declared from the eufy app, not tested on hardware.
+- **Siren** of a HomeBase: the HomeBase's own siren, where the library sounds its model
+  (tested on a T8030).
+  - On while the HomeBase alarms, whoever started the alarm.
+  - `duration` is rounded up to a length the library sends (30 s); a longer one is
+    refused and nothing is sent.
+- A start the device refuses or does not confirm raises an error, and a camera siren
+  stays off. A refused stop raises an error too.
+
 ## Detections
 
 Each camera has a Motion, Person, Pet and Vehicle sensor and a **Detection** event
@@ -357,6 +376,8 @@ HomeBase (version strings by parameter id; the subsystems are unnamed) and
   - Some on/off settings share one device value with others (the HomeBase's
     notification switches). A toggle changes only its own part. It is refused, with
     nothing sent, while the device does not report that value.
+- The **Camera** switch turns a camera on or off; a camera turned off stops detecting
+  and recording.
 - A setting it can only read is a diagnostic sensor or binary sensor, disabled until
   you enable it. A setting it can neither read nor write has no entity.
 - **Per-mode actions and delays** (what each camera and sensor does in Home, Away and
