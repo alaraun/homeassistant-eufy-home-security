@@ -39,6 +39,7 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from PIL import Image
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.eufy_home_security import (
     detections,
@@ -1997,6 +1998,81 @@ async def test_a_preset_edit_the_model_lacks_gets_no_control(
     }
     assert present == {"save_view", "default_preset"} - {absent}
     assert registry.async_get_entity_id("button", DOMAIN, f"{SN}_refresh_presets") is not None
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize(
+    ("missing", "dropped"),
+    [
+        (PtzAction.STORE, ("button", "save_view")),
+        (PtzAction.SET_DEFAULT, ("select", "default_preset")),
+    ],
+)
+async def test_setup_forgets_the_row_of_a_preset_edit_the_model_lacks(
+    hass: HomeAssistant,
+    fake_cloud,
+    seed_warm_cache,
+    built_clients,
+    fake_station,
+    monkeypatch,
+    missing,
+    dropped,
+):
+    """A row an earlier release built for an edit the model lacks is removed; the other
+    edit's row stays."""
+    real = Station.ptz_action_support
+
+    def support(self, device_sn, action):
+        if action is missing:
+            return Evidence(Support.UNKNOWN, "graded unknown by the test")
+        return real(self, device_sn, action)
+
+    monkeypatch.setattr(Station, "ptz_action_support", support)
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    rows = {
+        (domain, key): registry.async_get_or_create(
+            domain, DOMAIN, f"{SN}_{key}", config_entry=entry
+        ).entity_id
+        for domain, key in (("button", "save_view"), ("select", "default_preset"))
+    }
+
+    assert await setup_entry(hass, entry)
+
+    kept = {pair for pair, entity_id in rows.items() if registry.async_get(entity_id) is not None}
+    assert kept == set(rows) - {dropped}
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_setup_keeps_a_preset_edit_row_another_entry_owns(
+    hass: HomeAssistant, fake_cloud, seed_warm_cache, built_clients, fake_station, monkeypatch
+):
+    """Only this entry's rows are forgotten, even for an edit the model lacks."""
+    real = Station.ptz_action_support
+
+    def support(self, device_sn, action):
+        if action is PtzAction.STORE:
+            return Evidence(Support.UNKNOWN, "graded unknown by the test")
+        return real(self, device_sn, action)
+
+    monkeypatch.setattr(Station, "ptz_action_support", support)
+    seed_warm_cache()
+    other = MockConfigEntry(domain=DOMAIN, unique_id="other@example.invalid")
+    other.add_to_hass(hass)
+    registry = er.async_get(hass)
+    foreign = registry.async_get_or_create(
+        "button", DOMAIN, f"{SN}_save_view", config_entry=other
+    ).entity_id
+    entry = add_entry(hass)
+
+    assert await setup_entry(hass, entry)
+
+    assert registry.async_get(foreign) is not None
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
