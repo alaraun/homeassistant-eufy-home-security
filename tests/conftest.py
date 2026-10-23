@@ -258,9 +258,21 @@ def fake_cloud(fake_station: FakeStation) -> FakeCloud:
     return FakeCloud.for_stations(fake_station)
 
 
+_HOUSE_LIST: Final = re.compile(r"houses|house:.+")
+
+
 def cloud_calls(cloud: FakeCloud) -> list[str]:
-    """``cloud.calls`` without the model scan (``things``) every first discovery makes."""
-    return [call for call in cloud.calls if call != "things"]
+    """``cloud.calls`` without the model scan (``things``) every first discovery makes.
+
+    One device-list fetch reads as its ``devices`` call: the house list and the per-house
+    lists the same fetch asks (``houses``, ``house:<id>``, with their ``@<region>``) are
+    left out.
+    """
+    return [
+        call
+        for call in cloud.calls
+        if call != "things" and not _HOUSE_LIST.fullmatch(call.split("@")[0])
+    ]
 
 
 def stamp_product_codes(cloud: FakeCloud) -> None:

@@ -278,7 +278,7 @@
     },
     "station_webrtc_only": {
       "title": "eufy station needs WebRTC for {account}",
-      "description": "The eufy account {account} lists a station the eufy app reaches only over its WebRTC connection (a HomeBase Professional or an NVR), which this integration does not support yet: {devices} (the station and the devices paired to it). They are left out; the account's other stations work as usual. This repair is checked again on every reload and on Refresh device list."
+      "description": "The eufy account {account} lists a station the eufy app reaches only over its WebRTC connection, which this integration does not support yet: {devices} (the station and the devices paired to it). They are left out; the account's other stations work as usual. This repair is checked again on every reload and on Refresh device list."
     },
     "station_p2p_id_unsupported": {
       "title": "eufy station not supported for {account}",

@@ -59,7 +59,9 @@ model list (declared from eufy's own model data):
 | HomeBase, keypad, lock, sensor, other | none of a camera |
 
 No live video yet: cameras behind a HomeBase 4, NVR or other recorder station, dual-lens
-cameras, cameras the eufy app streams only over WebRTC, and a camera the library opens
+cameras, cameras the eufy app streams only over WebRTC (decided per camera, station and firmware as the
+app does; e.g. some standalone T8170 from firmware 3.4.0.0, and a C30 behind a HomeBase 3 on the firmware the
+app streams it over WebRTC), and a camera the library opens
 only as a standalone camera (such as the T8410) when it is paired to a HomeBase. The card then shows `No live view for this model`.
 
 ### Pan, tilt, presets and zoom
