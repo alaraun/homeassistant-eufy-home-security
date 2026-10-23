@@ -5,6 +5,28 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.7](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.6...v0.4.7) (2026-10-23)
+
+
+### Features
+
+* 49 more models get their settings, as the eufy app lists them (library 0.4.7) ([cf46647](https://github.com/alaraun/homeassistant-eufy-home-security/commit/cf466477721aee0f55da47d731525705d4382849))
+* a camera's on/off switch where the eufy app offers it (library 0.4.7) ([issue 117](https://github.com/alaraun/homeassistant-eufy-home-security/issues/117)) ([cf46647](https://github.com/alaraun/homeassistant-eufy-home-security/commit/cf466477721aee0f55da47d731525705d4382849))
+* a siren per camera the eufy app offers an alarm for, on and off as the camera reports it, and the HomeBase's own siren ([issue 117](https://github.com/alaraun/homeassistant-eufy-home-security/issues/117)) ([cf46647](https://github.com/alaraun/homeassistant-eufy-home-security/commit/cf466477721aee0f55da47d731525705d4382849))
+
+
+### Bug Fixes
+
+* 84 enum settings on 56 models show their value after a restart (library 0.4.7) ([issue 114](https://github.com/alaraun/homeassistant-eufy-home-security/issues/114)) ([cf46647](https://github.com/alaraun/homeassistant-eufy-home-security/commit/cf466477721aee0f55da47d731525705d4382849))
+* a camera whose model cannot store a preset gets no Save current view button or card Save view tile, and one that cannot change its default preset refuses the change (library 0.4.7) ([cf46647](https://github.com/alaraun/homeassistant-eufy-home-security/commit/cf466477721aee0f55da47d731525705d4382849))
+* a standalone camera such as the T8414 is armed as the eufy app does and shows its mode after a restart (library 0.4.7) ([issue 114](https://github.com/alaraun/homeassistant-eufy-home-security/issues/114)) ([cf46647](https://github.com/alaraun/homeassistant-eufy-home-security/commit/cf466477721aee0f55da47d731525705d4382849))
+* a standalone video smart lock without a live stream is not woken for detection images ([130c0fa](https://github.com/alaraun/homeassistant-eufy-home-security/commit/130c0fae9efd0b26f6d1b16d8df5d489dba31452))
+* an arm or setting change a station refuses names that station and says why ([issue 114](https://github.com/alaraun/homeassistant-eufy-home-security/issues/114)) ([cf46647](https://github.com/alaraun/homeassistant-eufy-home-security/commit/cf466477721aee0f55da47d731525705d4382849))
+* **card:** a live view button's second press sends the action the first press named (a lock that locked itself in between was unlocked) ([130c0fa](https://github.com/alaraun/homeassistant-eufy-home-security/commit/130c0fae9efd0b26f6d1b16d8df5d489dba31452))
+* **card:** a lock that is jammed, moving or in an unknown state offers no action; a lock that can open its latch offers Lock while unlocked or open ([130c0fa](https://github.com/alaraun/homeassistant-eufy-home-security/commit/130c0fae9efd0b26f6d1b16d8df5d489dba31452))
+* **card:** after a camera switch, an answer for the previous camera acts on that camera only (a preset picture was stored for the camera now shown) ([130c0fa](https://github.com/alaraun/homeassistant-eufy-home-security/commit/130c0fae9efd0b26f6d1b16d8df5d489dba31452))
+* **card:** the header's camera list returns to the card after full screen ([130c0fa](https://github.com/alaraun/homeassistant-eufy-home-security/commit/130c0fae9efd0b26f6d1b16d8df5d489dba31452))
+
 ## [0.4.6](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.5...v0.4.6) (2026-10-23)
 
 
