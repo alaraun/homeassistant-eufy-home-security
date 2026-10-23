@@ -25,6 +25,7 @@ from eufy_home_security import (
     EufySecurityError,
     PanTilt,
     PresetSlotsFullError,
+    PtzActionUnsupportedError,
     UnsupportedError,
     redact_serial,
 )
@@ -180,6 +181,9 @@ async def async_save_preset(
         raise errors.capture_in_progress() from err
     except CommandUnsupportedError as err:
         raise _not_handled(f"Save to {target}", serial, err) from err
+    except PtzActionUnsupportedError as err:
+        _LOGGER.debug("Save to %s of %s refused: the model has no %s", target, serial, err.action)
+        raise errors.ptz_action_unsupported(err) from err
     except UnsupportedError as err:
         _LOGGER.debug("Save to %s of %s refused: %s", target, serial, type(err).__name__)
         if preset is None:
@@ -243,6 +247,9 @@ async def async_delete_preset(
         raise errors.capture_in_progress() from err
     except CommandUnsupportedError as err:
         raise _not_handled(f"Delete of preset {index}", serial, err) from err
+    except PtzActionUnsupportedError as err:
+        _LOGGER.debug("Delete of preset %d of %s refused: the model has no delete", index, serial)
+        raise errors.ptz_action_unsupported(err) from err
     except UnsupportedError as err:
         _LOGGER.debug("Delete of preset %d of %s refused: %s", index, serial, type(err).__name__)
         raise errors.preset_slot_unknown(index) from err

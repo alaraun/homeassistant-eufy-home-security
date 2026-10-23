@@ -35,6 +35,7 @@ from eufy_home_security import (
     DeviceAlarm,
     DeviceAlarmChanged,
     GuardMode,
+    PtzAction,
     PushMessageType,
     SecurityEvent,
     Station,
@@ -266,6 +267,15 @@ def has_zoom(station: Station, serial: str) -> bool:
     ``Station.ptz_support`` grades ``Capability.PTZ_ZOOM`` other than ``UNKNOWN``.
     """
     return _ptz_supported(station, serial, Capability.PTZ_ZOOM)
+
+
+def has_ptz_action(station: Station, serial: str, action: PtzAction) -> bool:
+    """Whether the camera ``serial`` on ``station`` gets the control for a preset edit.
+
+    ``Station.ptz_action_support`` grades ``action`` other than ``UNKNOWN``: the model
+    declares it and the library sends it behind this station.
+    """
+    return station.ptz_action_support(serial, action).support is not Support.UNKNOWN
 
 
 def _ptz_supported(station: Station, serial: str, capability: Capability) -> bool:

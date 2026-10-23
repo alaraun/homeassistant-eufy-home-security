@@ -4,7 +4,8 @@ An enum setting's options are its values shown by the library's labels; the pick
 label is mapped back to its value before the write. A reported value outside the
 setting's values shows no option.
 
-**Default preset** (one per camera with ``Capability.PTZ_PRESETS``): the slot the
+**Default preset** (one per camera whose model changes it behind its station,
+``PtzAction.SET_DEFAULT`` under ``Station.ptz_action_support``): the slot the
 camera returns to on its own when idle. Options are the enabled slot indexes and the
 value is ``Station.default_preset``, both from the cached slots (no wake); the
 entity re-reads them on the camera's presets signal. Picking one calls
@@ -46,6 +47,8 @@ from eufy_home_security import (
     DeviceBusyError,
     EufySecurityError,
     GuardMode,
+    PtzAction,
+    PtzActionUnsupportedError,
     StationConfig,
     StationState,
     UnsupportedError,
@@ -114,7 +117,7 @@ async def async_setup_entry(
         EufyDefaultPresetSelect(coordinator, device_sn)
         for coordinator in entry.runtime_data.coordinators.values()
         for device_sn in detections.paired_device_kinds(coordinator.station)
-        if detections.has_preset_entities(coordinator.station, device_sn)
+        if detections.has_ptz_action(coordinator.station, device_sn, PtzAction.SET_DEFAULT)
     )
     entities.extend(
         EufySecurityModeSelect(coordinator)
@@ -199,6 +202,11 @@ class EufyDefaultPresetSelect(EufyPushAvailability, EufyDeviceEntity, SelectEnti
             # Before UnsupportedError: a -108 receipt is both, and was sent.
             _LOGGER.debug("Default preset %d of %s not handled by the station", index, serial)
             raise errors.ptz_command_not_handled() from err
+        except PtzActionUnsupportedError as err:
+            _LOGGER.debug(
+                "Default preset %d of %s refused: the model has no default", index, serial
+            )
+            raise errors.ptz_action_unsupported(err) from err
         except UnsupportedError as err:
             _LOGGER.debug("Default preset %d of %s refused: slot not set", index, serial)
             raise errors.preset_not_set(index) from err

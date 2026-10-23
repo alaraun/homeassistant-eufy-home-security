@@ -380,6 +380,12 @@
     "preset_save_unsupported": {
       "message": "This camera cannot save a view as a preset, so nothing was sent."
     },
+    "preset_delete_unsupported": {
+      "message": "This camera cannot delete a preset, so nothing was sent."
+    },
+    "preset_default_unsupported": {
+      "message": "This camera cannot change its default preset, so nothing was sent."
+    },
     "preset_image_invalid": {
       "message": "The preset picture is not a JPEG image of at most {max_mb} MB, so it was not stored."
     },

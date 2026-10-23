@@ -56,6 +56,8 @@ from eufy_home_security import (
     LiveStreamLimitError,
     LoginChallengeError,
     LoginVerificationError,
+    PtzAction,
+    PtzActionUnsupportedError,
     RateLimitedError,
     RefreshCooldownError,
     RegionStatus,
@@ -93,6 +95,8 @@ from .const import (
     EXC_ON_DEMAND_UNREACHABLE,
     EXC_PAN_TILT_NOT_APPLIED,
     EXC_PAN_TILT_UNSUPPORTED,
+    EXC_PRESET_DEFAULT_UNSUPPORTED,
+    EXC_PRESET_DELETE_UNSUPPORTED,
     EXC_PRESET_IMAGE_INVALID,
     EXC_PRESET_NOT_DELETED,
     EXC_PRESET_NOT_SAVED,
@@ -870,9 +874,25 @@ def preset_slot_unknown(index: int) -> ServiceValidationError:
 
 
 def preset_save_unsupported() -> ServiceValidationError:
-    """A save to a free slot on a camera whose model cannot store a preset; nothing sent."""
+    """A save on a camera whose model cannot store a preset; nothing sent."""
     return ServiceValidationError(
         translation_domain=DOMAIN, translation_key=EXC_PRESET_SAVE_UNSUPPORTED
+    )
+
+
+_PTZ_ACTION_KEYS: Final[Mapping[str, str]] = {
+    PtzAction.STORE: EXC_PRESET_SAVE_UNSUPPORTED,
+    PtzAction.DELETE: EXC_PRESET_DELETE_UNSUPPORTED,
+    PtzAction.SET_DEFAULT: EXC_PRESET_DEFAULT_UNSUPPORTED,
+}
+
+
+def ptz_action_unsupported(err: PtzActionUnsupportedError) -> ServiceValidationError:
+    """A preset edit the camera's model lacks behind its station (``err.action``); nothing
+    sent. Any other action reads as a camera without presets."""
+    return ServiceValidationError(
+        translation_domain=DOMAIN,
+        translation_key=_PTZ_ACTION_KEYS.get(err.action, EXC_PRESETS_UNSUPPORTED),
     )
 
 
