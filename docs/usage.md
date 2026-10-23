@@ -40,11 +40,20 @@ reloads the integration.
   - It sounds for 30 s; no duration or volume.
   - Its state is assumed (the library reports none): on once the camera confirms the
     start, off 30 s later or after turning it off. Turning it off after it went quiet
-    shows off, with no error.
-  - Declared from the eufy app, not tested on hardware.
+    shows off, with no error. A siren sounded from the eufy app or by an alarm does not
+    show.
+  - Turning it off stops each alarm that may be sounding: the ones started and not yet
+    stopped, else the last one started; after a restart, every alarm the camera offers.
+  - Tested on a T8170 behind a HomeBase 3 (sound: start and stop confirmed); declared
+    from the eufy app for the other models.
 - **Siren** of a HomeBase: the HomeBase's own siren, where the library sounds its model
   (tested on a T8030).
-  - On while the HomeBase alarms, whoever started the alarm.
+  - On while the HomeBase alarms, whoever started the alarm. It is not read again after
+    a reconnect or a restart: an alarm that ends meanwhile can still show on, and one
+    sounding at a restart shows off until its next change.
+  - The HomeBase reports its siren as its alarm: while it sounds, the alarm panel shows
+    **Triggered** and the alarm event fires, so automations on a triggered alarm run. A
+    camera siren the station plays as its alarm tone does the same.
   - `duration` is rounded up to a length the library sends (30 s); a longer one is
     refused and nothing is sent.
 - A start the device refuses or does not confirm raises an error, and a camera siren

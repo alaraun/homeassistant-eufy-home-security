@@ -32,10 +32,12 @@ from eufy_home_security import (
     AlarmPhase,
     ArmingSource,
     DetectionType,
+    DeviceAlarm,
     GuardMode,
     PushMessageType,
     SecurityEvent,
     Station,
+    StationFeature,
 )
 from eufy_home_security.devices import (
     Capability,
@@ -275,6 +277,40 @@ def zoom_signal(entry_id: str, device_sn: str) -> SignalType[()]:
     The name is never logged or stored.
     """
     return SignalType(f"{DOMAIN}_zoom_{entry_id}_{device_sn}")
+
+
+def device_siren_alarms(station: Station) -> dict[str, tuple[DeviceAlarm, ...]]:
+    """Each device of ``station`` that gets a camera siren -> the alarms it offers.
+
+    Camera kinds only (:func:`has_detection_entities`) with at least one alarm. A
+    station's own serial only when it is standalone: the library sends a HomeBase's own
+    device alarm as its station siren, which is the HomeBase siren's.
+    """
+    offered: dict[str, tuple[DeviceAlarm, ...]] = {}
+    for serial, kind in paired_device_kinds(station).items():
+        if serial == station.serial and not station.is_standalone:
+            continue
+        if not has_detection_entities(kind):
+            continue
+        if alarms := station.device_alarms(serial):
+            offered[serial] = alarms
+    return offered
+
+
+def has_station_siren(station: Station) -> bool:
+    """Whether ``station`` gets the HomeBase siren: not standalone, and its model's
+    ``StationFeature.SOUND_ALARM`` graded other than unknown."""
+    if station.is_standalone:
+        return False
+    return station.config_support(StationFeature.SOUND_ALARM).support is not Support.UNKNOWN
+
+
+def siren_serials(station: Station) -> frozenset[str]:
+    """The serials of ``station`` (its own included) that get a siren entity."""
+    serials = set(device_siren_alarms(station))
+    if has_station_siren(station):
+        serials.add(station.serial)
+    return frozenset(serials)
 
 
 def has_live_stream(station: Station, serial: str) -> bool:

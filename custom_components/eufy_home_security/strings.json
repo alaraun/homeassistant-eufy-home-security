@@ -411,10 +411,10 @@
       "message": "Home Assistant cannot switch the HomeBase to {mode}, so nothing was sent. Choose another mode, or set this one in the eufy app."
     },
     "siren_not_confirmed": {
-      "message": "The device acknowledged the {target} request but did not confirm it, so the siren may or may not have changed. Check the device and try again."
+      "message": "The device acknowledged the request for {target} but did not confirm it, so it may or may not be sounding. Check the device and try again."
     },
     "siren_rejected": {
-      "message": "The device refused the {target} request, so the siren did not change. Check in the eufy app that the device is online, then try again."
+      "message": "The device refused the request for {target}, so it did not change. Check in the eufy app that the device is online, then try again."
     },
     "siren_unsupported": {
       "message": "Home Assistant cannot use {target}: the eufy app offers no such alarm for this device, or eufy's device list no longer pairs it to its station. Nothing was sent; after changing devices in the eufy app, use Refresh device list."
