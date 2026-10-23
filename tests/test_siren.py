@@ -34,6 +34,7 @@ from eufy_home_security import (
     CommandUnsupportedError,
     CommunicationError,
     DeviceAlarm,
+    DeviceAlarmChanged,
     DeviceTimeoutError,
     EufySecurity,
     EufySecurityError,
@@ -74,6 +75,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
@@ -482,6 +484,81 @@ async def test_an_alarm_the_report_does_not_name_is_stopped_with_every_offered_a
 
     assert _tone_requests(fake_station)[2:] == [(_SOUND_TYPE, 0), (_SOUND_AND_LIGHT_TYPE, 0)]
     assert state_of(hass, entity_id) == STATE_OFF
+
+    await _unload(hass, entry)
+
+
+async def test_an_alarm_still_on_after_a_stop_round_gets_every_offered_stop_next(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Another alarm started while one is on is not reported: a stop that leaves the
+    siren on is followed by one per offered alarm."""
+    monkeypatch.setattr(session_module, "TONE_CONFIRM_TIMEOUT", 0.3)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = _camera_siren(hass)
+    _siren_frame(fake_station, _SOUND_AND_LIGHT_TYPE, 30)
+    await wait_until(lambda: state_of(hass, entity_id) == STATE_ON)
+    # The app switches to sound: the library reports no second on.
+    _siren_frame(fake_station, _SOUND_TYPE, 30)
+
+    await _turn_off(hass, entity_id)
+    assert state_of(hass, entity_id) == STATE_ON
+    await _turn_off(hass, entity_id)
+
+    assert _tone_requests(fake_station) == [
+        (_SOUND_AND_LIGHT_TYPE, 0),
+        (_SOUND_AND_LIGHT_TYPE, 0),
+        (_SOUND_TYPE, 0),
+    ]
+
+    # Once the device reports off, a later named alarm gets its own stop only.
+    _siren_frame(fake_station, 0, 0)
+    await wait_until(lambda: state_of(hass, entity_id) == STATE_OFF)
+    _siren_frame(fake_station, _SOUND_AND_LIGHT_TYPE, 30)
+    await wait_until(lambda: state_of(hass, entity_id) == STATE_ON)
+    await _turn_off(hass, entity_id)
+    assert _tone_requests(fake_station)[3:] == [(_SOUND_AND_LIGHT_TYPE, 0)]
+
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("case", ["other_station", "not_consuming"])
+async def test_a_device_alarm_report_reaches_only_its_entry_while_it_consumes(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    case: str,
+) -> None:
+    """A report for a station this entry does not serve, or one after unload began,
+    reaches no siren."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    seen: list[DeviceAlarmChanged] = []
+    unsub = async_dispatcher_connect(
+        hass, detections.device_alarm_signal(entry.entry_id, SYNTHETIC.camera_sn), seen.append
+    )
+    router = entry.runtime_data.router
+    station_sn = "T8030P0000000099" if case == "other_station" else SYNTHETIC.station_sn
+    if case == "not_consuming":
+        router.async_stop_consuming()
+
+    router.handle(DeviceAlarmChanged(station_sn=station_sn, device_sn=SYNTHETIC.camera_sn, on=True))
+    await hass.async_block_till_done()
+
+    assert seen == []
+    # The control: the same report for this entry's station while it consumes arrives.
+    if case == "not_consuming":
+        router.async_start_consuming()
+    router.handle(
+        DeviceAlarmChanged(station_sn=SYNTHETIC.station_sn, device_sn=SYNTHETIC.camera_sn, on=True)
+    )
+    await hass.async_block_till_done()
+    assert len(seen) == 1
+    unsub()
 
     await _unload(hass, entry)
 

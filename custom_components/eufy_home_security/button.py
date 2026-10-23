@@ -19,8 +19,8 @@ a battery camera; setup never reads them) and one **Capture preset n** per slot 
 last read showed set (unavailable while unset). A press for another slot while a
 capture runs is a translated error, never a queue. With ``Capability.PTZ_CONTROL``:
 **Pan left/right**, **Tilt up/down** (one step per press; the camera returns to its
-default preset once idle) and, where the model stores presets behind its station
-(``PtzAction.STORE``), **Save current view** (stores the view in the lowest free
+default preset once idle). Where the model stores presets behind its station
+(``PtzAction.STORE``, which needs ``PTZ_CONTROL``): **Save current view** (stores the view in the lowest free
 slot; a full camera refuses it).
 
 **Refresh device list** sits on the account's service device and fetches eufy's
@@ -150,8 +150,7 @@ async def async_setup_entry(
         EufySaveViewButton(coordinator, device_sn, preset_manager)
         for coordinator in entry.runtime_data.coordinators.values()
         for device_sn in detections.paired_device_kinds(coordinator.station)
-        if detections.has_pan_tilt_control(coordinator.station, device_sn)
-        and detections.has_ptz_action(coordinator.station, device_sn, PtzAction.STORE)
+        if detections.has_ptz_action(coordinator.station, device_sn, PtzAction.STORE)
     )
     async_add_entities(entities)
     for coordinator in entry.runtime_data.coordinators.values():

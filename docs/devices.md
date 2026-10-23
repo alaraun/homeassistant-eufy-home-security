@@ -77,7 +77,8 @@ app, not tested, except the T8170 [above](#tested-models):
 | pan/tilt only | T8401, T8410, T8411, T8414 |
 | presets only | T8423 |
 
-A T8173 cannot save a view as a preset (its eufy app has none). The station matters
+A T8173 cannot save a view as a preset, and a T8419, T8423 or T8W11 cannot change its
+default preset (their eufy app handlers have no such action). The station matters
 too: behind a HomeBase 4 only the T8115 gets these entities, behind an NVR none.
 
 Every device also gets:

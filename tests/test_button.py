@@ -817,3 +817,32 @@ async def test_a_camera_without_pan_tilt_gets_no_zoom_and_refuses_the_ptz_action
         )
     assert exc.value.translation_key == "pan_tilt_unsupported"
     await _unload(hass, entry)
+
+
+async def test_setup_forgets_a_paired_cameras_save_view_row_and_keeps_an_unlisted_one(
+    hass: HomeAssistant,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A camera behind the HomeBase whose model cannot store a preset loses an earlier
+    release's Save current view row; a serial the station does not list keeps its row."""
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    paired = registry.async_get_or_create(
+        BUTTON_DOMAIN,
+        DOMAIN,
+        entity_unique_id(SYNTHETIC.camera_sn, "save_view"),
+        config_entry=entry,
+    )
+    unlisted = registry.async_get_or_create(
+        BUTTON_DOMAIN, DOMAIN, entity_unique_id("T8173P0000000009", "save_view"), config_entry=entry
+    )
+
+    assert await setup_entry(hass, entry)
+
+    assert registry.async_get(paired.entity_id) is None
+    assert registry.async_get(unlisted.entity_id) is not None
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

@@ -53,6 +53,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -141,6 +142,35 @@ async def test_a_number_write_the_station_rejects_raises_setting_rejected(
     assert placeholders["target"] == settings_of("T8160")[_RETRIGGER].name
     assert SYNTHETIC.camera_sn not in placeholders["target"]
     assert state_of(hass, entity_id) == "30"
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_a_refusal_names_the_station_as_the_user_renamed_it(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The station's name in an error is the one the user gave its device."""
+    seed_setting(fake_station, _RETRIGGER, 30)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = entity_id_for(hass, NUMBER_DOMAIN, SYNTHETIC.camera_sn, _RETRIGGER)
+    assert state_of(hass, entity_id) == "30"
+
+    devices = dr.async_get(hass)
+    device = devices.async_get_device_by_identifier((DOMAIN, SYNTHETIC.station_sn), entry.entry_id)
+    assert device is not None
+    devices.async_update_device(device.id, name_by_user="Hallway hub")
+    fake_station.account_id = "another-account"  # the ECB result code is then -104
+    with pytest.raises(HomeAssistantError) as raised:
+        await set_number(hass, entity_id, 45)
+    await hass.async_block_till_done()
+
+    assert raised.value.translation_key == "setting_rejected"
+    assert raised.value.translation_placeholders is not None
+    assert raised.value.translation_placeholders["station"] == "Hallway hub"
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

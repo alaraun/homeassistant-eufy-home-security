@@ -682,7 +682,7 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
             raise errors.arm_failed(
                 err,
                 target,
-                station_name=self.coordinator.station.name,
+                station_name=errors.station_display_name(self.coordinator),
                 on_demand=self.coordinator.station.connects_on_demand,
             ) from err
         finally:

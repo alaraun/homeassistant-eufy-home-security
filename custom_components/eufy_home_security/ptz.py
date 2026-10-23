@@ -86,7 +86,7 @@ async def async_pan_tilt(
         raise errors.setting_write_failed(
             err,
             _target(name, direction.name.lower()),
-            station_name=station.name,
+            station_name=errors.station_display_name(coordinator),
             on_demand=station.connects_on_demand,
         ) from err
     _LOGGER.debug("Pan/tilt %s of %s done", direction.name, serial)
@@ -119,7 +119,7 @@ async def async_goto_preset(
         raise errors.setting_write_failed(
             err,
             _target(name, "goto_preset"),
-            station_name=station.name,
+            station_name=errors.station_display_name(coordinator),
             on_demand=station.connects_on_demand,
         ) from err
     _LOGGER.debug("Go-to %d of %s sent%s", index, serial, " during a live view" if watching else "")
@@ -148,7 +148,7 @@ async def async_set_live_zoom(
         raise errors.setting_write_failed(
             err,
             _target(name, LIVE_ZOOM_KEY),
-            station_name=coordinator.station.name,
+            station_name=errors.station_display_name(coordinator),
             on_demand=coordinator.station.connects_on_demand,
         ) from err
     _LOGGER.debug(
@@ -220,7 +220,7 @@ async def async_save_preset(
         raise errors.setting_write_failed(
             err,
             _target(name, SERVICE_SAVE_PRESET),
-            station_name=station.name,
+            station_name=errors.station_display_name(coordinator),
             on_demand=station.connects_on_demand,
         ) from err
     manager.async_forget_image(device_sn, slot.index)
@@ -273,7 +273,7 @@ async def async_delete_preset(
         raise errors.setting_write_failed(
             err,
             _target(name, SERVICE_DELETE_PRESET),
-            station_name=station.name,
+            station_name=errors.station_display_name(coordinator),
             on_demand=station.connects_on_demand,
         ) from err
     manager.async_forget_image(device_sn, index)

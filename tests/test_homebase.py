@@ -241,11 +241,6 @@ async def test_the_layout_adds_the_integrations_preset_selects_to_pan_and_tilt(
     monkeypatch.setattr(
         detections, "has_preset_entities", lambda _station, serial: serial == SYNTHETIC.camera_sn
     )
-    monkeypatch.setattr(
-        detections,
-        "has_ptz_action",
-        lambda _station, serial, _action: serial == SYNTHETIC.camera_sn,
-    )
     entry = await set_up_warm(hass, seed_warm_cache)
     client = await hass_ws_client(hass)
 

@@ -114,8 +114,9 @@ class EufyCameraSiren(EufyPushAvailability, EufyDeviceEntity, _EufySiren):
 
     Each alarm has its own stop, so a stop names the alarms that may be sounding: the one
     the device reports and those started here (confirmed or not) and not yet stopped; for
-    an alarm the device reports without naming it (a detection's siren), every offered
-    alarm; with none of these, the last one started, else every offered alarm.
+    an alarm the device reports without naming it (a detection's siren), or one still on
+    after a stop round, every offered alarm; with none of these, the last one started,
+    else every offered alarm.
     """
 
     _attr_supported_features = (
@@ -135,6 +136,9 @@ class EufyCameraSiren(EufyPushAvailability, EufyDeviceEntity, _EufySiren):
         self._last: DeviceAlarm | None = None
         # The alarm the last on report named; None when off or unnamed.
         self._sounding: DeviceAlarm | None = None
+        # A stop round left the siren on: another alarm may sound unreported (the
+        # library reports one transition per on), so the next stop names every one.
+        self._widen = False
 
     @property
     @override
@@ -163,6 +167,7 @@ class EufyCameraSiren(EufyPushAvailability, EufyDeviceEntity, _EufySiren):
             self._sounding = event.alarm
         else:
             self._sounding = None
+            self._widen = False
             self._unstopped.clear()
         self.async_write_ha_state()
 
@@ -185,8 +190,6 @@ class EufyCameraSiren(EufyPushAvailability, EufyDeviceEntity, _EufySiren):
             await self.coordinator.station.async_trigger_device_alarm(self._serial, alarm)
         except EufySecurityError as err:
             raise self._failed(err) from err
-        # A report that changes nothing (a first off) emits no transition: show it here.
-        self.async_write_ha_state()
 
     @override
     async def async_turn_off(self, **kwargs: Any) -> None:
@@ -213,6 +216,8 @@ class EufyCameraSiren(EufyPushAvailability, EufyDeviceEntity, _EufySiren):
                 continue
             if alarm in self._unstopped:
                 self._unstopped.remove(alarm)
+        self._widen = bool(self.is_on)
+        # A first off report emits no transition (a device counts as off before it).
         self.async_write_ha_state()
         if failure is not None:
             raise self._failed(failure) from failure
@@ -221,11 +226,12 @@ class EufyCameraSiren(EufyPushAvailability, EufyDeviceEntity, _EufySiren):
         """The alarms a stop names, each once, in the order sent (see the class)."""
         on = self.is_on
         targets: list[DeviceAlarm] = []
-        if on and self._sounding is not None:
+        if self._sounding is not None:
             targets.append(self._sounding)
         targets.extend(self._unstopped)
-        if on and self._sounding is None:
-            # Reported on without a name (a detection's siren): any offered alarm may sound.
+        if on and (self._sounding is None or self._widen):
+            # On without a name (a detection's siren), or still on after a stop round:
+            # any offered alarm may sound.
             targets.extend(self._alarms)
         if not targets:
             targets = [self._last] if self._last is not None else list(self._alarms)

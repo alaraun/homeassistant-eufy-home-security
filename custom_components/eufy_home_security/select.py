@@ -4,13 +4,14 @@ An enum setting's options are its values shown by the library's labels; the pick
 label is mapped back to its value before the write. A reported value outside the
 setting's values shows no option.
 
-**Default preset** (one per camera whose model changes it behind its station,
-``PtzAction.SET_DEFAULT`` under ``Station.ptz_action_support``): the slot the
+**Default preset** (one per camera with ``Capability.PTZ_PRESETS``): the slot the
 camera returns to on its own when idle. Options are the enabled slot indexes and the
 value is ``Station.default_preset``, both from the cached slots (no wake); the
 entity re-reads them on the camera's presets signal. Picking one calls
 ``Station.async_set_default_preset``, which turns the camera there and confirms by
-read-back. A capture holding the camera refuses it before anything is sent.
+read-back. A capture holding the camera refuses it before anything is sent. A model
+that cannot change its default behind its station (``PtzAction.SET_DEFAULT`` unknown)
+keeps the select, which shows the default, and refuses a change before sending.
 
 **Live view preset** (one per pan/tilt camera with a live stream): the slot every
 live view opens at, or ``camera_default``. Home Assistant's own state, restored across
@@ -47,7 +48,6 @@ from eufy_home_security import (
     DeviceBusyError,
     EufySecurityError,
     GuardMode,
-    PtzAction,
     PtzActionUnsupportedError,
     StationConfig,
     StationState,
@@ -117,7 +117,7 @@ async def async_setup_entry(
         EufyDefaultPresetSelect(coordinator, device_sn)
         for coordinator in entry.runtime_data.coordinators.values()
         for device_sn in detections.paired_device_kinds(coordinator.station)
-        if detections.has_ptz_action(coordinator.station, device_sn, PtzAction.SET_DEFAULT)
+        if detections.has_preset_entities(coordinator.station, device_sn)
     )
     entities.extend(
         EufySecurityModeSelect(coordinator)
@@ -217,7 +217,7 @@ class EufyDefaultPresetSelect(EufyPushAvailability, EufyDeviceEntity, SelectEnti
             raise errors.setting_write_failed(
                 err,
                 self._write_target(),
-                station_name=station.name,
+                station_name=errors.station_display_name(self.coordinator),
                 on_demand=station.connects_on_demand,
             ) from err
         except EufySecurityError as err:
@@ -227,7 +227,7 @@ class EufyDefaultPresetSelect(EufyPushAvailability, EufyDeviceEntity, SelectEnti
             raise errors.setting_write_failed(
                 err,
                 self._write_target(),
-                station_name=station.name,
+                station_name=errors.station_display_name(self.coordinator),
                 on_demand=station.connects_on_demand,
             ) from err
         _LOGGER.debug("Default preset of %s is now %d (read back)", serial, index)
@@ -316,7 +316,7 @@ class EufyLivePresetSelect(EufyPushAvailability, EufyDeviceEntity, SelectEntity,
             raise errors.setting_write_failed(
                 err,
                 name if isinstance(name, str) else LIVE_PRESET_KEY,
-                station_name=station.name,
+                station_name=errors.station_display_name(self.coordinator),
                 on_demand=station.connects_on_demand,
             ) from err
         streams.async_choose_live_preset(self._serial, index)
@@ -402,7 +402,7 @@ class EufySecurityModeSelect(EufyStationEntity, SelectEntity):
             raise errors.arm_failed(
                 err,
                 target,
-                station_name=self.coordinator.station.name,
+                station_name=errors.station_display_name(self.coordinator),
                 on_demand=self.coordinator.station.connects_on_demand,
             ) from err
         self.coordinator.async_apply_guard_mode(applied)

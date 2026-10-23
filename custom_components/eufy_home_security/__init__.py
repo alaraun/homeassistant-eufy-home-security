@@ -60,7 +60,6 @@ from .const import (
     CONF_LIVE_SNAPSHOT,
     CONF_SCAN_REGIONS,
     DEFAULT_EVENT_HISTORY_DAYS,
-    DEFAULT_PRESET_KEY,
     DOMAIN,
     SAVE_VIEW_KEY,
     SIREN_KEY,
@@ -517,7 +516,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     _async_forget_per_mode_entities(hass, entry)
     _async_forget_battery_entities(hass, entry, coordinators.values())
     _async_forget_siren_entities(hass, entry, coordinators.values())
-    _async_forget_preset_edit_entities(hass, entry, coordinators.values())
+    _async_forget_save_view_entities(hass, entry, coordinators.values())
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     for serial, storage_coordinator in storage.items():
         if coordinators[serial].station.connected:
@@ -740,36 +739,29 @@ def _async_forget_siren_entities(
                 registry.async_remove(entity_id)
 
 
-def _async_forget_preset_edit_entities(
+def _async_forget_save_view_entities(
     hass: HomeAssistant, entry: EufyConfigEntry, coordinators: Iterable[StationCoordinator]
 ) -> None:
-    """Forget the Save current view and Default preset rows of a listed camera whose
-    model lacks that preset edit behind its station (``Station.ptz_action_support``).
+    """Forget the Save current view row of a listed camera whose model cannot store a
+    preset behind its station (``PtzAction.STORE`` under ``Station.ptz_action_support``).
 
-    The platforms build none for it; a row an earlier release built would stay as an
-    unavailable orphan. Only this entry's rows, only devices the station lists.
+    The button platform builds none for it; a row an earlier release built would stay as
+    an unavailable orphan. Only this entry's rows, only devices the station lists.
     """
     registry = er.async_get(hass)
     for coordinator in coordinators:
         station = coordinator.station
         for serial in {station.serial} | {d.device_sn for d in station.devices if d.device_sn}:
-            dropped: list[tuple[Platform, str]] = []
-            if not (
-                detections.has_pan_tilt_control(station, serial)
-                and detections.has_ptz_action(station, serial, PtzAction.STORE)
-            ):
-                dropped.append((Platform.BUTTON, SAVE_VIEW_KEY))
-            if not detections.has_ptz_action(station, serial, PtzAction.SET_DEFAULT):
-                dropped.append((Platform.SELECT, DEFAULT_PRESET_KEY))
-            for platform, key in dropped:
-                entity_id = registry.async_get_entity_id(
-                    platform, DOMAIN, entity_unique_id(serial, key)
-                )
-                if entity_id is None:
-                    continue
-                registered = registry.async_get(entity_id)
-                if registered is not None and registered.config_entry_id == entry.entry_id:
-                    registry.async_remove(entity_id)
+            if detections.has_ptz_action(station, serial, PtzAction.STORE):
+                continue
+            entity_id = registry.async_get_entity_id(
+                Platform.BUTTON, DOMAIN, entity_unique_id(serial, SAVE_VIEW_KEY)
+            )
+            if entity_id is None:
+                continue
+            registered = registry.async_get(entity_id)
+            if registered is not None and registered.config_entry_id == entry.entry_id:
+                registry.async_remove(entity_id)
 
 
 def _async_forget_parentless_setting_entities(

@@ -1965,25 +1965,15 @@ async def _save(hass: HomeAssistant, **data) -> dict:
     return dict(response[camera_id])  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize(
-    ("missing", "absent"),
-    [(PtzAction.STORE, "save_view"), (PtzAction.SET_DEFAULT, "default_preset")],
-)
-async def test_a_preset_edit_the_model_lacks_gets_no_control(
-    hass: HomeAssistant,
-    fake_cloud,
-    seed_warm_cache,
-    built_clients,
-    fake_station,
-    monkeypatch,
-    missing,
-    absent,
+async def test_a_model_that_cannot_store_gets_no_save_view_and_keeps_its_default_select(
+    hass: HomeAssistant, fake_cloud, seed_warm_cache, built_clients, fake_station, monkeypatch
 ):
-    """``ptz_action_support`` unknown for one edit: its control only is missing."""
+    """``STORE`` unknown: no Save current view; ``SET_DEFAULT`` unknown: the Default preset
+    select stays (it shows the default; a change is refused)."""
     real = Station.ptz_action_support
 
     def support(self, device_sn, action):
-        if action is missing:
+        if action in (PtzAction.STORE, PtzAction.SET_DEFAULT):
             return Evidence(Support.UNKNOWN, "graded unknown by the test")
         return real(self, device_sn, action)
 
@@ -1991,41 +1981,23 @@ async def test_a_preset_edit_the_model_lacks_gets_no_control(
     entry = await set_up_warm(hass, seed_warm_cache)
     registry = er.async_get(hass)
 
-    present = {
-        key
-        for domain, key in (("button", "save_view"), ("select", "default_preset"))
-        if registry.async_get_entity_id(domain, DOMAIN, f"{SN}_{key}") is not None
-    }
-    assert present == {"save_view", "default_preset"} - {absent}
+    assert registry.async_get_entity_id("button", DOMAIN, f"{SN}_save_view") is None
+    assert registry.async_get_entity_id("select", DOMAIN, f"{SN}_default_preset") is not None
     assert registry.async_get_entity_id("button", DOMAIN, f"{SN}_refresh_presets") is not None
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 
 
-@pytest.mark.parametrize(
-    ("missing", "dropped"),
-    [
-        (PtzAction.STORE, ("button", "save_view")),
-        (PtzAction.SET_DEFAULT, ("select", "default_preset")),
-    ],
-)
-async def test_setup_forgets_the_row_of_a_preset_edit_the_model_lacks(
-    hass: HomeAssistant,
-    fake_cloud,
-    seed_warm_cache,
-    built_clients,
-    fake_station,
-    monkeypatch,
-    missing,
-    dropped,
+async def test_setup_forgets_the_save_view_row_of_a_model_that_cannot_store(
+    hass: HomeAssistant, fake_cloud, seed_warm_cache, built_clients, fake_station, monkeypatch
 ):
-    """A row an earlier release built for an edit the model lacks is removed; the other
-    edit's row stays."""
+    """A Save current view row an earlier release built is removed; the Default preset
+    row stays, even where the model cannot change the default."""
     real = Station.ptz_action_support
 
     def support(self, device_sn, action):
-        if action is missing:
+        if action in (PtzAction.STORE, PtzAction.SET_DEFAULT):
             return Evidence(Support.UNKNOWN, "graded unknown by the test")
         return real(self, device_sn, action)
 
@@ -2033,17 +2005,15 @@ async def test_setup_forgets_the_row_of_a_preset_edit_the_model_lacks(
     seed_warm_cache()
     entry = add_entry(hass)
     registry = er.async_get(hass)
-    rows = {
-        (domain, key): registry.async_get_or_create(
-            domain, DOMAIN, f"{SN}_{key}", config_entry=entry
-        ).entity_id
-        for domain, key in (("button", "save_view"), ("select", "default_preset"))
-    }
+    save = registry.async_get_or_create("button", DOMAIN, f"{SN}_save_view", config_entry=entry)
+    default = registry.async_get_or_create(
+        "select", DOMAIN, f"{SN}_default_preset", config_entry=entry
+    )
 
     assert await setup_entry(hass, entry)
 
-    kept = {pair for pair, entity_id in rows.items() if registry.async_get(entity_id) is not None}
-    assert kept == set(rows) - {dropped}
+    assert registry.async_get(save.entity_id) is None
+    assert registry.async_get(default.entity_id) is not None
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

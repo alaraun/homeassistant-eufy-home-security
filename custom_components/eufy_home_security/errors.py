@@ -157,6 +157,8 @@ from .const import (
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
 
+    from .coordinator import StationCoordinator
+
 _LOGGER = logging.getLogger(__name__)
 
 # Per entry id: the timer that withdraws the login-limited issue when its wait is over.
@@ -1012,6 +1014,13 @@ def credentials_refreshed_issue_id(entry_id: str, device_id: str) -> str:
 def station_label(device: dr.BaseDeviceEntry) -> str:
     """How repair text names a station: the name the user gave it, else its own name."""
     return device.name_by_user or device.name or ""
+
+
+def station_display_name(coordinator: StationCoordinator) -> str:
+    """How an error names the coordinator's station: as :func:`station_label` names its
+    registered device, else by the station's eufy name."""
+    device = _station_device(coordinator.hass, coordinator.config_entry, coordinator.station.serial)
+    return station_label(device) if device is not None else coordinator.station.name
 
 
 def _station_device(
