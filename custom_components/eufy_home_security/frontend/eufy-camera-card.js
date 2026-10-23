@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.23-1';
+const CARD_VERSION = '2026.10.23-2';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -73,7 +73,7 @@ const LACT_DOMAINS = ['lock', 'cover', 'button', 'input_button', 'script', 'scen
 // lock.open when the lock can open its latch (LockEntityFeature.OPEN)
 const LOCK_OPEN = 1;
 // Lock states with no action to offer: moving, or stuck
-const LOCK_BUSY = ['jammed', 'locking', 'unlocking', 'opening'];
+const LOCK_BUSY = ['jammed', 'locking', 'unlocking', 'opening', 'unknown'];
 const IMG_CACHE = 40;
 // Still request sizes (16:9): HA scales a camera JPEG to the smallest libjpeg factor at least this large
 const STILL_WIDTHS = [640, 960, 1280, 1920];
@@ -272,7 +272,7 @@ const camList = (c) => [...new Set([c && c.entity, ...[].concat((c && c.entities
 const liveAction = (st) => {
   const dom = st.entity_id.split('.')[0];
   if (dom === 'lock') {
-    if (LOCK_BUSY.includes(st.state)) return { domain: 'lock', service: null, verb: human(st.state), icon: st.state === 'jammed' ? 'mdi:lock-alert-outline' : 'mdi:lock-clock' };
+    if (LOCK_BUSY.includes(st.state)) return { domain: 'lock', service: null, verb: human(st.state), icon: { jammed: 'mdi:lock-alert-outline', unknown: 'mdi:lock-question' }[st.state] || 'mdi:lock-clock' };
     if (st.state === 'unlocked' || st.state === 'open') return { domain: 'lock', service: 'lock', verb: 'Lock', icon: 'mdi:lock-outline' };
     if (((st.attributes.supported_features || 0) & LOCK_OPEN) === LOCK_OPEN) return { domain: 'lock', service: 'open', verb: 'Open', icon: 'mdi:door-open' };
     return { domain: 'lock', service: 'unlock', verb: 'Unlock', icon: 'mdi:lock-open-variant-outline' };
@@ -359,7 +359,9 @@ class EufyCameraCard extends HTMLElement {
   // The shown camera and a test that it is still shown: an async action's answer updates the card only then
   _camRef() {
     const gen = this._gen;
-    return { id: this._config.entity, here: () => this._gen === gen };
+    const id = this._config.entity;
+    // here: no camera chosen since (state effects); shown: the camera is on screen (its toasts)
+    return { id, here: () => this._gen === gen, shown: () => this._config.entity === id };
   }
 
   // Shows camera `id`: its live view, staged changes, history and settings state start fresh (a running view
@@ -929,7 +931,7 @@ class EufyCameraCard extends HTMLElement {
       if (!cam.here()) return;
       if (this._open === 'history') this._loadHistory();
       if (play) this._showRecording(it);
-    }).catch((e) => { if (cam.here()) this._toast((e && e.message) || 'Not fetched from the station'); })
+    }).catch((e) => { if (cam.shown()) this._toast((e && e.message) || 'Not fetched from the station'); })
       .finally(() => { if (!cam.here()) return; this._sfetch.delete(rid); this.render(); });
   }
 
@@ -984,14 +986,14 @@ class EufyCameraCard extends HTMLElement {
     const cam = this._camRef();
     Promise.resolve(h.callService(DOMAIN, 'record', { entity_id: cam.id }, undefined, false, true))
       .then((r) => {
-        if (!cam.here()) return;
         // An entity action answers per entity: { <entity_id>: { complete, ... } }
         const res = r && r.response;
         const body = res && (res[cam.id] || res);
-        if (body && body.complete === false) this._toast('The clip ended early; the part recorded was saved');
+        if (body && body.complete === false && cam.shown()) this._toast('The clip ended early; the part recorded was saved');
+        if (!cam.here()) return;
         if (this._open === 'history') this._loadHistory();
       })
-      .catch((e) => { if (cam.here()) this._toast((e && e.message) || 'Not recorded'); })
+      .catch((e) => { if (cam.shown()) this._toast((e && e.message) || 'Not recorded'); })
       .finally(() => { if (this._rec === R) this._rec = null; if (cam.here()) this.render(); });
   }
 
@@ -1004,7 +1006,12 @@ class EufyCameraCard extends HTMLElement {
     this.render();
     const cam = this._camRef();
     Promise.resolve(h.callService(DOMAIN, 'stop_recording', { entity_id: cam.id }))
-      .catch((e) => { if (!cam.here()) return; this._recStop = false; this._toast((e && e.message) || 'Not stopped'); this.render(); });
+      .catch((e) => {
+        if (cam.shown()) this._toast((e && e.message) || 'Not stopped');
+        if (!cam.here()) return;
+        this._recStop = false;
+        this.render();
+      });
   }
 
   _recTick() {
@@ -1089,7 +1096,7 @@ class EufyCameraCard extends HTMLElement {
     } catch (e) { return false; }
   }
 
-  // The camera's frontend stream types (camera/capabilities), once per card
+  // The camera's frontend stream types (camera/capabilities), once per camera
   _streamTypes() {
     if (!this._types) {
       const p = this._hass.callWS({ type: 'camera/capabilities', entity_id: this._config.entity })
@@ -1276,7 +1283,7 @@ class EufyCameraCard extends HTMLElement {
     const cam = this._camRef();
     Promise.resolve(this._hass.callService(DOMAIN, m.service, { entity_id: cam.id, ...m.data }))
       .then(() => { if (!cam.here()) return; this._moves.shift(); if (m.service === 'goto_preset') this._atPreset = m.data.preset; })
-      .catch((e) => { if (!cam.here()) return; this._moves = []; this._toast((e && e.message) || 'Not applied'); })
+      .catch((e) => { if (cam.shown()) this._toast((e && e.message) || 'Not applied'); if (cam.here()) this._moves = []; })
       .finally(() => {
         if (!cam.here()) return;
         if (this._moves.length && this.isConnected) this._runMove(); else { this._moves = []; this.render(); }
@@ -1308,7 +1315,7 @@ class EufyCameraCard extends HTMLElement {
     this._busy[key] = true;
     this.render();
     const cam = this._camRef();
-    Promise.resolve(p).catch((e) => { if (cam.here()) this._toast((e && e.message) || 'Not applied'); })
+    Promise.resolve(p).catch((e) => { if (cam.shown()) this._toast((e && e.message) || 'Not applied'); })
       .finally(() => { if (!cam.here()) return; delete this._busy[key]; this._zoomTarget = undefined; this.render(); });
   }
 
@@ -1373,9 +1380,9 @@ class EufyCameraCard extends HTMLElement {
     this._pconfirm = null;
     this.render();
     // The save and its picture go to the camera pressed on, even when another one is chosen meanwhile; only the
-    // toasts and the tile state need it still shown
+    // toasts need it on screen, the tile state no other camera chosen since
     const cam = this._camRef();
-    const toast = (...a) => { if (cam.here()) this._toast(...a); };
+    const toast = (...a) => { if (cam.shown()) this._toast(...a); };
     const data = { entity_id: cam.id, ...(slot === null ? {} : { preset: slot }) };
     Promise.resolve(h.callService(DOMAIN, 'save_preset', data, undefined, false, true))
       .then((r) => {
@@ -1390,10 +1397,10 @@ class EufyCameraCard extends HTMLElement {
           .catch(e => toast(`Saved as preset P${n + 1}; picture not stored: ${(e && e.message) || 'failed'}`));
       })
       .catch((e) => {
+        toast((e && e.message) || 'Not saved');
         if (!cam.here()) return;
         // The integration knows the camera is full where the card does not (slots it never listed): say so on the tile
         if (e && e.translation_key === 'presets_full') this._pfull = this._presetIdx(this._entities()).length;
-        this._toast((e && e.message) || 'Not saved');
       })
       .finally(() => {
         if (this._psave === P) this._psave = null;
@@ -1964,12 +1971,12 @@ class EufyCameraCard extends HTMLElement {
         if (!up) return Promise.reject(new Error(`${it.label || it.key}: not available`));
         return this._hass.callService(...it.call);
       }).catch((e) => {
+        if (e && e.message && cam.shown()) this._toast(e.message);
         if (!cam.here()) return;
         const p = this._pending[it.key];
         // A write that timed out may still apply: the row says so instead of "Not applied"
         if (p && e && e.translation_key === 'setting_unconfirmed') { p.unsure = true; p.at = Date.now() - PENDING_MS - 1; }
         else if (p) p.at = Date.now() - PENDING_MS - 1;
-        if (e && e.message) this._toast(e.message);
         this.render();
       }).finally(() => run(i + 1));
     };

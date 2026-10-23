@@ -7,12 +7,13 @@ import json
 import logging
 from collections.abc import AsyncIterator, Callable
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import Any, Final
 
 import pytest
 from conftest import entity_id_for, now_ms, record_states, set_up_warm, wait_until
 from eufy_home_security import DetectionType, ImageSource, SecurityEvent, Station
-from eufy_home_security.devices import DeviceKind, model_for_serial
+from eufy_home_security.devices import DeviceKind, Support, model_for_serial
 from eufy_home_security.p2p.messages import STANDALONE_RECEIPT_LEN
 from eufy_home_security.push.decode import decode_push
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
@@ -130,7 +131,13 @@ async def _past_thumbnail_delay(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
 
 
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"record_id": 7}, {"thumb_path": "/media/mmcblk0p1/thumb/a.jpg"}],
+    ids=["no_picture", "record_id", "thumb_path"],
+)
 async def test_a_standalone_video_lock_without_live_stream_is_never_woken_for_images(
+    extra: dict[str, Any],
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
     seed_warm_cache: Callable[..., None],
@@ -139,7 +146,8 @@ async def test_a_standalone_video_lock_without_live_stream_is_never_woken_for_im
     fake_cloud: FakeCloud,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Its person detection reaches its entities; no live keyframe, no delayed thumbnail."""
+    """Its person detection reaches its entities; no live keyframe, no delayed thumbnail,
+    no event image, whatever picture the push names."""
     model = model_for_serial(NO_LIVE_SN)
     assert model is not None and model.kind is DeviceKind.LOCK
     caplog.set_level(logging.DEBUG, logger="custom_components.eufy_home_security")
@@ -153,7 +161,7 @@ async def test_a_standalone_video_lock_without_live_stream_is_never_woken_for_im
     )
     calls = _count_image_calls(monkeypatch)
 
-    _deliver(entry, _person_push(NO_LIVE_SN, now_ms()))
+    _deliver(entry, {**_person_push(NO_LIVE_SN, now_ms()), **extra})
     await hass.async_block_till_done()
     await _past_thumbnail_delay(hass)
 
@@ -198,3 +206,28 @@ def test_a_camera_kind_may_always_be_woken() -> None:
             raise AssertionError("not asked for a camera kind")
 
     assert detections.standalone_wake_allowed(NoLive(), "T8170P0000000001")  # type: ignore[arg-type]
+
+
+def test_standalone_image_wanted_refuses_a_device_it_may_not_wake() -> None:
+    """The decision itself refuses a video lock without a live stream, as the router does."""
+
+    class Standalone:
+        is_standalone = True
+
+        def live_support(self, serial: str) -> Any:
+            return SimpleNamespace(support=Support.UNKNOWN)
+
+    event = decode_push(
+        {
+            "station_sn": NO_LIVE_SN,
+            "device_sn": NO_LIVE_SN,
+            "event_time": "1700000000",
+            "span_id": "span-b",
+            "payload": base64.b64encode(
+                json.dumps(_person_push(NO_LIVE_SN, 1_700_000_000_000)).encode()
+            ).decode(),
+        }
+    )
+    kind = detections.entity_kind(NO_LIVE_SN)
+    assert detections.has_detection_entities(kind)
+    assert not detections.standalone_image_wanted(Standalone(), kind, event)  # type: ignore[arg-type]
