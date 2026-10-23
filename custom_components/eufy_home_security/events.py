@@ -68,6 +68,8 @@ shows or what the user must be told:
   inside the consuming window. The library has already authenticated and ordered
   it, so it needs no check here. Outside the window it is dropped: it is not a push,
   so it has no fallback bus event.
+- ``DeviceAlarmChanged`` goes to that device's siren on its device alarm signal, inside
+  the consuming window, as ``AlarmChanged``.
 - ``PresetsChanged`` goes to the preset manager (``PresetManager.async_apply_presets``),
   which tells the preset platforms only inside the consuming window: they add the
   entities of a slot that appeared and mark a removed one unavailable, never
@@ -105,6 +107,7 @@ from eufy_home_security import (
     CloudProblem,
     ConnectionChanged,
     CredentialsRefreshed,
+    DeviceAlarmChanged,
     DevicesChanged,
     DisconnectCause,
     Event,
@@ -347,6 +350,13 @@ class EventRouter:
                 async_dispatcher_send(
                     self._hass,
                     detections.alarm_signal(self._entry.entry_id, event.station_sn),
+                    event,
+                )
+        elif isinstance(event, DeviceAlarmChanged):
+            if self._consuming and event.station_sn in self._coordinators:
+                async_dispatcher_send(
+                    self._hass,
+                    detections.device_alarm_signal(self._entry.entry_id, event.device_sn),
                     event,
                 )
         elif isinstance(event, AccountMismatch):

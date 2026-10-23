@@ -33,6 +33,7 @@ from eufy_home_security import (
     ArmingSource,
     DetectionType,
     DeviceAlarm,
+    DeviceAlarmChanged,
     GuardMode,
     PushMessageType,
     SecurityEvent,
@@ -540,6 +541,14 @@ def station_signal(entry_id: str, station_sn: str) -> SignalType[SecurityEvent]:
     The name is never logged or stored.
     """
     return SignalType(f"{DOMAIN}_station_event_{entry_id}_{station_sn}")
+
+
+def device_alarm_signal(entry_id: str, device_sn: str) -> SignalType[DeviceAlarmChanged]:
+    """The dispatcher signal of one device's own alarm transitions in one entry.
+
+    The name is never logged or stored.
+    """
+    return SignalType(f"{DOMAIN}_device_alarm_changed_{entry_id}_{device_sn}")
 
 
 def alarm_signal(entry_id: str, station_sn: str) -> SignalType[AlarmChanged]:

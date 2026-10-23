@@ -403,9 +403,6 @@ TILT_DOWN_KEY: Final = "tilt_down"
 SAVE_VIEW_KEY: Final = "save_view"
 # The siren's translation and unique-id key: a camera's own siren, or the HomeBase's.
 SIREN_KEY: Final = "siren"
-# How long a camera siren sounds after a start (Station.async_trigger_device_alarm, as
-# the eufy app's alarm button).
-DEVICE_SIREN_SECONDS: Final = 30
 # The HomeBase siren's length when turn_on names no duration.
 STATION_SIREN_DEFAULT_SECONDS: Final = 30
 # How long a HomeBase session may be down before its entities show unavailable: the

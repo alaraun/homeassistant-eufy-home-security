@@ -3,9 +3,10 @@
 **Camera siren.** One per camera whose model the eufy app offers an alarm
 (``Station.device_alarms``), a standalone camera's own serial included. ``tone`` picks
 the alarm (``sound``, ``light``, ``sound_and_light``, as offered); without one the app's
-preselected alarm sounds. A start sounds for 30 s. The library reports no state for it,
-so the entity assumes on once the start is confirmed, and off 30 s later or after a stop.
-A stop the device does not confirm (the alarm already over) reads as off.
+preselected alarm sounds, for 30 s. On while the library reports the device's alarm on
+(``Station.device_alarm_on``, followed on the device's alarm signal), whoever started it;
+unknown before the first report. A stop the device does not confirm (the alarm already
+over) is no failure.
 
 **HomeBase siren.** One per station whose model the library sounds
 (``StationFeature.SOUND_ALARM`` not unknown), never on a standalone camera, whose siren
@@ -28,11 +29,10 @@ from homeassistant.components.siren import (
     SirenEntity,
     SirenEntityFeature,
 )
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.event import async_call_later
 
 from eufy_home_security import (
     SOUND_ALARM_SECONDS,
@@ -40,11 +40,12 @@ from eufy_home_security import (
     CommandError,
     CommandNotAppliedError,
     DeviceAlarm,
+    DeviceAlarmChanged,
     EufySecurityError,
 )
 
 from . import detections, errors
-from .const import DEVICE_SIREN_SECONDS, SIREN_KEY, STATION_SIREN_DEFAULT_SECONDS
+from .const import SIREN_KEY, STATION_SIREN_DEFAULT_SECONDS
 from .coordinator import StationCoordinator
 from .entity import EufyDeviceEntity, EufyPushAvailability, EufyStationEntity
 
@@ -109,14 +110,14 @@ class _EufySiren(SirenEntity):
 
 
 class EufyCameraSiren(EufyPushAvailability, EufyDeviceEntity, _EufySiren):
-    """A camera's own siren and light; its state is assumed (the library reports none).
+    """A camera's own siren and light: on while the library reports it on.
 
-    Each alarm has its own stop, so a stop names the alarms that may be sounding: those
-    started (confirmed or not) and not yet stopped, else the last one started, else, with
-    none started since setup, every alarm the camera offers.
+    Each alarm has its own stop, so a stop names the alarms that may be sounding: the one
+    the device reports and those started here (confirmed or not) and not yet stopped; for
+    an alarm the device reports without naming it (a detection's siren), every offered
+    alarm; with none of these, the last one started, else every offered alarm.
     """
 
-    _attr_assumed_state = True
     _attr_supported_features = (
         SirenEntityFeature.TURN_ON | SirenEntityFeature.TURN_OFF | SirenEntityFeature.TONES
     )
@@ -128,25 +129,46 @@ class EufyCameraSiren(EufyPushAvailability, EufyDeviceEntity, _EufySiren):
         self._serial = device_sn
         self._alarms = alarms
         self._attr_available_tones = [alarm.name.lower() for alarm in alarms]
-        self._attr_is_on = False
-        # Alarms started and not yet stopped, oldest first.
+        # Alarms started and not yet stopped, oldest first; cleared by an off report.
         self._unstopped: list[DeviceAlarm] = []
         # The alarm last started; None before any start since setup.
         self._last: DeviceAlarm | None = None
-        self._removed = False
-        # Bumped by every stop: a start confirmed after a later stop shows nothing.
-        self._stops = 0
-        self._cancel_off: CALLBACK_TYPE | None = None
+        # The alarm the last on report named; None when off or unnamed.
+        self._sounding: DeviceAlarm | None = None
+
+    @property
+    @override
+    def is_on(self) -> bool | None:
+        """``Station.device_alarm_on``; None (unknown) before the first report."""
+        return self.coordinator.station.device_alarm_on(self._serial)
 
     @override
     async def async_added_to_hass(self) -> None:
-        """Cancel the 30 s off when the entity is removed."""
+        """Follow the device's alarm signal until the entity is removed."""
         await super().async_added_to_hass()
-        self.async_on_remove(self._async_removed)
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                detections.device_alarm_signal(
+                    self.coordinator.config_entry.entry_id, self._serial
+                ),
+                self._async_on_alarm_changed,
+            )
+        )
+
+    @callback
+    def _async_on_alarm_changed(self, event: DeviceAlarmChanged) -> None:
+        """Show the transition (``device_alarm_on`` already holds it) and note the alarm."""
+        if event.on:
+            self._sounding = event.alarm
+        else:
+            self._sounding = None
+            self._unstopped.clear()
+        self.async_write_ha_state()
 
     @override
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Sound ``tone`` (else the app's default); on for 30 s once confirmed."""
+        """Sound ``tone`` (else the app's default); the state follows the device's report."""
         tone = kwargs.get(ATTR_TONE)
         alarm = (
             DeviceAlarm[str(tone).upper()]
@@ -159,41 +181,30 @@ class EufyCameraSiren(EufyPushAvailability, EufyDeviceEntity, _EufySiren):
                 self._unstopped.remove(alarm)
             self._unstopped.append(alarm)
             self._last = alarm
-        stops = self._stops
         try:
             await self.coordinator.station.async_trigger_device_alarm(self._serial, alarm)
         except EufySecurityError as err:
             raise self._failed(err) from err
-        if self._removed or self._stops != stops:
-            return
-        self._async_cancel_off()
-        self._cancel_off = async_call_later(self.hass, DEVICE_SIREN_SECONDS, self._async_sounded)
-        self._attr_is_on = True
+        # A report that changes nothing (a first off) emits no transition: show it here.
         self.async_write_ha_state()
 
     @override
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Stop each alarm that may be sounding; an unconfirmed stop reads as off.
+        """Stop each alarm that may be sounding; an unconfirmed stop is no failure.
 
         Every stop is tried; the first failure is raised after the last one. An alarm
         whose stop the device answered (confirmed, unconfirmed or refused) is no longer
-        tracked; one the device never answered is stopped again next time.
+        tracked; one the device never answered is stopped again next time. The state
+        follows the device's report.
         """
         del kwargs  # turn_off takes no service parameters
-        self._stops += 1
-        if self._unstopped:
-            targets = list(self._unstopped)
-        elif self._last is not None:
-            targets = [self._last]
-        else:
-            targets = list(self._alarms)
         failure: EufySecurityError | None = None
-        for alarm in targets:
+        for alarm in self._stop_targets():
             try:
                 await self.coordinator.station.async_stop_device_alarm(self._serial, alarm)
             except CommandNotAppliedError:
                 # Acknowledged and not confirmed: the device sends no confirmation once silent.
-                _LOGGER.debug("%s: stop not confirmed; shown as off", self.entity_id)
+                _LOGGER.debug("%s: stop not confirmed", self.entity_id)
             except CommandError as err:
                 # Answered with an error: retrying the same stop would meet the same answer.
                 failure = failure or err
@@ -202,32 +213,23 @@ class EufyCameraSiren(EufyPushAvailability, EufyDeviceEntity, _EufySiren):
                 continue
             if alarm in self._unstopped:
                 self._unstopped.remove(alarm)
+        self.async_write_ha_state()
         if failure is not None:
             raise self._failed(failure) from failure
-        self._async_show_off()
 
-    @callback
-    def _async_sounded(self, _now: object) -> None:
-        """The 30 s of a start are over (assumed: the alarm stays unstopped)."""
-        self._cancel_off = None
-        self._async_show_off()
-
-    @callback
-    def _async_show_off(self) -> None:
-        self._async_cancel_off()
-        self._attr_is_on = False
-        self.async_write_ha_state()
-
-    @callback
-    def _async_removed(self) -> None:
-        self._removed = True
-        self._async_cancel_off()
-
-    @callback
-    def _async_cancel_off(self) -> None:
-        if self._cancel_off is not None:
-            self._cancel_off()
-            self._cancel_off = None
+    def _stop_targets(self) -> list[DeviceAlarm]:
+        """The alarms a stop names, each once, in the order sent (see the class)."""
+        on = self.is_on
+        targets: list[DeviceAlarm] = []
+        if on and self._sounding is not None:
+            targets.append(self._sounding)
+        targets.extend(self._unstopped)
+        if on and self._sounding is None:
+            # Reported on without a name (a detection's siren): any offered alarm may sound.
+            targets.extend(self._alarms)
+        if not targets:
+            targets = [self._last] if self._last is not None else list(self._alarms)
+        return list(dict.fromkeys(targets))
 
 
 class EufyStationSiren(EufyPushAvailability, EufyStationEntity, _EufySiren):

@@ -38,14 +38,16 @@ reloads the integration.
   model on its station: `sound`, `light`, `sound_and_light`. No `tone`: the app's
   preselected alarm.
   - It sounds for 30 s; no duration or volume.
-  - Its state is assumed (the library reports none): on once the camera confirms the
-    start, off 30 s later or after turning it off. Turning it off after it went quiet
-    shows off, with no error. A siren sounded from the eufy app or by an alarm does not
-    show.
-  - Turning it off stops each alarm that may be sounding: the ones started and not yet
-    stopped, else the last one started; after a restart, every alarm the camera offers.
-  - Tested on a T8170 behind a HomeBase 3 (sound: start and stop confirmed); declared
-    from the eufy app for the other models.
+  - On while the camera reports its alarm on, whoever started it (this siren, the eufy
+    app, a detection); off when it reports the alarm over, or once its time has run out
+    without that report. Unknown after a restart until the camera's first report. A
+    camera whose alarm the station plays as its alarm tone shows the HomeBase's alarm
+    state instead. Turning it off after it went quiet is no error.
+  - Turning it off stops each alarm that may be sounding: the one the camera reports and
+    the ones started and not yet stopped; for an alarm the report does not name (a
+    detection's siren) and after a restart, every alarm the camera offers.
+  - Tested on a T8170 behind a HomeBase 3 (sound: start and stop confirmed); the state
+    and the other models follow the eufy app, not tested here.
 - **Siren** of a HomeBase: the HomeBase's own siren, where the library sounds its model
   (tested on a T8030).
   - On while the HomeBase alarms, whoever started the alarm. It is not read again after
@@ -56,8 +58,8 @@ reloads the integration.
     camera siren the station plays as its alarm tone does the same.
   - `duration` is rounded up to a length the library sends (30 s); a longer one is
     refused and nothing is sent.
-- A start the device refuses or does not confirm raises an error, and a camera siren
-  stays off. A refused stop raises an error too.
+- A start the device refuses or does not confirm raises an error, and nothing shows on
+  that the device did not report. A refused stop raises an error too.
 
 ## Detections
 
