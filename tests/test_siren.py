@@ -60,6 +60,7 @@ from homeassistant.components.siren import (
     SirenEntityFeature,
 )
 from homeassistant.components.siren import DOMAIN as SIREN_DOMAIN
+from homeassistant.components.siren.const import DATA_COMPONENT as DATA_SIREN_COMPONENT
 from homeassistant.const import (
     ATTR_ASSUMED_STATE,
     ATTR_ENTITY_ID,
@@ -291,6 +292,34 @@ async def test_setup_forgets_the_siren_rows_of_served_devices_it_no_longer_build
     assert registry.async_get(rows[SYNTHETIC.station_sn].entity_id) is None
     assert registry.async_get(rows[SYNTHETIC.camera_sn].entity_id) is None
     assert registry.async_get(rows[_UNLISTED_SN].entity_id) is not None
+
+    await _unload(hass, entry)
+
+
+async def test_setup_keeps_a_siren_row_another_entry_owns(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Only this entry's rows are forgotten, even for a serial it no longer builds."""
+    _sound_alarm_unknown(monkeypatch)
+    seed_warm_cache()
+    other = MockConfigEntry(domain=DOMAIN, unique_id="other@example.invalid")
+    other.add_to_hass(hass)
+    registry = er.async_get(hass)
+    row = registry.async_get_or_create(
+        SIREN_DOMAIN,
+        DOMAIN,
+        entity_unique_id(SYNTHETIC.station_sn, SIREN_KEY),
+        config_entry=other,
+        translation_key=SIREN_KEY,
+    )
+    entry = add_entry(hass)
+
+    assert await setup_entry(hass, entry)
+
+    assert registry.async_get(row.entity_id) is not None
 
     await _unload(hass, entry)
 
@@ -536,6 +565,156 @@ async def test_a_stop_of_every_alarm_tries_each_before_raising(
         assert raised.value.translation_key == "siren_rejected"
 
     assert stopped == [DeviceAlarm.SOUND, DeviceAlarm.SOUND_AND_LIGHT] * 2
+
+    await _unload(hass, entry)
+
+
+def _patch_alarms(
+    monkeypatch: pytest.MonkeyPatch,
+    stop_errors: dict[DeviceAlarm, EufySecurityError] | None = None,
+) -> tuple[list[DeviceAlarm | int | None], list[DeviceAlarm | int | None]]:
+    """Replace the station's device alarm calls; returns the started and stopped alarms.
+
+    A start is confirmed; a stop raises its alarm's error from ``stop_errors``, else is
+    confirmed.
+    """
+    started: list[DeviceAlarm | int | None] = []
+    stopped: list[DeviceAlarm | int | None] = []
+
+    async def start(
+        self: Station, device_sn: str, alarm: DeviceAlarm | int | None = None, **kwargs: Any
+    ) -> CommandOutcome:
+        started.append(alarm)
+        return CommandOutcome.APPLIED
+
+    async def stop(
+        self: Station, device_sn: str, alarm: DeviceAlarm | int | None = None, **kwargs: Any
+    ) -> CommandOutcome:
+        stopped.append(alarm)
+        if stop_errors and isinstance(alarm, DeviceAlarm) and alarm in stop_errors:
+            raise stop_errors[alarm]
+        return CommandOutcome.APPLIED
+
+    monkeypatch.setattr(Station, "async_trigger_device_alarm", start)
+    monkeypatch.setattr(Station, "async_stop_device_alarm", stop)
+    return started, stopped
+
+
+async def test_a_stop_the_device_refused_is_not_sent_again(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """An answered refusal is raised once; the next stop names the last alarm only."""
+    _, stopped = _patch_alarms(
+        monkeypatch,
+        {DeviceAlarm.SOUND_AND_LIGHT: CommandRejectedError(_SET_DEVS_TONE_FILE, 6, "refused")},
+    )
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = _camera_siren(hass)
+    await _turn_on(hass, entity_id, **{ATTR_TONE: "sound_and_light"})
+    await _turn_on(hass, entity_id, **{ATTR_TONE: "sound"})
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await _turn_off(hass, entity_id)
+    assert raised.value.translation_key == "siren_rejected"
+    await _turn_off(hass, entity_id)
+
+    assert stopped == [DeviceAlarm.SOUND_AND_LIGHT, DeviceAlarm.SOUND, DeviceAlarm.SOUND]
+    assert state_of(hass, entity_id) == STATE_OFF
+
+    await _unload(hass, entry)
+
+
+async def test_a_stop_the_device_never_answered_is_sent_again(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A stop with no answer leaves its alarm tracked, a refused one does not; the
+    first failure is the one raised."""
+    _, stopped = _patch_alarms(
+        monkeypatch,
+        {
+            DeviceAlarm.SOUND: DeviceTimeoutError("no answer"),
+            DeviceAlarm.SOUND_AND_LIGHT: CommandRejectedError(_SET_DEVS_TONE_FILE, 6, "refused"),
+        },
+    )
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = _camera_siren(hass)
+    await _turn_on(hass, entity_id, **{ATTR_TONE: "sound"})
+    await _turn_on(hass, entity_id, **{ATTR_TONE: "sound_and_light"})
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await _turn_off(hass, entity_id)
+    assert raised.value.translation_key == "station_unreachable"
+    with pytest.raises(HomeAssistantError) as raised:
+        await _turn_off(hass, entity_id)
+    assert raised.value.translation_key == "station_unreachable"
+
+    assert stopped == [DeviceAlarm.SOUND, DeviceAlarm.SOUND_AND_LIGHT, DeviceAlarm.SOUND]
+
+    await _unload(hass, entry)
+
+
+async def test_the_same_alarm_started_twice_is_stopped_once(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A repeated start of one alarm is tracked once."""
+    started, stopped = _patch_alarms(monkeypatch)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = _camera_siren(hass)
+
+    await _turn_on(hass, entity_id, **{ATTR_TONE: "sound"})
+    await _turn_on(hass, entity_id, **{ATTR_TONE: "sound_and_light"})
+    await _turn_on(hass, entity_id, **{ATTR_TONE: "sound"})
+    await _turn_off(hass, entity_id)
+
+    assert started == [DeviceAlarm.SOUND, DeviceAlarm.SOUND_AND_LIGHT, DeviceAlarm.SOUND]
+    assert stopped == [DeviceAlarm.SOUND_AND_LIGHT, DeviceAlarm.SOUND]
+
+    await _unload(hass, entry)
+
+
+async def test_a_start_confirmed_after_a_stop_shows_nothing(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The last command was off: a start confirmed after it neither shows on nor sets the
+    30 s off."""
+    _, stopped = _patch_alarms(monkeypatch)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = _camera_siren(hass)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_start(self: Station, *args: Any, **kwargs: Any) -> CommandOutcome:
+        entered.set()
+        await release.wait()
+        return CommandOutcome.APPLIED
+
+    monkeypatch.setattr(Station, "async_trigger_device_alarm", slow_start)
+    states = record_states(hass, entity_id)
+    entity = hass.data[DATA_SIREN_COMPONENT].get_entity(entity_id)
+    assert isinstance(entity, siren.EufyCameraSiren)
+    # The entity's own calls: the start still waiting when the stop finishes.
+    call = hass.async_create_task(entity.async_turn_on())
+    await entered.wait()
+    await entity.async_turn_off()
+    release.set()
+    await call
+    await hass.async_block_till_done()
+
+    assert STATE_ON not in states
+    assert state_of(hass, entity_id) == STATE_OFF
+    assert stopped == [DeviceAlarm.SOUND]
 
     await _unload(hass, entry)
 

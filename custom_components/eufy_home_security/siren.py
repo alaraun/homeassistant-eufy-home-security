@@ -37,6 +37,7 @@ from homeassistant.helpers.event import async_call_later
 from eufy_home_security import (
     SOUND_ALARM_SECONDS,
     AlarmChanged,
+    CommandError,
     CommandNotAppliedError,
     DeviceAlarm,
     EufySecurityError,
@@ -133,6 +134,8 @@ class EufyCameraSiren(EufyPushAvailability, EufyDeviceEntity, _EufySiren):
         # The alarm last started; None before any start since setup.
         self._last: DeviceAlarm | None = None
         self._removed = False
+        # Bumped by every stop: a start confirmed after a later stop shows nothing.
+        self._stops = 0
         self._cancel_off: CALLBACK_TYPE | None = None
 
     @override
@@ -156,11 +159,12 @@ class EufyCameraSiren(EufyPushAvailability, EufyDeviceEntity, _EufySiren):
                 self._unstopped.remove(alarm)
             self._unstopped.append(alarm)
             self._last = alarm
+        stops = self._stops
         try:
             await self.coordinator.station.async_trigger_device_alarm(self._serial, alarm)
         except EufySecurityError as err:
             raise self._failed(err) from err
-        if self._removed:
+        if self._removed or self._stops != stops:
             return
         self._async_cancel_off()
         self._cancel_off = async_call_later(self.hass, DEVICE_SIREN_SECONDS, self._async_sounded)
@@ -171,9 +175,12 @@ class EufyCameraSiren(EufyPushAvailability, EufyDeviceEntity, _EufySiren):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Stop each alarm that may be sounding; an unconfirmed stop reads as off.
 
-        Every stop is tried; the first refusal is raised after the last one.
+        Every stop is tried; the first failure is raised after the last one. An alarm
+        whose stop the device answered (confirmed, unconfirmed or refused) is no longer
+        tracked; one the device never answered is stopped again next time.
         """
         del kwargs  # turn_off takes no service parameters
+        self._stops += 1
         if self._unstopped:
             targets = list(self._unstopped)
         elif self._last is not None:
@@ -187,6 +194,9 @@ class EufyCameraSiren(EufyPushAvailability, EufyDeviceEntity, _EufySiren):
             except CommandNotAppliedError:
                 # Acknowledged and not confirmed: the device sends no confirmation once silent.
                 _LOGGER.debug("%s: stop not confirmed; shown as off", self.entity_id)
+            except CommandError as err:
+                # Answered with an error: retrying the same stop would meet the same answer.
+                failure = failure or err
             except EufySecurityError as err:
                 failure = failure or err
                 continue
