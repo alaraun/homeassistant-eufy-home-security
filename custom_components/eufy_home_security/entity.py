@@ -372,6 +372,7 @@ class EufySettingEntity(EufyDeviceEntity):
             raise errors.setting_write_failed(
                 err,
                 self._write_target(),
+                station_name=self.coordinator.station.name,
                 on_demand=self.coordinator.station.connects_on_demand,
             ) from err
         except UnsupportedError:
@@ -385,6 +386,7 @@ class EufySettingEntity(EufyDeviceEntity):
             raise errors.setting_write_failed(
                 err,
                 self._write_target(),
+                station_name=self.coordinator.station.name,
                 on_demand=self.coordinator.station.connects_on_demand,
             ) from err
         self._async_show_written(value)
@@ -414,6 +416,7 @@ class EufySettingEntity(EufyDeviceEntity):
             raise errors.setting_write_failed(
                 err,
                 self._write_target(),
+                station_name=self.coordinator.station.name,
                 on_demand=self.coordinator.station.connects_on_demand,
             ) from err
         self._async_show_written(None)

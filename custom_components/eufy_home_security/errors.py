@@ -48,6 +48,7 @@ from eufy_home_security import (
     CloudProblem,
     CommandError,
     CommandNotAppliedError,
+    CommandUnsupportedError,
     ConnectionChanged,
     CredentialsRefreshed,
     EufySecurityError,
@@ -89,8 +90,10 @@ from .const import (
     EXC_CLOUD_UNAVAILABLE,
     EXC_DEFAULT_PRESET_NEEDS_CONFIRMATION,
     EXC_DEVICE_LIST_REFRESH_FAILED,
+    EXC_GUARD_MODE_COMMAND_UNSUPPORTED,
     EXC_GUARD_MODE_NOT_APPLIED,
     EXC_GUARD_MODE_NOT_SUPPORTED,
+    EXC_GUARD_MODE_REJECTED,
     EXC_LIVE_STREAM_LIMIT,
     EXC_ON_DEMAND_UNREACHABLE,
     EXC_PAN_TILT_NOT_APPLIED,
@@ -115,8 +118,10 @@ from .const import (
     EXC_RECORDING_UNSUPPORTED,
     EXC_SECURITY_MODE_NOT_SETTABLE,
     EXC_SESSION_REPLACED_SEE_REPAIRS,
+    EXC_SETTING_COMMAND_UNSUPPORTED,
     EXC_SETTING_DEVICE_UNAVAILABLE,
     EXC_SETTING_NOT_APPLIED,
+    EXC_SETTING_REJECTED,
     EXC_SETTING_UNCONFIRMED,
     EXC_SETTING_VALUE_INVALID,
     EXC_SIREN_DURATION_INVALID,
@@ -265,10 +270,35 @@ def failure_reason(err: BaseException) -> str:
     return name
 
 
+# The messages that name the station whose answer they report.
+_STATION_NAMED_KEYS: Final = frozenset(
+    {
+        EXC_GUARD_MODE_COMMAND_UNSUPPORTED,
+        EXC_GUARD_MODE_NOT_APPLIED,
+        EXC_GUARD_MODE_NOT_SUPPORTED,
+        EXC_GUARD_MODE_REJECTED,
+        EXC_SETTING_COMMAND_UNSUPPORTED,
+        EXC_SETTING_NOT_APPLIED,
+        EXC_SETTING_REJECTED,
+    }
+)
+
+
+def _command_key(err: CommandError, not_applied: str, unsupported: str, rejected: str) -> str:
+    """The key of a station's answer: acknowledged and not acted on (the wrong-account
+    case), "not supported by this device" (-108, -103), or any other refusal."""
+    if isinstance(err, CommandNotAppliedError):
+        return not_applied
+    if isinstance(err, CommandUnsupportedError):
+        return unsupported
+    return rejected
+
+
 def arm_failed(
     err: EufySecurityError,
     target: GuardMode,
     *,
+    station_name: str,
     on_demand: bool = False,
 ) -> HomeAssistantError:
     """An arm or disarm the station did not apply, or could not receive.
@@ -279,10 +309,11 @@ def arm_failed(
       session; ``session_replaced_see_repairs`` points at the account's repair.
     - ``CameraWakeError`` (also a ``CommandError``): the station answered but could
       not wake the camera; the message says the camera may be asleep.
-    - ``CommandError``: the station was reached and did not apply the mode
-      (``CommandNotAppliedError``, usually an owner id it does not hold) or answered
-      with an error or another mode (``CommandRejectedError``, a -108
-      ``CommandUnsupportedError`` included).
+    - ``CommandError``: the station was reached and did not apply the mode. Acknowledged
+      and never acted on (``CommandNotAppliedError``, usually an owner id it does not
+      hold: the only message with the sharing hint), answered "not supported"
+      (``CommandUnsupportedError``, -108 or -103), or answered with another error
+      (``CommandRejectedError``).
     - ``UnsupportedError`` (any other): the library refused before sending, a station
       model whose guard mode it does not set.
     - ``KeyRejectedError``: the write reconnected and the station rejected even its
@@ -296,16 +327,22 @@ def arm_failed(
       (a battery camera without a HomeBase) the message says the camera may be
       asleep: a wake takes about ten seconds and may fail.
 
-    The only placeholder is ``target``, the requested mode's lower-case name: no
-    serial and no library text. Six of these eight messages are shared with
-    :func:`setting_write_failed`.
+    Placeholders: ``target``, the requested mode's lower-case name, and, for the
+    station's own answers and refusals, ``station``, ``station_name`` (the station's
+    eufy name: a standalone camera's own); no serial and no library text. The messages
+    without ``station`` are shared with :func:`setting_write_failed`.
     """
     if is_session_replaced_failure(err):
         key = EXC_SESSION_REPLACED_SEE_REPAIRS
     elif isinstance(err, CameraWakeError):
         key = EXC_ON_DEMAND_UNREACHABLE
     elif isinstance(err, CommandError):
-        key = EXC_GUARD_MODE_NOT_APPLIED
+        key = _command_key(
+            err,
+            EXC_GUARD_MODE_NOT_APPLIED,
+            EXC_GUARD_MODE_COMMAND_UNSUPPORTED,
+            EXC_GUARD_MODE_REJECTED,
+        )
     elif isinstance(err, UnsupportedError):
         key = EXC_GUARD_MODE_NOT_SUPPORTED
     elif isinstance(err, KeyRejectedError):
@@ -316,10 +353,11 @@ def arm_failed(
         key = EXC_CLOUD_UNAVAILABLE
     else:
         key = EXC_ON_DEMAND_UNREACHABLE if on_demand else EXC_STATION_UNREACHABLE
+    placeholders = {"target": target.name.lower()}
+    if key in _STATION_NAMED_KEYS:
+        placeholders["station"] = station_name
     return HomeAssistantError(
-        translation_domain=DOMAIN,
-        translation_key=key,
-        translation_placeholders={"target": target.name.lower()},
+        translation_domain=DOMAIN, translation_key=key, translation_placeholders=placeholders
     )
 
 
@@ -327,16 +365,18 @@ def setting_write_failed(
     err: EufySecurityError,
     target: str,
     *,
+    station_name: str,
     on_demand: bool = False,
 ) -> HomeAssistantError:
     """A setting write the station did not apply, or could not receive.
 
-    The outcomes and order of :func:`arm_failed`, except that ``CommandError`` (the
-    station did not apply the value, or answered with an error) has its own key:
-    "the change was not applied" is not "the alarm was not armed".
+    The outcomes and order of :func:`arm_failed`, except that a ``CommandError`` (the
+    station did not apply the value, answered "not supported", or refused) has keys of
+    its own: "the change was not applied" is not "the alarm was not armed".
 
-    ``target`` is the only placeholder: the entity's translated name, or its catalog
-    key when it has none; never a serial, an owner account id or the library's text.
+    ``target`` is the entity's translated name, or its catalog key when it has none;
+    ``station`` (``station_name``) is added for the station's own answers. Never a
+    serial, an owner account id or the library's text.
     A plain ``UnsupportedError`` does not arrive here: the caller maps it to
     :func:`setting_device_unavailable`, or lets a catalog-shape programming error
     propagate.
@@ -346,7 +386,9 @@ def setting_write_failed(
     elif isinstance(err, CameraWakeError):
         key = EXC_ON_DEMAND_UNREACHABLE
     elif isinstance(err, CommandError):
-        key = EXC_SETTING_NOT_APPLIED
+        key = _command_key(
+            err, EXC_SETTING_NOT_APPLIED, EXC_SETTING_COMMAND_UNSUPPORTED, EXC_SETTING_REJECTED
+        )
     elif isinstance(err, KeyRejectedError):
         key = EXC_STATION_KEY_REJECTED
     elif isinstance(err, CipherUnusableError):
@@ -355,10 +397,11 @@ def setting_write_failed(
         key = EXC_CLOUD_UNAVAILABLE
     else:
         key = EXC_ON_DEMAND_UNREACHABLE if on_demand else EXC_STATION_UNREACHABLE
+    placeholders = {"target": target}
+    if key in _STATION_NAMED_KEYS:
+        placeholders["station"] = station_name
     return HomeAssistantError(
-        translation_domain=DOMAIN,
-        translation_key=key,
-        translation_placeholders={"target": target},
+        translation_domain=DOMAIN, translation_key=key, translation_placeholders=placeholders
     )
 
 

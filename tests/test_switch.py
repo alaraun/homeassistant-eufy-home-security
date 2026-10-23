@@ -131,7 +131,7 @@ async def test_an_inverted_1350_switch_writes_the_wire_code_the_library_renders(
     await hass.async_block_till_done()
 
 
-async def test_a_switch_write_the_station_rejects_raises_setting_not_applied(
+async def test_a_switch_write_the_station_rejects_raises_setting_rejected(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
@@ -150,9 +150,10 @@ async def test_a_switch_write_the_station_rejects_raises_setting_not_applied(
     await hass.async_block_till_done()
 
     assert raised.value.translation_domain == DOMAIN
-    assert raised.value.translation_key == _NOT_APPLIED
+    assert raised.value.translation_key == "setting_rejected"
     assert raised.value.translation_placeholders == {
-        "target": settings_of("T8160")[_STATUS_LED].name
+        "target": settings_of("T8160")[_STATUS_LED].name,
+        "station": entry.runtime_data.coordinators[SYNTHETIC.station_sn].station.name,
     }
     assert shown == []
     assert state_of(hass, led_id) == STATE_OFF

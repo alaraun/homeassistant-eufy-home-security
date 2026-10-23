@@ -200,9 +200,12 @@ async def test_a_select_write_the_station_rejects_keeps_the_last_option(
     await hass.async_block_till_done()
 
     assert raised.value.translation_domain == DOMAIN
-    assert raised.value.translation_key == _NOT_APPLIED
+    assert raised.value.translation_key == "setting_rejected"
     placeholders = raised.value.translation_placeholders
-    assert placeholders == {"target": setting.name}
+    assert placeholders == {
+        "target": setting.name,
+        "station": entry.runtime_data.coordinators[SYNTHETIC.station_sn].station.name,
+    }
     assert shown == []
     assert state_of(hass, entity_id) == setting.label(1)
 

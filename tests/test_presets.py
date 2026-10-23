@@ -1279,7 +1279,7 @@ async def test_changing_the_live_view_preset_while_watching_turns_the_running_vi
         (DeviceBusyError("busy"), "capture_in_progress"),
         (UnsupportedError("preset 1 is not set"), "preset_not_set"),
         (CommandUnsupportedError(1700, -108), "ptz_command_not_handled"),
-        (CommandRejectedError(1700, 1), "setting_not_applied"),
+        (CommandRejectedError(1700, 1), "setting_rejected"),
     ],
 )
 async def test_a_failed_turn_while_watching_keeps_the_choice_and_says_why(
@@ -1466,7 +1466,7 @@ async def test_zooming_while_watching_zooms_the_running_view(
         (DeviceBusyError("busy"), "capture_in_progress"),
         (UnsupportedError("dual view"), "zoom_needs_single_view"),
         (CommandUnsupportedError(1350, -108), "ptz_command_not_handled"),
-        (CommandRejectedError(1350, 1), "setting_not_applied"),
+        (CommandRejectedError(1350, 1), "setting_rejected"),
     ],
 )
 async def test_a_failed_zoom_while_watching_keeps_the_zoom_and_says_why(

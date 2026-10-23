@@ -112,7 +112,7 @@ async def test_a_camera_number_shows_the_station_value_and_writes_it(
 # ── writes the station did not apply or could not receive ────────────────────
 
 
-async def test_a_number_write_the_station_rejects_raises_setting_not_applied(
+async def test_a_number_write_the_station_rejects_raises_setting_rejected(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
@@ -130,10 +130,14 @@ async def test_a_number_write_the_station_rejects_raises_setting_not_applied(
     await hass.async_block_till_done()
 
     assert raised.value.translation_domain == DOMAIN
-    assert raised.value.translation_key == _NOT_APPLIED
+    assert raised.value.translation_key == "setting_rejected"
     placeholders = raised.value.translation_placeholders
     assert placeholders is not None
-    assert set(placeholders) == {"target"}
+    assert set(placeholders) == {"target", "station"}
+    assert (
+        placeholders["station"]
+        == entry.runtime_data.coordinators[SYNTHETIC.station_sn].station.name
+    )
     assert placeholders["target"] == settings_of("T8160")[_RETRIGGER].name
     assert SYNTHETIC.camera_sn not in placeholders["target"]
     assert state_of(hass, entity_id) == "30"
@@ -206,9 +210,10 @@ async def test_a_number_off_its_step_is_refused_as_a_validation_error(
     ("error", "key"),
     [
         (CommandNotAppliedError(1250), _NOT_APPLIED),
-        (CommandRejectedError(1250, 6, "station reports another value"), _NOT_APPLIED),
-        # A -108 receipt: a rejection and an UnsupportedError at once.
-        (CommandUnsupportedError(1250, -108), _NOT_APPLIED),
+        (CommandRejectedError(1250, 6, "station reports another value"), "setting_rejected"),
+        # A -108 or -103 receipt: a rejection and an UnsupportedError at once.
+        (CommandUnsupportedError(1250, -108), "setting_command_unsupported"),
+        (CommandUnsupportedError(1250, -103), "setting_command_unsupported"),
         # The station answered; the camera behind it did not wake.
         (CameraWakeError(1250, -204), _ON_DEMAND_UNREACHABLE),
         (StationUnreachableError("no reply to discovery"), _UNREACHABLE),
@@ -232,12 +237,13 @@ def test_setting_write_failures_map_to_translated_errors(
 
     The same twelve errors the arm path maps, so the two write paths cannot drift.
     """
-    translated = errors.setting_write_failed(error, "Clip length")
+    translated = errors.setting_write_failed(error, "Clip length", station_name="Base")
 
     assert isinstance(translated, HomeAssistantError)
     assert translated.translation_domain == DOMAIN
     assert translated.translation_key == key
-    assert translated.translation_placeholders == {"target": "Clip length"}
+    named = {"station": "Base"} if key.startswith("setting_") else {}
+    assert translated.translation_placeholders == {"target": "Clip length", **named}
 
 
 async def test_a_write_to_a_device_with_no_channel_names_it_instead_of_raising(

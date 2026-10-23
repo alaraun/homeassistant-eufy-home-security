@@ -230,9 +230,13 @@ EXC_AUTH_FAILED: Final = "auth_failed"
 # An arm or disarm the station answered but did not apply.
 EXC_GUARD_MODE_NOT_APPLIED: Final = "guard_mode_not_applied"
 EXC_GUARD_MODE_NOT_SUPPORTED: Final = "guard_mode_not_supported"
+EXC_GUARD_MODE_REJECTED: Final = "guard_mode_rejected"
+EXC_GUARD_MODE_COMMAND_UNSUPPORTED: Final = "guard_mode_command_unsupported"
 # A setting write the station answered but did not apply. The entity keeps
 # the last value it read, so nothing shows a value the station never took.
 EXC_SETTING_NOT_APPLIED: Final = "setting_not_applied"
+EXC_SETTING_REJECTED: Final = "setting_rejected"
+EXC_SETTING_COMMAND_UNSUPPORTED: Final = "setting_command_unsupported"
 # A setting write for a device the station cannot address: eufy's device list does
 # not pair it to this station, or its cloud record names no slot. Both are ordinary
 # runtime states rather than programming errors, so both are named.

@@ -160,7 +160,9 @@ async def test_every_setup_attempt_drops_an_earlier_key_unusable_issue(
 
 
 def test_a_write_on_an_unusable_key_names_its_cause() -> None:
-    err = errors.arm_failed(CipherUnusableError("x"), GuardMode.AWAY)
+    err = errors.arm_failed(CipherUnusableError("x"), GuardMode.AWAY, station_name="Base")
     assert err.translation_key == "station_key_unusable"
-    err = errors.setting_write_failed(CipherUnusableError("x"), "motion detection")
+    err = errors.setting_write_failed(
+        CipherUnusableError("x"), "motion detection", station_name="Base"
+    )
     assert err.translation_key == "station_key_unusable"

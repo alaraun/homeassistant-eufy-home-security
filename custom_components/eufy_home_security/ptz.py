@@ -86,6 +86,7 @@ async def async_pan_tilt(
         raise errors.setting_write_failed(
             err,
             _target(name, direction.name.lower()),
+            station_name=station.name,
             on_demand=station.connects_on_demand,
         ) from err
     _LOGGER.debug("Pan/tilt %s of %s done", direction.name, serial)
@@ -116,7 +117,10 @@ async def async_goto_preset(
     except EufySecurityError as err:
         _LOGGER.debug("Go-to %d of %s failed: %s", index, serial, errors.failure_reason(err))
         raise errors.setting_write_failed(
-            err, _target(name, "goto_preset"), on_demand=station.connects_on_demand
+            err,
+            _target(name, "goto_preset"),
+            station_name=station.name,
+            on_demand=station.connects_on_demand,
         ) from err
     _LOGGER.debug("Go-to %d of %s sent%s", index, serial, " during a live view" if watching else "")
 
@@ -144,6 +148,7 @@ async def async_set_live_zoom(
         raise errors.setting_write_failed(
             err,
             _target(name, LIVE_ZOOM_KEY),
+            station_name=coordinator.station.name,
             on_demand=coordinator.station.connects_on_demand,
         ) from err
     _LOGGER.debug(
@@ -213,7 +218,10 @@ async def async_save_preset(
     except EufySecurityError as err:
         _LOGGER.debug("Save to %s of %s failed: %s", target, serial, errors.failure_reason(err))
         raise errors.setting_write_failed(
-            err, _target(name, SERVICE_SAVE_PRESET), on_demand=station.connects_on_demand
+            err,
+            _target(name, SERVICE_SAVE_PRESET),
+            station_name=station.name,
+            on_demand=station.connects_on_demand,
         ) from err
     manager.async_forget_image(device_sn, slot.index)
     _LOGGER.debug(
@@ -263,7 +271,10 @@ async def async_delete_preset(
             "Delete of preset %d of %s failed: %s", index, serial, errors.failure_reason(err)
         )
         raise errors.setting_write_failed(
-            err, _target(name, SERVICE_DELETE_PRESET), on_demand=station.connects_on_demand
+            err,
+            _target(name, SERVICE_DELETE_PRESET),
+            station_name=station.name,
+            on_demand=station.connects_on_demand,
         ) from err
     manager.async_forget_image(device_sn, index)
     _LOGGER.debug("Deleted preset %d of %s", index, serial)

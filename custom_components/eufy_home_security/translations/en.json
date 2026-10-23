@@ -294,13 +294,25 @@
       "message": "eufy rejected the saved password for this account, or none is saved. Re-enter it in the reauthentication dialog; Home Assistant will not try the old password again."
     },
     "guard_mode_not_applied": {
-      "message": "The HomeBase did not apply {target}. The panel shows the mode the HomeBase last reported. If this keeps happening, check in the eufy app that the HomeBase is shared with this eufy account."
+      "message": "{station} took the change to {target} but did not apply it. The panel shows the mode {station} last reported. If this keeps happening, check in the eufy app that {station} is shared with this eufy account."
+    },
+    "guard_mode_rejected": {
+      "message": "{station} refused {target}. The panel shows the mode {station} last reported."
+    },
+    "guard_mode_command_unsupported": {
+      "message": "{station} answered that it does not support {target}. The panel shows the mode {station} last reported; change the mode in the eufy app."
     },
     "guard_mode_not_supported": {
-      "message": "Home Assistant cannot switch this HomeBase to {target}: the eufy library does not set the guard mode of this model, so nothing was sent. Change the mode in the eufy app."
+      "message": "Home Assistant cannot switch {station} to {target}: the eufy library does not set the guard mode of this model, so nothing was sent. Change the mode in the eufy app."
     },
     "setting_not_applied": {
-      "message": "The HomeBase did not apply the change to {target}. The entity shows the value the HomeBase last reported; check that the device is online and try again."
+      "message": "{station} took the change to {target} but did not apply it. The entity shows the value {station} last reported; check that the device is online and try again."
+    },
+    "setting_rejected": {
+      "message": "{station} refused the change to {target}. The entity shows the value {station} last reported."
+    },
+    "setting_command_unsupported": {
+      "message": "{station} answered that the device does not support changing {target}. The entity shows the value {station} last reported."
     },
     "setting_device_unavailable": {
       "message": "The device {target} belongs to cannot be addressed, so nothing was sent and the entity still shows the value the HomeBase last reported. eufy's device list does not pair it to this HomeBase, or names no slot for it. If the device was removed or re-paired, reload the integration; otherwise check that it is still paired in the eufy app."

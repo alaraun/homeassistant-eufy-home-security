@@ -241,6 +241,11 @@ async def test_the_layout_adds_the_integrations_preset_selects_to_pan_and_tilt(
     monkeypatch.setattr(
         detections, "has_preset_entities", lambda _station, serial: serial == SYNTHETIC.camera_sn
     )
+    monkeypatch.setattr(
+        detections,
+        "has_ptz_action",
+        lambda _station, serial, _action: serial == SYNTHETIC.camera_sn,
+    )
     entry = await set_up_warm(hass, seed_warm_cache)
     client = await hass_ws_client(hass)
 
@@ -1938,7 +1943,8 @@ async def test_a_station_model_whose_guard_mode_the_library_refuses_is_reported_
     await advance_to_poll(hass, POLL_INTERVAL_SECONDS + 1)
 
     assert raised.value.translation_key == "guard_mode_not_supported"
-    assert raised.value.translation_placeholders == {"target": "home"}
+    station = entry.runtime_data.coordinators[fake_station.serial].station
+    assert raised.value.translation_placeholders == {"target": "home", "station": station.name}
     assert [c for c in fake_station.received if c.get("cmd") == 1224] == []
     assert state_of(hass, entity_id) == "Away"
     assert states == []

@@ -321,6 +321,10 @@ async def test_two_arm_calls_together_end_at_the_last_completed_mode(
 
 # Written out, not imported: the keys are the contract with the translations.
 _NOT_APPLIED = "guard_mode_not_applied"
+_REJECTED = "guard_mode_rejected"
+_COMMAND_UNSUPPORTED = "guard_mode_command_unsupported"
+# The keys that name the station whose answer they report.
+_STATION_NAMED = {_NOT_APPLIED, _REJECTED, _COMMAND_UNSUPPORTED, "guard_mode_not_supported"}
 _UNREACHABLE = "station_unreachable"
 _ON_DEMAND_UNREACHABLE = "on_demand_unreachable"
 _KEY_REJECTED = "station_key_rejected"
@@ -334,9 +338,10 @@ _OTHER_ACCOUNT_ID = "fedcba9876543210fedcba9876543210fedcba98"
     ("error", "key"),
     [
         (CommandNotAppliedError(1224), _NOT_APPLIED),
-        (CommandRejectedError(1224, 6, "station applied OFF"), _NOT_APPLIED),
-        # A -108 receipt: a rejection and an UnsupportedError at once.
-        (CommandUnsupportedError(1224, -108), _NOT_APPLIED),
+        (CommandRejectedError(1224, 6, "station applied OFF"), _REJECTED),
+        # A -108 or -103 receipt: a rejection and an UnsupportedError at once.
+        (CommandUnsupportedError(1224, -108), _COMMAND_UNSUPPORTED),
+        (CommandUnsupportedError(1224, -103), _COMMAND_UNSUPPORTED),
         # The station answered; the camera behind it did not wake.
         (CameraWakeError(1224, -204), _ON_DEMAND_UNREACHABLE),
         (StationUnreachableError("no reply to discovery"), _UNREACHABLE),
@@ -357,18 +362,23 @@ _OTHER_ACCOUNT_ID = "fedcba9876543210fedcba9876543210fedcba98"
 )
 def test_arm_failures_map_to_translated_errors(error: EufySecurityError, key: str) -> None:
     """Each library error a write can meet becomes a translated error naming the mode."""
-    translated = errors.arm_failed(error, GuardMode.AWAY)
+    translated = errors.arm_failed(error, GuardMode.AWAY, station_name="Base")
 
     assert isinstance(translated, HomeAssistantError)
     assert translated.translation_domain == DOMAIN
     assert translated.translation_key == key
-    assert translated.translation_placeholders == {"target": "away"}
+    named = {"station": "Base"} if key in _STATION_NAMED else {}
+    assert translated.translation_placeholders == {"target": "away", **named}
 
 
 def _expected_key(cause: BaseException | None) -> str:
     """The key for the library error a write actually raised, decided here, not by errors.py."""
-    if isinstance(cause, CommandError):
+    if isinstance(cause, CommandNotAppliedError):
         return _NOT_APPLIED
+    if isinstance(cause, CommandUnsupportedError):
+        return _COMMAND_UNSUPPORTED
+    if isinstance(cause, CommandError):
+        return _REJECTED
     assert isinstance(cause, CommunicationError), f"unexpected cause {cause!r}"
     return _UNREACHABLE
 
@@ -400,8 +410,11 @@ async def test_an_arm_the_station_did_not_apply_raises_and_keeps_the_last_mode(
     assert arms, "the arm never reached the station"
     assert {obj.get("account_id") for obj in arms} == {_OTHER_ACCOUNT_ID}
 
-    assert raised.value.translation_key == _expected_key(raised.value.__cause__)
-    assert raised.value.translation_placeholders == {"target": "home"}
+    key = _expected_key(raised.value.__cause__)
+    assert raised.value.translation_key == key
+    station_name = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station.name
+    named = {"station": station_name} if key in _STATION_NAMED else {}
+    assert raised.value.translation_placeholders == {"target": "home", **named}
     assert fake_station.guard_mode == GuardMode.AWAY
     assert state_of(hass, entity_id) == "armed_away"
     assert states == ["arming", "armed_away"]
@@ -414,8 +427,8 @@ async def test_an_arm_the_station_did_not_apply_raises_and_keeps_the_last_mode(
     ("error", "key"),
     [
         # A -108 receipt: a rejection and an UnsupportedError at once.
-        (CommandUnsupportedError(1224, -108), _NOT_APPLIED),
-        (CommandRejectedError(1224, 6, "station applied OFF"), _NOT_APPLIED),
+        (CommandUnsupportedError(1224, -108), _COMMAND_UNSUPPORTED),
+        (CommandRejectedError(1224, 6, "station applied OFF"), _REJECTED),
         (StationUnreachableError("no reply to discovery"), _UNREACHABLE),
     ],
     ids=lambda value: type(value).__name__ if isinstance(value, Exception) else value,
@@ -444,7 +457,8 @@ async def test_an_arm_the_library_refuses_raises_a_translated_error(
 
     assert raised.value.translation_domain == DOMAIN
     assert raised.value.translation_key == key
-    assert raised.value.translation_placeholders == {"target": "home"}
+    named = {"station": station.name} if key in _STATION_NAMED else {}
+    assert raised.value.translation_placeholders == {"target": "home", **named}
     assert raised.value.__cause__ is error
     assert state_of(hass, entity_id) == "armed_away"
 
@@ -473,7 +487,8 @@ async def test_an_arm_on_a_model_the_library_refuses_is_reported_once_and_unsent
     await advance_to_poll(hass, POLL_INTERVAL_SECONDS + 1)
 
     assert raised.value.translation_key == "guard_mode_not_supported"
-    assert raised.value.translation_placeholders == {"target": "home"}
+    station = entry.runtime_data.coordinators[fake_station.serial].station
+    assert raised.value.translation_placeholders == {"target": "home", "station": station.name}
     assert isinstance(raised.value.__cause__, UnsupportedError)
     assert [obj for obj in fake_station.received if obj.get("cmd") == 1224] == []
     assert states == ["arming", "armed_away"]

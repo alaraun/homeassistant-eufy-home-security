@@ -465,20 +465,20 @@ async def test_a_wake_that_fails_is_a_retryable_user_error(
 
 def test_on_demand_arm_failure_keys():
     err1 = StationUnreachableError("x")
-    ha_err1 = errors.arm_failed(err1, GuardMode.HOME, on_demand=True)
+    ha_err1 = errors.arm_failed(err1, GuardMode.HOME, station_name="Solo", on_demand=True)
     assert ha_err1.translation_key == "on_demand_unreachable"
 
-    ha_err2 = errors.arm_failed(err1, GuardMode.HOME, on_demand=False)
+    ha_err2 = errors.arm_failed(err1, GuardMode.HOME, station_name="Solo", on_demand=False)
     assert ha_err2.translation_key == "station_unreachable"
 
     err3 = CommandNotAppliedError("x")
-    ha_err3 = errors.arm_failed(err3, GuardMode.HOME, on_demand=True)
+    ha_err3 = errors.arm_failed(err3, GuardMode.HOME, station_name="Solo", on_demand=True)
     assert ha_err3.translation_key == "guard_mode_not_applied"
 
-    ha_err4 = errors.setting_write_failed(err1, "x", on_demand=True)
+    ha_err4 = errors.setting_write_failed(err1, "x", station_name="Solo", on_demand=True)
     assert ha_err4.translation_key == "on_demand_unreachable"
 
-    ha_err5 = errors.setting_write_failed(err3, "x", on_demand=True)
+    ha_err5 = errors.setting_write_failed(err3, "x", station_name="Solo", on_demand=True)
     assert ha_err5.translation_key == "setting_not_applied"
 
 
@@ -613,31 +613,41 @@ def test_session_replaced_failure_keys() -> None:
     """The session is named from the error alone: a ``SessionReplacedError`` anywhere
     in the cause chain. A bare unreachable camera is the camera's, latch or not."""
     assert (
-        errors.arm_failed(SessionReplacedError(), GuardMode.HOME, on_demand=True).translation_key
+        errors.arm_failed(
+            SessionReplacedError(), GuardMode.HOME, station_name="Solo", on_demand=True
+        ).translation_key
         == "session_replaced_see_repairs"
     )
     wrapped = StationUnreachableError("x")
     wrapped.__cause__ = SessionReplacedError()
     assert (
-        errors.arm_failed(wrapped, GuardMode.HOME, on_demand=True).translation_key
+        errors.arm_failed(
+            wrapped, GuardMode.HOME, station_name="Solo", on_demand=True
+        ).translation_key
         == "session_replaced_see_repairs"
     )
     assert (
-        errors.arm_failed(StationUnreachableError("x"), GuardMode.HOME).translation_key
+        errors.arm_failed(
+            StationUnreachableError("x"), GuardMode.HOME, station_name="Solo"
+        ).translation_key
         == "station_unreachable"
     )
     assert (
         errors.arm_failed(
-            StationUnreachableError("x"), GuardMode.HOME, on_demand=True
+            StationUnreachableError("x"), GuardMode.HOME, station_name="Solo", on_demand=True
         ).translation_key
         == "on_demand_unreachable"
     )
     assert (
-        errors.arm_failed(CommandNotAppliedError(1), GuardMode.HOME, on_demand=True).translation_key
+        errors.arm_failed(
+            CommandNotAppliedError(1), GuardMode.HOME, station_name="Solo", on_demand=True
+        ).translation_key
         == "guard_mode_not_applied"
     )
     assert (
-        errors.setting_write_failed(SessionReplacedError(), "x", on_demand=True).translation_key
+        errors.setting_write_failed(
+            SessionReplacedError(), "x", station_name="Solo", on_demand=True
+        ).translation_key
         == "session_replaced_see_repairs"
     )
 

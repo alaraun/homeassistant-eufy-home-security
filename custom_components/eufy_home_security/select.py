@@ -215,14 +215,20 @@ class EufyDefaultPresetSelect(EufyPushAvailability, EufyDeviceEntity, SelectEnti
             if err.code == _NEEDS_CONFIRMATION_CODE:
                 raise errors.default_preset_needs_confirmation() from err
             raise errors.setting_write_failed(
-                err, self._write_target(), on_demand=station.connects_on_demand
+                err,
+                self._write_target(),
+                station_name=station.name,
+                on_demand=station.connects_on_demand,
             ) from err
         except EufySecurityError as err:
             _LOGGER.debug(
                 "Default preset %d of %s failed: %s", index, serial, errors.failure_reason(err)
             )
             raise errors.setting_write_failed(
-                err, self._write_target(), on_demand=station.connects_on_demand
+                err,
+                self._write_target(),
+                station_name=station.name,
+                on_demand=station.connects_on_demand,
             ) from err
         _LOGGER.debug("Default preset of %s is now %d (read back)", serial, index)
         self.async_write_ha_state()
@@ -310,6 +316,7 @@ class EufyLivePresetSelect(EufyPushAvailability, EufyDeviceEntity, SelectEntity,
             raise errors.setting_write_failed(
                 err,
                 name if isinstance(name, str) else LIVE_PRESET_KEY,
+                station_name=station.name,
                 on_demand=station.connects_on_demand,
             ) from err
         streams.async_choose_live_preset(self._serial, index)
@@ -393,7 +400,10 @@ class EufySecurityModeSelect(EufyStationEntity, SelectEntity):
             applied = await self.coordinator.station.async_set_guard_mode(target)
         except EufySecurityError as err:
             raise errors.arm_failed(
-                err, target, on_demand=self.coordinator.station.connects_on_demand
+                err,
+                target,
+                station_name=self.coordinator.station.name,
+                on_demand=self.coordinator.station.connects_on_demand,
             ) from err
         self.coordinator.async_apply_guard_mode(applied)
         self.async_write_ha_state()
