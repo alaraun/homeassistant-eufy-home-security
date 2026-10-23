@@ -65,24 +65,35 @@ settings_groups:                 # optional: Settings tabs to show, in this orde
   `battery_entity`, `panLeft_entity`, …).
 - `entities`: the cameras after `entity` (or all of them, without `entity`). With two or more, the name in the
   header is a list of the cameras; the picture, live view, History and Settings follow the chosen one. Choosing
-  another camera ends a running live view and drops changes not yet Set; `auto_live` starts the chosen camera's
-  view. `name`, `history_folder` and the `<role>_entity` keys apply to the first camera only. The card starts at
-  the first camera when the page loads. In full screen the list is a name chip on the picture, after the
-  `● LIVE` chip, and a running live view goes on with the chosen camera; the controls stay up while the list is open.
+  another camera ends a running live view and drops changes not yet Set; writes already sent (a Set, a saved
+  view, a recording) finish on the camera they were for, without marks or messages on the chosen one;
+  `auto_live` starts the chosen camera's view. `name`, `history_folder` and the `<role>_entity` keys apply to
+  the first camera only; the other cameras use their own entity names, device-name folders and the entities of
+  their own devices. Every other option applies to every camera of the card: `picture`, `show_header` /
+  `show_history` / `show_settings`, `layout`, `live_seconds`, `auto_live`, `live_buttons` (the same buttons on
+  each camera's live view bar) and `settings_include` / `settings_exclude` / `settings_groups` (an entity id
+  there only matters on the camera whose device it belongs to). The card starts at the first camera when the
+  page loads. In full screen the list is a name chip on the picture, after the `● LIVE` chip, and a running
+  live view goes on with the chosen camera; the controls stay up while the list is open.
 - `show_header`, `show_history`, `show_settings`: with all three off the card is the picture alone, with the
   play button, the live controls and the chips over it (for a popup or a wall display). Without the header its
   menu (`Record a clip` while idle, `New still`, `Refresh event image`) is not offered; with several cameras the
   camera list moves to a name chip on the picture; ✕ / Set for staged settings sit at the right end of the
   History / Settings tabs. Without Settings the card does not ask the integration for the settings layout.
-- `picture`: `landscape` is the fixed 16:9 frame, filled edge to edge. `portrait` takes the camera's own shape
-  (3:4 until the card has seen a picture), shows the whole picture and is at most 80 % of the screen high, with
-  bars at the sides when the card is wider. `auto` (default) is portrait for a camera whose picture is taller
+- `picture`: `landscape` is the fixed 16:9 frame, filled edge to edge. `portrait` shows the whole picture in a
+  frame at most 80 % of the screen high, with bars at the sides when the card is wider: a camera whose picture is
+  taller than wide gets its own shape (no narrower than 9:16); until the card has seen a picture, and for a
+  camera whose picture is not taller than wide, the frame is 3:4 (a wide picture then shows with bars above
+  and below). `auto` (default) is portrait for a camera whose picture is taller
   than wide (a doorbell), else landscape; the card reads the shape from the still and the live video and keeps it
   in the browser, so the next visit starts in the right shape.
 - `live_buttons`: entities offered on the live view bar, after the view's own buttons, e.g. the door lock beside
-  a doorbell. A press asks `Press again to …`; a second press within 4 s calls: a lock `lock.open` when it can
-  open its latch, else `lock.unlock` / `lock.lock`; a cover `cover.open_cover` / `cover.close_cover`; a button
-  `button.press` (or `input_button.press`); a script or scene `turn_on`; a switch `turn_on` / `turn_off`.
+  a doorbell. A press asks `Press again to …`; a second press within 4 s calls the action it asked for (when the
+  entity's state changed in between and now gives another action, that press asks again with the new one): a
+  lock `lock.lock` while unlocked or open, else `lock.open` when it can open its latch, else `lock.unlock`; a lock
+  that is jammed, locking, unlocking or opening offers nothing (the button is disabled and names the state); a
+  cover `cover.open_cover` / `cover.close_cover`; a button `button.press` (or `input_button.press`); a script or
+  scene `turn_on`; a switch `turn_on` / `turn_off`.
 
 ## Battery rule
 

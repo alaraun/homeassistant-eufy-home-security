@@ -287,6 +287,17 @@ def has_live_stream(station: Station, serial: str) -> bool:
     return station.live_support(serial).support is not Support.UNKNOWN
 
 
+def standalone_wake_allowed(station: Station, serial: str) -> bool:
+    """Whether a detection may wake the device ``serial`` of the standalone ``station`` for images.
+
+    A model of a camera kind (:data:`DETECTION_ENTITY_KINDS`) may. A model that gets the
+    camera entities from its eufy-app category only (a video smart lock, see
+    :func:`entity_kind`) may only when it has a live stream (:func:`has_live_stream`):
+    without one the image requests could only wake it and fail. A pure lookup.
+    """
+    return device_kind(serial) in DETECTION_ENTITY_KINDS or has_live_stream(station, serial)
+
+
 def has_doorbell_entity(kind: DeviceKind | None) -> bool:
     """Whether a device of ``kind`` gets the doorbell ring event.
 
@@ -362,13 +373,16 @@ def standalone_image_wanted(
 
     A catalogued detection of a device with detection entities on a standalone station
     (a battery camera without a HomeBase) with no thumbnail to look up (no
-    ``record_id``, no ``thumb_path``). A recording path does not count: such a station
+    ``record_id``, no ``thumb_path``), from a device that may be woken for it
+    (:func:`standalone_wake_allowed`). A recording path does not count: such a station
     lists no recordings, and the push pair's second copy, which names one, is the
     same detection. Its images wake the camera.
     """
-    if not station.is_standalone:
+    if not station.is_standalone or event.device_sn is None:
         return False
     if not has_detection_entities(kind) or detection_event_type(event) is None:
+        return False
+    if not standalone_wake_allowed(station, event.device_sn):
         return False
     return event.record_id is None and event.thumb_path is None
 

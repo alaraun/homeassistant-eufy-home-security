@@ -258,21 +258,35 @@ def fake_cloud(fake_station: FakeStation) -> FakeCloud:
     return FakeCloud.for_stations(fake_station)
 
 
-_HOUSE_LIST: Final = re.compile(r"houses|house:.+")
+_HOUSE: Final = re.compile(r"house:.+")
 
 
 def cloud_calls(cloud: FakeCloud) -> list[str]:
     """``cloud.calls`` without the model scan (``things``) every first discovery makes.
 
     One device-list fetch reads as its ``devices`` call: the house list and the per-house
-    lists the same fetch asks (``houses``, ``house:<id>``, with their ``@<region>``) are
-    left out.
+    lists the same fetch asks right after it (``houses``, then ``house:<id>``, in the
+    same ``@<region>``) are left out. A house lookup outside such a fetch (a second
+    ``houses``, or one after any other call of its region) is kept.
     """
-    return [
-        call
-        for call in cloud.calls
-        if call != "things" and not _HOUSE_LIST.fullmatch(call.split("@")[0])
-    ]
+    # region -> "devices" right after a kept devices call, "houses" inside its house lists
+    fetch: dict[str, str] = {}
+    kept: list[str] = []
+    for call in cloud.calls:
+        if call == "things":
+            continue
+        name, _, region = call.partition("@")
+        step = fetch.pop(region, None)
+        if name == "houses" and step == "devices":
+            fetch[region] = "houses"
+            continue
+        if _HOUSE.fullmatch(name) and step == "houses":
+            fetch[region] = "houses"
+            continue
+        if name == "devices":
+            fetch[region] = "devices"
+        kept.append(call)
+    return kept
 
 
 def stamp_product_codes(cloud: FakeCloud) -> None:

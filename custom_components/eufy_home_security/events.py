@@ -428,6 +428,14 @@ class EventRouter:
                     "No snapshot for %s: not paired to the delivering station",
                     redact_serial(event.device_sn),
                 )
+            elif coordinator.station.is_standalone and not detections.standalone_wake_allowed(
+                coordinator.station, event.device_sn
+            ):
+                # Every image request of a standalone device wakes it.
+                _LOGGER.debug(
+                    "No snapshot for %s: a standalone device without a live stream is not woken",
+                    redact_serial(event.device_sn),
+                )
             elif detections.standalone_image_wanted(
                 coordinator.station, paired[event.device_sn], event
             ):

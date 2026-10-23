@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.22-3';
+const CARD_VERSION = '2026.10.23-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -46,8 +46,9 @@ const SECTIONS = [['history', 'History', 'mdi:history'], ['settings', 'Settings'
 // The dropdown key of the camera list (several cameras); never a setting key (those are library keys)
 const CAM_DD = '__cam';
 // Picture shape: `picture` auto | landscape | portrait. Landscape is a 16:9 frame filled edge to edge; portrait
-// takes the camera's own ratio (PORTRAIT_RATIO before it is known), between PORTRAIT_MIN and 1, the whole picture
-// shown. Auto is portrait when the camera's picture is narrower than AUTO_PORTRAIT (width / height).
+// shows the whole picture: a camera taller than wide in its own ratio (at least PORTRAIT_MIN), else (not known yet,
+// or not taller than wide) in PORTRAIT_RATIO. Auto is portrait when the camera's picture is narrower than
+// AUTO_PORTRAIT (width / height).
 const PICTURE_MODES = ['auto', 'landscape', 'portrait'];
 const PORTRAIT_RATIO = 3 / 4;
 const PORTRAIT_MIN = 9 / 16;
@@ -71,6 +72,8 @@ const LACT_ARM_MS = 4000;
 const LACT_DOMAINS = ['lock', 'cover', 'button', 'input_button', 'script', 'scene', 'switch'];
 // lock.open when the lock can open its latch (LockEntityFeature.OPEN)
 const LOCK_OPEN = 1;
+// Lock states with no action to offer: moving, or stuck
+const LOCK_BUSY = ['jammed', 'locking', 'unlocking', 'opening'];
 const IMG_CACHE = 40;
 // Still request sizes (16:9): HA scales a camera JPEG to the smallest libjpeg factor at least this large
 const STILL_WIDTHS = [640, 960, 1280, 1920];
@@ -264,14 +267,15 @@ const human = (s) => { const t = String(s || '').replace(/_/g, ' '); return t.ch
 // The configured cameras in order: `entity`, then `entities` (ids or { entity }), each once
 const camList = (c) => [...new Set([c && c.entity, ...[].concat((c && c.entities) || []).map(x => (x && typeof x === 'object' ? x.entity : x))]
   .filter(x => typeof x === 'string' && x))];
-// A live view button's call, label and icon for an entity's state: { domain, service, verb, icon } or null
+// A live view button's call, label and icon for an entity's state: { domain, service, verb, icon } or null; a lock
+// in a passing or jammed state gives { domain, service: null, verb: <state>, icon }: no action (a disabled button)
 const liveAction = (st) => {
   const dom = st.entity_id.split('.')[0];
   if (dom === 'lock') {
+    if (LOCK_BUSY.includes(st.state)) return { domain: 'lock', service: null, verb: human(st.state), icon: st.state === 'jammed' ? 'mdi:lock-alert-outline' : 'mdi:lock-clock' };
+    if (st.state === 'unlocked' || st.state === 'open') return { domain: 'lock', service: 'lock', verb: 'Lock', icon: 'mdi:lock-outline' };
     if (((st.attributes.supported_features || 0) & LOCK_OPEN) === LOCK_OPEN) return { domain: 'lock', service: 'open', verb: 'Open', icon: 'mdi:door-open' };
-    return st.state === 'unlocked' || st.state === 'open'
-      ? { domain: 'lock', service: 'lock', verb: 'Lock', icon: 'mdi:lock-outline' }
-      : { domain: 'lock', service: 'unlock', verb: 'Unlock', icon: 'mdi:lock-open-variant-outline' };
+    return { domain: 'lock', service: 'unlock', verb: 'Unlock', icon: 'mdi:lock-open-variant-outline' };
   }
   if (dom === 'cover') {
     if (st.state === 'closed' || st.state === 'closing') return { domain: 'cover', service: 'open_cover', verb: 'Open', icon: 'mdi:gate-open' };
@@ -324,7 +328,8 @@ class EufyCameraCard extends HTMLElement {
     this._ddTaT = 0;
     this._lay = null;       // settings layout: { dev, key, secs, loading, err }; secs stay while the next one loads
     this._cams = [];        // the configured cameras; this._config is the card's config for the shown one
-    this._lact = null;      // { id, until } while a live view button waits for its second press
+    this._lact = null;      // { id, domain, service, until } while a live view button waits for its second press
+    this._gen = 0;          // camera generation: _useCam bumps it, so an answer for the previous camera is told apart
   }
 
   static getConfigElement() { return document.createElement('eufy-camera-card-editor'); }
@@ -351,10 +356,20 @@ class EufyCameraCard extends HTMLElement {
 
   _show(k) { return !this._raw || this._raw[`show_${k}`] !== false; }
 
+  // The shown camera and a test that it is still shown: an async action's answer updates the card only then
+  _camRef() {
+    const gen = this._gen;
+    return { id: this._config.entity, here: () => this._gen === gen };
+  }
+
   // Shows camera `id`: its live view, staged changes, history and settings state start fresh (a running view
   // of the previous camera ends)
   _useCam(id) {
     this._stop('');
+    this._gen += 1;
+    // a station-list or history answer still on its way belongs to the previous camera
+    this._sseq = (this._sseq || 0) + 1;
+    this._histSeq = (this._histSeq || 0) + 1;
     this._config = this._camConfig(id);
     this._ents = null;
     this._pending = {};
@@ -682,7 +697,8 @@ class EufyCameraCard extends HTMLElement {
     const E = this._entities();
     const ids = [E.camera, E.battery, E.charging, E.solarCharging, E.detected, E.recorded, E.ring, ...POWER_STATS.map(x => E[x[0]])];
     [].concat(this._config.live_buttons || []).forEach(id => ids.push(id));
-    if (this._cams.length > 1) this._cams.forEach(id => ids.push(id));
+    // the camera list shows every camera's name and availability
+    if (this._dd === CAM_DD) this._cams.forEach(id => ids.push(id));
     Object.keys(ROLES).forEach(k => ids.push(E[ROLES[k]]));
     E.rows.forEach(r => ids.push(r.id));
     E.presetAll.forEach(id => ids.push(id));
@@ -904,15 +920,17 @@ class EufyCameraCard extends HTMLElement {
     if (it.mcid) { if (play) this._showRecording(it); return; }
     this._sfetch.set(rid, play ? 'play' : 'save');
     this.render();
-    h.callWS({ type: STATION_FETCH_WS, entity_id: this._config.entity, record_id: rid }).then((r) => {
+    const cam = this._camRef();
+    h.callWS({ type: STATION_FETCH_WS, entity_id: cam.id, record_id: rid }).then((r) => {
       if (!r || !r.media_content_id) throw new Error('The station sent no file');
       it.mcid = r.media_content_id;
       it.saved = true;
       if (r.url) this._histUrls.set(r.media_content_id, { url: r.url, at: Date.now() });
+      if (!cam.here()) return;
       if (this._open === 'history') this._loadHistory();
       if (play) this._showRecording(it);
-    }).catch(e => this._toast((e && e.message) || 'Not fetched from the station'))
-      .finally(() => { this._sfetch.delete(rid); this.render(); });
+    }).catch((e) => { if (cam.here()) this._toast((e && e.message) || 'Not fetched from the station'); })
+      .finally(() => { if (!cam.here()) return; this._sfetch.delete(rid); this.render(); });
   }
 
   _showRecording(it) {
@@ -963,16 +981,18 @@ class EufyCameraCard extends HTMLElement {
     const R = { at: Date.now() };
     this._rec = R;
     this.render();
-    Promise.resolve(h.callService(DOMAIN, 'record', { entity_id: this._config.entity }, undefined, false, true))
+    const cam = this._camRef();
+    Promise.resolve(h.callService(DOMAIN, 'record', { entity_id: cam.id }, undefined, false, true))
       .then((r) => {
+        if (!cam.here()) return;
         // An entity action answers per entity: { <entity_id>: { complete, ... } }
         const res = r && r.response;
-        const body = res && (res[this._config.entity] || res);
+        const body = res && (res[cam.id] || res);
         if (body && body.complete === false) this._toast('The clip ended early; the part recorded was saved');
         if (this._open === 'history') this._loadHistory();
       })
-      .catch(e => this._toast((e && e.message) || 'Not recorded'))
-      .finally(() => { if (this._rec === R) this._rec = null; this.render(); });
+      .catch((e) => { if (cam.here()) this._toast((e && e.message) || 'Not recorded'); })
+      .finally(() => { if (this._rec === R) this._rec = null; if (cam.here()) this.render(); });
   }
 
   // The integration's stop_recording action: the running clip ends and is saved as recorded so far (this card's or
@@ -982,8 +1002,9 @@ class EufyCameraCard extends HTMLElement {
     if (!h || this._recStop) return;
     this._recStop = true;
     this.render();
-    Promise.resolve(h.callService(DOMAIN, 'stop_recording', { entity_id: this._config.entity }))
-      .catch((e) => { this._recStop = false; this._toast((e && e.message) || 'Not stopped'); this.render(); });
+    const cam = this._camRef();
+    Promise.resolve(h.callService(DOMAIN, 'stop_recording', { entity_id: cam.id }))
+      .catch((e) => { if (!cam.here()) return; this._recStop = false; this._toast((e && e.message) || 'Not stopped'); this.render(); });
   }
 
   _recTick() {
@@ -1071,9 +1092,10 @@ class EufyCameraCard extends HTMLElement {
   // The camera's frontend stream types (camera/capabilities), once per card
   _streamTypes() {
     if (!this._types) {
-      this._types = this._hass.callWS({ type: 'camera/capabilities', entity_id: this._config.entity })
+      const p = this._hass.callWS({ type: 'camera/capabilities', entity_id: this._config.entity })
         .then(r => (r && r.frontend_stream_types) || [])
-        .catch(() => { this._types = null; return []; });
+        .catch(() => { if (this._types === p) this._types = null; return []; });
+      this._types = p;
     }
     return this._types;
   }
@@ -1213,16 +1235,18 @@ class EufyCameraCard extends HTMLElement {
   }
 
   // A live view button (`live_buttons`): the first press asks (toast), a second one within LACT_ARM_MS calls the
-  // entity's action (liveAction)
+  // entity's action (liveAction) when the state still gives the action asked for; else that press asks again with
+  // the new one
   _liveButton(id) {
     const h = this._hass, st = this._st(id);
     const a = st && st.state !== 'unavailable' ? liveAction(st) : null;
-    if (!h || !a) return;
+    if (!h || !a || !a.service) return;
     const nm = st.attributes.friendly_name || id;
     clearTimeout(this._lactT);
     this._awake(true);
-    if (!this._lact || this._lact.id !== id || Date.now() >= this._lact.until) {
-      this._lact = { id, until: Date.now() + LACT_ARM_MS };
+    const L = this._lact;
+    if (!L || L.id !== id || Date.now() >= L.until || L.domain !== a.domain || L.service !== a.service) {
+      this._lact = { id, domain: a.domain, service: a.service, until: Date.now() + LACT_ARM_MS };
       this._lactT = setTimeout(() => { this._lact = null; this.render(); }, LACT_ARM_MS);
       this._toast(`Press again to ${a.verb.toLowerCase()} ${nm}`, true, 'mdi:gesture-tap');
       return;
@@ -1249,10 +1273,14 @@ class EufyCameraCard extends HTMLElement {
     if (!m || !this._hass) { this._moves = []; return; }
     if (m.service === 'pan_tilt') this._atPreset = null;
     this.render();
-    Promise.resolve(this._hass.callService(DOMAIN, m.service, { entity_id: this._config.entity, ...m.data }))
-      .then(() => { this._moves.shift(); if (m.service === 'goto_preset') this._atPreset = m.data.preset; })
-      .catch((e) => { this._moves = []; this._toast((e && e.message) || 'Not applied'); })
-      .finally(() => { if (this._moves.length && this.isConnected) this._runMove(); else { this._moves = []; this.render(); } });
+    const cam = this._camRef();
+    Promise.resolve(this._hass.callService(DOMAIN, m.service, { entity_id: cam.id, ...m.data }))
+      .then(() => { if (!cam.here()) return; this._moves.shift(); if (m.service === 'goto_preset') this._atPreset = m.data.preset; })
+      .catch((e) => { if (!cam.here()) return; this._moves = []; this._toast((e && e.message) || 'Not applied'); })
+      .finally(() => {
+        if (!cam.here()) return;
+        if (this._moves.length && this.isConnected) this._runMove(); else { this._moves = []; this.render(); }
+      });
   }
 
   // 'run' for the running move, the count of waiting presses, or ''
@@ -1279,8 +1307,9 @@ class EufyCameraCard extends HTMLElement {
   _ptzCall(key, p) {
     this._busy[key] = true;
     this.render();
-    Promise.resolve(p).catch((e) => this._toast((e && e.message) || 'Not applied'))
-      .finally(() => { delete this._busy[key]; this._zoomTarget = undefined; this.render(); });
+    const cam = this._camRef();
+    Promise.resolve(p).catch((e) => { if (cam.here()) this._toast((e && e.message) || 'Not applied'); })
+      .finally(() => { if (!cam.here()) return; delete this._busy[key]; this._zoomTarget = undefined; this.render(); });
   }
 
   // Zoom is answered at the camera's receipt (~0.1 s)
@@ -1343,27 +1372,32 @@ class EufyCameraCard extends HTMLElement {
     this._psave = P;
     this._pconfirm = null;
     this.render();
-    const data = { entity_id: this._config.entity, ...(slot === null ? {} : { preset: slot }) };
+    // The save and its picture go to the camera pressed on, even when another one is chosen meanwhile; only the
+    // toasts and the tile state need it still shown
+    const cam = this._camRef();
+    const toast = (...a) => { if (cam.here()) this._toast(...a); };
+    const data = { entity_id: cam.id, ...(slot === null ? {} : { preset: slot }) };
     Promise.resolve(h.callService(DOMAIN, 'save_preset', data, undefined, false, true))
       .then((r) => {
         // An entity action answers per entity: { <entity_id>: { preset } }
         const res = r && r.response;
-        const body = res && (res[this._config.entity] || res);
+        const body = res && (res[cam.id] || res);
         const n = body && Number.isInteger(body.preset) ? body.preset : slot;
-        if (n === null) { this._toast('Saved as a preset', true); return null; }
-        if (!frame) { this._toast(`Saved as preset P${n + 1}; the picture could not be taken`); return null; }
-        return Promise.resolve(h.callWS({ type: PRESET_IMAGE_WS, entity_id: this._config.entity, preset: n, image: frame }))
-          .then(() => this._toast(`Saved as preset P${n + 1}`, true))
-          .catch(e => this._toast(`Saved as preset P${n + 1}; picture not stored: ${(e && e.message) || 'failed'}`));
+        if (n === null) { toast('Saved as a preset', true); return null; }
+        if (!frame) { toast(`Saved as preset P${n + 1}; the picture could not be taken`); return null; }
+        return Promise.resolve(h.callWS({ type: PRESET_IMAGE_WS, entity_id: cam.id, preset: n, image: frame }))
+          .then(() => toast(`Saved as preset P${n + 1}`, true))
+          .catch(e => toast(`Saved as preset P${n + 1}; picture not stored: ${(e && e.message) || 'failed'}`));
       })
       .catch((e) => {
+        if (!cam.here()) return;
         // The integration knows the camera is full where the card does not (slots it never listed): say so on the tile
         if (e && e.translation_key === 'presets_full') this._pfull = this._presetIdx(this._entities()).length;
         this._toast((e && e.message) || 'Not saved');
       })
       .finally(() => {
         if (this._psave === P) this._psave = null;
-        this.render();
+        if (cam.here()) this.render();
       });
   }
 
@@ -1659,6 +1693,13 @@ class EufyCameraCard extends HTMLElement {
   // card's own root is asked.
   _isFull() { return !!this._pic && this.shadowRoot.fullscreenElement === this._pic; }
 
+  // The list host: in the picture while it is full screen (only it is drawn), else in the card. Also on render: a
+  // full screen that ended while the card was detached fired its event unseen.
+  _homeDd() {
+    const host = this._isFull() ? this._pic : this.content;
+    if (this._ddEl && this._ddEl.parentNode !== host) host.appendChild(this._ddEl);
+  }
+
   _firstPreset() {
     const E = this._entities();
     const i = this._presetIdx(E)[0];
@@ -1902,23 +1943,28 @@ class EufyCameraCard extends HTMLElement {
       if (dom === 'select') call = ['select', 'select_option', { entity_id: id, option: String(s[k]) }];
       else if (dom === 'switch') call = ['switch', s[k] === 'on' ? 'turn_on' : 'turn_off', { entity_id: id }];
       else call = ['number', 'set_value', { entity_id: id, value: s[k] }];
-      items.push({ key: k, value: s[k], call, id, waits: !!this._dependsOn(id, k) });
+      items.push({ key: k, value: s[k], call, id, waits: !!this._dependsOn(id, k), label: this._ctx.rows[k] ? this._ctx.rows[k].label : k });
     });
     if (s.act && E[s.act]) items.push({ key: 'act', value: s.act, call: ['button', 'press', { entity_id: E[s.act] }] });
     this._stg = {};
+    // Another camera chosen meanwhile: the writes go on to this camera's entities, its rows are no longer shown
+    const cam = this._camRef();
     // One after another: the station handles one command at a time
     const run = (i) => {
       if (i >= items.length || !this._hass) return;
       const it = items[i];
-      this._pending[it.key] = { value: it.value, at: Date.now(), was: it.key === 'act' ? this._actStamp(it.value) : undefined };
-      this._arm();
-      this.render();
+      if (cam.here()) {
+        this._pending[it.key] = { value: it.value, at: Date.now(), was: it.key === 'act' ? this._actStamp(it.value) : undefined };
+        this._arm();
+        this.render();
+      }
       // HA skips a call to an unavailable entity: a dependent is sent once its controller's write made it available
       const ready = it.waits ? this._whenAvailable(it.id, PENDING_MS) : Promise.resolve(true);
       ready.then((up) => {
-        if (!up) return Promise.reject(new Error(`${this._ctx.rows[it.key] ? this._ctx.rows[it.key].label : it.key}: not available`));
+        if (!up) return Promise.reject(new Error(`${it.label || it.key}: not available`));
         return this._hass.callService(...it.call);
       }).catch((e) => {
+        if (!cam.here()) return;
         const p = this._pending[it.key];
         // A write that timed out may still apply: the row says so instead of "Not applied"
         if (p && e && e.translation_key === 'setting_unconfirmed') { p.unsure = true; p.at = Date.now() - PENDING_MS - 1; }
@@ -2022,6 +2068,7 @@ class EufyCameraCard extends HTMLElement {
   render() {
     if (!this._config || !this._hass) return;
     if (!this.content) this._build();
+    this._homeDd();
     const h = this._hass;
     const E = this._entities();
     const st = this._st(E.camera);
@@ -2316,9 +2363,12 @@ class EufyCameraCard extends HTMLElement {
     const lacts = [].concat(this._config.live_buttons || []).filter(id => typeof id === 'string' && LACT_DOMAINS.includes(id.split('.')[0])).map((id) => {
       const bs = this._st(id), a = bs && liveAction(bs);
       if (!a) return '';
-      const nm = bs.attributes.friendly_name || id, armed = !!this._lact && this._lact.id === id;
+      // armed: its second press would send the action shown now
+      const la = this._lact, armed = !!la && la.id === id && !!a.service && la.domain === a.domain && la.service === a.service;
+      const nm = bs.attributes.friendly_name || id;
       const reg = this._hass.entities && this._hass.entities[id];
-      return `<button type="button" class="lb lact${armed ? ' arm' : ''}" data-lact="${escapeHtml(id)}" data-focus="lact-${escapeHtml(id)}" aria-label="${escapeHtml(armed ? `Press again to ${a.verb.toLowerCase()} ${nm}` : `${a.verb} ${nm}`)}"${bs.state === 'unavailable' ? ' disabled' : ''}><ha-icon icon="${escapeHtml((reg && reg.icon) || a.icon)}"></ha-icon></button>`;
+      const lbl = !a.service ? `${nm}: ${a.verb}` : (armed ? `Press again to ${a.verb.toLowerCase()} ${nm}` : `${a.verb} ${nm}`);
+      return `<button type="button" class="lb lact${armed ? ' arm' : ''}" data-lact="${escapeHtml(id)}" data-focus="lact-${escapeHtml(id)}" aria-label="${escapeHtml(lbl)}"${bs.state === 'unavailable' || !a.service ? ' disabled' : ''}><ha-icon icon="${escapeHtml((!a.service && a.icon) || (reg && reg.icon) || a.icon)}"></ha-icon></button>`;
     }).join('');
     const bar = L ? `<div class="lbar" role="group" aria-label="Live view">
             <button type="button" class="lb" data-live="stop" data-focus="live-stop" aria-label="Stop live view"><ha-icon icon="mdi:stop"></ha-icon></button>
@@ -2719,8 +2769,7 @@ class EufyCameraCard extends HTMLElement {
     // The full-screen button's icon and label follow the state
     document.addEventListener('fullscreenchange', () => {
       if (!this.isConnected) return;
-      const host = this._isFull() ? this._pic : this.content;
-      if (this._ddEl.parentNode !== host) host.appendChild(this._ddEl);
+      this._homeDd();
       if (this._stream) this._stream.fitMode = this._fit();
       this.render();
     });
