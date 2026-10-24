@@ -257,12 +257,16 @@ async def async_setup_entry(
         if spec.platform is Platform.BINARY_SENSOR
     ]
     for coordinator in entry.runtime_data.coordinators.values():
-        entities.extend(
-            EufyDetectionBinarySensor(coordinator, device_sn, key, hold)
-            for device_sn, kind in detections.paired_device_kinds(coordinator.station).items()
-            if detections.has_detection_entities(kind)
-            for key in detections.DETECTION_CLASSES
-        )
+        for device_sn, kind in detections.paired_device_kinds(coordinator.station).items():
+            if detections.has_detection_entities(kind):
+                keys = detections.DETECTION_CLASSES
+            elif detections.has_motion_sensor_entities(device_sn):
+                keys = (MOTION_DETECTED_KEY,)
+            else:
+                continue
+            entities.extend(
+                EufyDetectionBinarySensor(coordinator, device_sn, key, hold) for key in keys
+            )
     async_add_entities(entities)
     for coordinator in entry.runtime_data.coordinators.values():
         _async_add_state_binary_sensors(entry, coordinator, async_add_entities)
