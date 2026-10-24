@@ -67,6 +67,7 @@ DETECTION_ENTITY_KINDS: Final[frozenset[DeviceKind]] = frozenset(
 # The eufy app's product category under which every model gets a camera card and live
 # view, whatever its kind (a video smart lock: kind LOCK).
 CAMERA_CATEGORY: Final = "Camera"
+MOTION_SENSOR_CATEGORY: Final = "MotionSensor"
 
 # Each detection the event entity fires, and the event type it fires. The dog
 # detections fire ``pet``, so no detection that lights the pet sensor falls to the
@@ -243,6 +244,16 @@ def has_detection_entities(kind: DeviceKind | None) -> bool:
     return kind in DETECTION_ENTITY_KINDS
 
 
+def has_motion_sensor_entities(serial: str) -> bool:
+    """Only dedicated PIR sensors, never contact sensors or generic SENSORs."""
+    model = model_for_serial(serial)
+    return (
+        model is not None
+        and model.kind is DeviceKind.SENSOR
+        and MOTION_SENSOR_CATEGORY in model.categories
+    )
+
+
 def has_preset_entities(station: Station, serial: str) -> bool:
     """Whether the camera ``serial`` on ``station`` gets the pan/tilt preset entities.
 
@@ -385,6 +396,13 @@ def device_event_consumed(kind: DeviceKind | None, event: SecurityEvent) -> bool
     that delivered the event.
     """
     if has_doorbell_entity(kind) and event.detection is DetectionType.DOORBELL_PRESS:
+        return True
+    if (
+        kind is DeviceKind.SENSOR
+        and event.device_sn is not None
+        and has_motion_sensor_entities(event.device_sn)
+        and event.detection is DetectionType.MOTION
+    ):
         return True
     return has_detection_entities(kind) and detection_event_type(event) is not None
 

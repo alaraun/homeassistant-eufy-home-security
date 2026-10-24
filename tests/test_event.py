@@ -274,28 +274,54 @@ async def test_dog_detections_fire_the_pet_event_type(
     await _unload(hass, entry)
 
 
-@dataclass(frozen=True, kw_only=True)
-class _FallbackCase:
-    """One push no entity consumes, and the device the fallback must name."""
+async def test_pir_motion_is_consumed_by_native_entities(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A T8910 motion notification updates both entities, not the fallback bus."""
+    add_motion_sensor(fake_station, fake_cloud)
+    entry = await set_up_warm(hass, seed_warm_cache)
 
-    event: Callable[[], SecurityEvent]
-    pair_sensor: bool = False
-    # The serial whose registry id is expected, or None for no device at all.
-    device_serial: str | None
+    events = async_capture_events(hass, EVENT_EUFY_HOME_SECURITY)
+    motion_id = entity_id_for(hass, BINARY_SENSOR_DOMAIN, SENSOR_SN, "motion_detected")
+    detection_id = entity_id_for(hass, EVENT_DOMAIN, SENSOR_SN, DETECTION_EVENT_KEY)
 
-
-_FALLBACK_CASES: Final = {
-    # A T8910 has no detection entities: its motion push goes to the bus.
-    "motion_sensor": _FallbackCase(
-        event=lambda: detection_event(
+    await _handle(
+        hass,
+        entry,
+        detection_event(
             DetectionType.MOTION,
             t_ms=now_ms(),
             device_sn=SENSOR_SN,
             msg_type=PushMessageType.MOTION_SENSOR,
         ),
-        pair_sensor=True,
-        device_serial=SENSOR_SN,
-    ),
+    )
+
+    motion_state = hass.states.get(motion_id)
+    detection_state = hass.states.get(detection_id)
+
+    assert motion_state is not None
+    assert motion_state.state == STATE_ON
+    assert detection_state is not None
+    assert detection_state.attributes["event_type"] == "motion"
+    assert events == []
+
+    await _unload(hass, entry)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _FallbackCase:
+    """One push no entity consumes, and the device the fallback must name."""
+
+    event: Callable[[], SecurityEvent]
+    # The serial whose registry id is expected, or None for no device at all.
+    device_serial: str | None
+
+
+_FALLBACK_CASES: Final = {
     # A detection code the event entity does not declare.
     "uncatalogued_code": _FallbackCase(
         event=lambda: detection_event(DetectionType.CRYING, t_ms=now_ms()),
@@ -326,9 +352,6 @@ async def test_a_push_no_entity_consumes_fires_the_fallback_bus_event(
     case: _FallbackCase,
 ) -> None:
     """One bus event with the six keys and a registry id, and no entity event."""
-    if case.pair_sensor:
-        # Before setup: the warm cache copies the device list when it is seeded.
-        add_motion_sensor(fake_station, fake_cloud)
     entry = await set_up_warm(hass, seed_warm_cache)
     detection_states = record_states(hass, _detection_entity_id(hass))
     events = async_capture_events(hass, EVENT_EUFY_HOME_SECURITY)
