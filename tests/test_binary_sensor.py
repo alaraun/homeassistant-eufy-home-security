@@ -205,19 +205,22 @@ async def test_camera_has_four_detection_sensors_and_pir_has_motion_only(
         entity_ids.add(entity_id)
     assert len(entity_ids) == len(_DETECTION_KEYS)
 
-    for serial in (SENSOR_SN, SYNTHETIC.station_sn):
-        for key in _DETECTION_KEYS:
-            entity_id = registry.async_get_entity_id(
+    sensor_motion = registry.async_get(
+        entity_id_for(hass, BINARY_SENSOR_DOMAIN, SENSOR_SN, "motion_detected")
+    )
+    assert sensor_motion is not None
+    assert sensor_motion.original_device_class == BinarySensorDeviceClass.MOTION
+    assert sensor_motion.entity_category is None
+
+    absent = [(SYNTHETIC.station_sn, key) for key in _DETECTION_KEYS]
+    absent += [(SENSOR_SN, key) for key in _DETECTION_KEYS if key != "motion_detected"]
+    for serial, key in absent:
+        assert (
+            registry.async_get_entity_id(
                 BINARY_SENSOR_DOMAIN, DOMAIN, entity_unique_id(serial, key)
             )
-            if serial == SENSOR_SN and key == "motion_detected":
-                assert entity_id is not None
-                registered = registry.async_get(entity_id)
-                assert registered is not None
-                assert registered.original_device_class == _DETECTION_DEVICE_CLASSES[key]
-                assert registered.entity_category is None
-            else:
-                assert entity_id is None, (serial, key)
+            is None
+        ), (serial, key)
 
     await _unload(hass, entry)
 

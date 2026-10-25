@@ -319,6 +319,7 @@ class _FallbackCase:
     event: Callable[[], SecurityEvent]
     # The serial whose registry id is expected, or None for no device at all.
     device_serial: str | None
+    pair_sensor: bool = False
 
 
 _FALLBACK_CASES: Final = {
@@ -326,6 +327,12 @@ _FALLBACK_CASES: Final = {
     "uncatalogued_code": _FallbackCase(
         event=lambda: detection_event(DetectionType.CRYING, t_ms=now_ms()),
         device_serial=SYNTHETIC.camera_sn,
+    ),
+    # Motion-sensor entities consume motion only; other detections use the bus.
+    "motion_sensor_other_detection": _FallbackCase(
+        event=lambda: detection_event(DetectionType.PERSON, t_ms=now_ms(), device_sn=SENSOR_SN),
+        pair_sensor=True,
+        device_serial=SENSOR_SN,
     ),
     # A serial the station does not pair names the station, never a device.
     "unpaired_device": _FallbackCase(
@@ -352,6 +359,8 @@ async def test_a_push_no_entity_consumes_fires_the_fallback_bus_event(
     case: _FallbackCase,
 ) -> None:
     """One bus event with the six keys and a registry id, and no entity event."""
+    if case.pair_sensor:
+        add_motion_sensor(fake_station, fake_cloud)
     entry = await set_up_warm(hass, seed_warm_cache)
     detection_states = record_states(hass, _detection_entity_id(hass))
     events = async_capture_events(hass, EVENT_EUFY_HOME_SECURITY)

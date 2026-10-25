@@ -7,7 +7,8 @@ list and the library's serial-to-model lookup. Nothing here reads a payload key 
 
 The router asks :func:`device_event_consumed` whether an entity listens for an event,
 and the platforms build their entities from the same :func:`paired_device_kinds` and
-:func:`has_detection_entities`. Because both sides read one decision, the router
+:func:`has_detection_entities` / :func:`has_motion_sensor_entities`. Because both sides
+read one decision, the router
 never has to ask the dispatcher whether a listener exists: an event that no entity
 consumes is known to be one, and goes to the fallback bus event.
 
@@ -245,7 +246,8 @@ def has_detection_entities(kind: DeviceKind | None) -> bool:
 
 
 def has_motion_sensor_entities(serial: str) -> bool:
-    """Only dedicated PIR sensors, never contact sensors or generic SENSORs."""
+    """Whether device ``serial`` gets a motion binary sensor and motion-only Detection
+    event. True for models the eufy app categorizes as motion sensors."""
     model = model_for_serial(serial)
     return (
         model is not None
@@ -390,16 +392,15 @@ def is_kind_upgrade(event: SecurityEvent, delivered_rank: int | None) -> bool:
 def device_event_consumed(kind: DeviceKind | None, event: SecurityEvent) -> bool:
     """Whether an entity of a paired device of ``kind`` consumes the device event ``event``.
 
-    Consumed: a catalogued detection on a device with detection entities, and a
-    doorbell press on a doorbell. A press from anything else goes to the
-    fallback. The caller has already checked that the device is paired to the station
-    that delivered the event.
+    Consumed: a catalogued detection on a device with detection entities, a motion
+    detection on a motion sensor, and a doorbell press on a doorbell. A press from
+    anything else goes to the fallback. The caller has already checked that the device
+    is paired to the station that delivered the event.
     """
     if has_doorbell_entity(kind) and event.detection is DetectionType.DOORBELL_PRESS:
         return True
     if (
-        kind is DeviceKind.SENSOR
-        and event.device_sn is not None
+        event.device_sn is not None
         and has_motion_sensor_entities(event.device_sn)
         and event.detection is DetectionType.MOTION
     ):

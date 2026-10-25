@@ -63,6 +63,10 @@ reloads the integration.
 
 ## Detections
 
+A motion sensor has a **Motion** binary sensor and a **Detection** event entity
+for motion only. Motion turns off after the configured Detection hold because
+the sensor does not report a motion-cleared event.
+
 Each camera has a Motion, Person, Pet and Vehicle sensor and a **Detection** event
 entity. A detection turns on only the sensor of its own kind (a person detection
 leaves Motion off) for the **Detection hold** seconds; the event entity fires for every
@@ -305,6 +309,9 @@ Which cameras get these: [devices.md](devices.md#pan-tilt-presets-and-zoom).
 ## Cloud push
 
 **Cloud push for detections** option, off by default.
+
+Motion detections from a T8910 sensor behind a HomeBase 2 arrive through cloud
+push. Whether a HomeBase 3 also delivers these events over LAN is unverified.
 
 - Home Assistant listens for eufy's push messages, as the eufy app on a phone does.
   The app keeps working.
