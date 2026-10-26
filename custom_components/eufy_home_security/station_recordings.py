@@ -74,6 +74,7 @@ from eufy_home_security import (
     entity_unique_id,
     redact_serial,
 )
+from eufy_home_security.p2p.messages import DB_QUERY_LOCAL_EVENTS, history_query_verb
 
 from . import detections, history
 from .const import (
@@ -97,6 +98,9 @@ THUMB_URL: Final = "/api/" + DOMAIN + "/recording_thumb/{entity_id}/{record_id}"
 THUMB_VIEW_NAME: Final = f"api:{DOMAIN}:recording_thumb"
 # How long a listing or page is reused per camera and arguments.
 LIST_CACHE_SECONDS: Final = 60.0
+# Opaque 10017 IDs need their listing metadata after the short response-cache TTL.
+# Keep a bounded per-entry LRU for recordings already shown by the UI.
+RECORD_LOOKUP_ITEMS: Final = 2048
 # The day counts a listing takes; the default is the entry's history days within these.
 MIN_LIST_DAYS: Final = 1
 MAX_LIST_DAYS: Final = 30
@@ -106,8 +110,8 @@ MIN_PAGE_LIMIT: Final = 1
 MAX_PAGE_LIMIT: Final = 50
 # The days one page asks at most (one station query each).
 PAGE_DAYS: Final = 7
-# A page cursor naming a day: ``YYYYMMDD``; a record id is that day times
-# ``_RECORD_DAY_FACTOR`` plus a sequence.
+# A page cursor naming a day: ``YYYYMMDD``; 10011 record IDs encode
+# a day times ``_RECORD_DAY_FACTOR`` plus a sequence, while 10017 IDs are opaque.
 _DAY_CURSOR_FORMAT: Final = "%Y%m%d"
 _DAY_CURSOR_LEN: Final = 8
 _RECORD_DAY_FACTOR: Final = 100_000
@@ -180,6 +184,20 @@ def _cursor_text(cursor: int | date | _RecordingCursor) -> str:
     if isinstance(cursor, _RecordingCursor):
         return f"{cursor.day:{_DAY_CURSOR_FORMAT}}:{cursor.record_id}"
     return cursor.strftime(_DAY_CURSOR_FORMAT) if isinstance(cursor, date) else str(cursor)
+
+
+def _record_cursor(last: HistoryRecord, station_serial: str) -> int | _RecordingCursor:
+    """Preserve the station's own calendar day for an opaque local-events ID.
+
+    The library owns date interpretation in ``HistoryRecord.station_day``;
+    HomeBase 3 keeps its existing date-encoded integer cursor.
+    """
+    if (
+        history_query_verb(station_serial) == DB_QUERY_LOCAL_EVENTS
+        and (station_day := last.station_day) is not None
+    ):
+        return _RecordingCursor(station_day, last.record_id)
+    return last.record_id
 
 
 def _page_days(
@@ -257,6 +275,7 @@ class StationRecordings:
         self._stored = stored
         self._listings: dict[_ListKey, tuple[float, list[HistoryRecord]]] = {}
         self._listing: dict[_ListKey, asyncio.Task[list[HistoryRecord]]] = {}
+        self._record_rows: OrderedDict[tuple[str, int], HistoryRecord] = OrderedDict()
         self._thumbs: OrderedDict[tuple[str, int], bytes] = OrderedDict()
         self.stats = RequestStats()
 
@@ -265,6 +284,7 @@ class StationRecordings:
         return {
             **asdict(self.stats),
             "cached_listings": len(self._listings),
+            "remembered_recordings": len(self._record_rows),
             "cached_thumbs": len(self._thumbs),
         }
 
@@ -292,18 +312,7 @@ class StationRecordings:
         """
         rows = await self._async_listing((camera.device_sn, days, limit, before, day), camera)
         if len(rows) >= limit:
-            last = rows[-1]
-            if (
-                getattr(camera.station, "serial", "").startswith("T8010")
-                and last.record_id
-                and last.started_at is not None
-            ):
-                return Page(
-                    rows,
-                    True,
-                    _RecordingCursor(last.started_at.astimezone().date(), last.record_id),
-                )
-            return Page(rows, True, last.record_id)
+            return Page(rows, True, _record_cursor(rows[-1], camera.station.serial))
         window_first, _start, oldest = _page_days(days, before, day)
         if oldest > window_first:
             return Page(rows, True, oldest - timedelta(days=1))
@@ -368,6 +377,17 @@ class StationRecordings:
                 type(err).__name__,
             )
             raise RecordingError(ERR_UNAVAILABLE, "The HomeBase did not answer") from err
+        # This cache is independent of the short-lived response cache. A 10017
+        # record ID does not encode the date required for async_history_record.
+        # HomeBase 3 continues using its existing direct-by-ID lookup.
+        if history_query_verb(station.serial) == DB_QUERY_LOCAL_EVENTS:
+            for row in rows:
+                if row.record_id and row.device_sn == camera.device_sn and row.video_path:
+                    record_key = (camera.device_sn, row.record_id)
+                    self._record_rows[record_key] = row
+                    self._record_rows.move_to_end(record_key)
+            while len(self._record_rows) > RECORD_LOOKUP_ITEMS:
+                self._record_rows.popitem(last=False)
         now = _clock()
         for old in [k for k, (at, _) in self._listings.items() if now - at >= LIST_CACHE_SECONDS]:
             del self._listings[old]
@@ -434,6 +454,15 @@ class StationRecordings:
                     return row
         if not camera.station.connected:
             raise RecordingError(ERR_UNAVAILABLE, "The HomeBase is not connected")
+        if history_query_verb(camera.station.serial) == DB_QUERY_LOCAL_EVENTS:
+            # The visible card may remain open beyond the 60-second list TTL or
+            # after another listing prunes that response. Keep its exact camera's
+            # metadata rather than trying a HomeBase 3 date-coded ID lookup.
+            key = (camera.device_sn, record_id)
+            if (known := self._record_rows.get(key)) is not None:
+                self._record_rows.move_to_end(key)
+                return known
+            raise RecordingError(ERR_NOT_FOUND, "Refresh the station list and try again")
         try:
             found = await camera.station.async_history_record(record_id)
         except UnsupportedError as err:
