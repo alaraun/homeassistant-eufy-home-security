@@ -133,9 +133,32 @@ def _clock() -> float:
     return time.monotonic()
 
 
-def _cursor(value: Any) -> int | date:
+@dataclass(frozen=True, slots=True)
+class _RecordingCursor:
+    """Opaque HomeBase 2 record ID with its independently known calendar day."""
+
+    day: date
+    record_id: int
+
+
+def _cursor(value: Any) -> int | date | _RecordingCursor:
     """A page cursor as ``next`` gave it: a record id, or a day as ``YYYYMMDD``."""
     text = str(value)
+    if ":" in text:
+        day_text, _, id_text = text.partition(":")
+        if not (
+            len(day_text) == _DAY_CURSOR_LEN
+            and day_text.isascii()
+            and day_text.isdigit()
+            and id_text.isascii()
+            and id_text.isdigit()
+            and int(id_text) > 0
+        ):
+            raise vol.Invalid("expected the cursor a page's next named")
+        try:
+            return _RecordingCursor(_day_of(day_text), int(id_text))
+        except ValueError as err:
+            raise vol.Invalid("expected the cursor a page's next named") from err
     if not (text.isascii() and text.isdigit()):
         raise vol.Invalid("expected the cursor a page's next named")
     if len(text) != _DAY_CURSOR_LEN:
@@ -153,15 +176,21 @@ def _day_of(text: str) -> date:
     return date(int(text[:4]), int(text[4:6]), int(text[6:]))
 
 
-def _cursor_text(cursor: int | date) -> str:
+def _cursor_text(cursor: int | date | _RecordingCursor) -> str:
+    if isinstance(cursor, _RecordingCursor):
+        return f"{cursor.day:{_DAY_CURSOR_FORMAT}}:{cursor.record_id}"
     return cursor.strftime(_DAY_CURSOR_FORMAT) if isinstance(cursor, date) else str(cursor)
 
 
-def _page_days(days: int, before: int | date | None, day: date | None) -> tuple[date, date, date]:
+def _page_days(
+    days: int, before: int | date | _RecordingCursor | None, day: date | None
+) -> tuple[date, date, date]:
     """A page's first day of the window, the day it starts at and the oldest day it asks."""
     today = datetime.now().astimezone().date()
     window_first = today - timedelta(days=days - 1)
-    if isinstance(before, int):
+    if isinstance(before, _RecordingCursor):
+        start = before.day
+    elif isinstance(before, int):
         try:
             start = _day_of(str(before // _RECORD_DAY_FACTOR))
         except ValueError:
@@ -173,7 +202,7 @@ def _page_days(days: int, before: int | date | None, day: date | None) -> tuple[
 
 
 # A listing's arguments: camera serial, days, limit, before, day (all None: the whole window).
-type _ListKey = tuple[str, int, int | None, int | date | None, date | None]
+type _ListKey = tuple[str, int, int | None, int | date | _RecordingCursor | None, date | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,7 +212,7 @@ class Page:
 
     rows: list[HistoryRecord]
     more: bool
-    next: int | date | None
+    next: int | date | _RecordingCursor | None
 
 
 class RecordingError(Exception):
@@ -249,7 +278,7 @@ class StationRecordings:
         *,
         days: int,
         limit: int,
-        before: int | date | None,
+        before: int | date | _RecordingCursor | None,
         day: date | None = None,
     ) -> Page:
         """Up to ``limit`` of the camera's recordings older than ``before``.
@@ -263,7 +292,18 @@ class StationRecordings:
         """
         rows = await self._async_listing((camera.device_sn, days, limit, before, day), camera)
         if len(rows) >= limit:
-            return Page(rows, True, rows[-1].record_id)
+            last = rows[-1]
+            if (
+                getattr(camera.station, "serial", "").startswith("T8010")
+                and last.record_id
+                and last.started_at is not None
+            ):
+                return Page(
+                    rows,
+                    True,
+                    _RecordingCursor(last.started_at.astimezone().date(), last.record_id),
+                )
+            return Page(rows, True, last.record_id)
         window_first, _start, oldest = _page_days(days, before, day)
         if oldest > window_first:
             return Page(rows, True, oldest - timedelta(days=1))
@@ -287,7 +327,13 @@ class StationRecordings:
         _sn, days, limit, before, day = key
         since: datetime | None = None
         until = day
-        cursor = before if isinstance(before, int) else None
+        cursor = (
+            before.record_id
+            if isinstance(before, _RecordingCursor)
+            else before
+            if isinstance(before, int)
+            else None
+        )
         if limit is not None:
             # A page: the walk starts at its day and stops before the day before its oldest
             _first, start, oldest = _page_days(days, before, day)
@@ -305,6 +351,7 @@ class StationRecordings:
                     days=days,
                     limit=limit,
                     before=cursor,
+                    before_day=before.day if isinstance(before, _RecordingCursor) else None,
                     until=until,
                     since=since,
                 )
