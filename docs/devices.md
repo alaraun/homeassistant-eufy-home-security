@@ -38,10 +38,6 @@ Details: [usage.md](usage.md#device-settings).
 
 ## Models from eufy app code
 
-T90M0 is also classified as a motion sensor by the eufy app model catalog, so it
-gets a Motion binary sensor and motion-only Detection event. This has not been
-verified on physical T90M0 hardware.
-
 The library knows these models from the eufy app, not from hardware. Their entities
 are offered, but none is tested:
 
@@ -49,6 +45,7 @@ are offered, but none is tested:
 |---|---|---|
 | T8161 | eufyCam 3C, on a HomeBase | as the T8160: detections, stills, live video, settings |
 | T8410 | Indoor Cam 2K Pan & Tilt, standalone | live video, pan/tilt one step; no presets, no zoom |
+| T90M0 | Motion sensor | as the T8910: Motion and a motion-only Detection event |
 
 Report what works and what does not ([below](#reporting-a-new-device)).
 

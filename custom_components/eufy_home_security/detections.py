@@ -8,9 +8,9 @@ list and the library's serial-to-model lookup. Nothing here reads a payload key 
 The router asks :func:`device_event_consumed` whether an entity listens for an event,
 and the platforms build their entities from the same :func:`paired_device_kinds` and
 :func:`has_detection_entities` / :func:`has_motion_sensor_entities`. Because both sides
-read one decision, the router
-never has to ask the dispatcher whether a listener exists: an event that no entity
-consumes is known to be one, and goes to the fallback bus event.
+read one decision, the router never has to ask the dispatcher whether a listener
+exists: an event that no entity consumes is known to be one, and goes to the fallback
+bus event.
 
 Station pushes (arming, alarm, alarm delay) are decided by
 :func:`station_event_consumed` and travel on :func:`station_signal`, one per station.

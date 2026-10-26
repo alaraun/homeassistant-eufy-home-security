@@ -3,12 +3,13 @@
 **Bool settings.** A readable bool setting with no control shows as a binary sensor.
 
 **Detection sensors.** Each camera (and doorbell) has Motion, Person, Pet and
-Vehicle sensors. A motion sensor has Motion only. A detection turns on only the sensor of its own class. The
-station announces a detection but never its end, so a sensor turns itself off on a
-timer, a configurable hold after the detection's own time rather than its arrival.
-A detection that arrives after its hold ran out leaves the sensor off; the
-detection event entity still fires for it. The hold is read once at platform setup,
-and the options flow's reload rebuilds the sensors with a new one.
+Vehicle sensors; a motion sensor has Motion only. A detection turns on only the
+sensor of its own class. The station announces a detection but never its end, so a
+sensor turns itself off on a timer, a configurable hold after the detection's own
+time rather than its arrival. A detection that arrives after its hold ran out
+leaves the sensor off; the detection event entity still fires for it. The hold is
+read once at platform setup, and the options flow's reload rebuilds the sensors
+with a new one.
 
 **Storage sensors.** From the station's storage record (``storage.py``): a problem
 sensor per medium (disk and eMMC) that is on while the library reports that medium not
