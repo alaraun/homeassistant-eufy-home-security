@@ -74,6 +74,7 @@ from eufy_home_security import (
 from eufy_home_security.cloud.const import LOGIN_BUDGET, LOGIN_BUDGET_WINDOW_SECONDS, scope_country
 from eufy_home_security.devices import Support
 
+from . import detections
 from .const import (
     CONF_COUNTRY,
     DOMAIN,
@@ -1453,23 +1454,32 @@ def sync_push_needed_issue(
 ) -> None:
     """Name the served stations whose detections need cloud push while it is off.
 
-    A station whose ``local_events`` is not ``Support.VERIFIED`` delivers its cameras'
-    detections only through cloud push (library guide). Fixable: the fix switches the
-    option on. Not persistent; the placeholders are the account's label and the
+    A station is named when one of its devices with detection entities (a standalone
+    camera: itself) is not ``Support.VERIFIED`` in ``Station.local_detections_for``: its
+    detections arrive only through cloud push (library guide). Fixable: the fix switches
+    the option on. Not persistent; the placeholders are the account's label and the
     stations' device names. The library's reason text is logged at debug, never shown.
     """
     issue_id = push_needed_issue_id(entry.entry_id)
     needing: list[str] = []
     if not cloud_push:
         for station in stations:
-            evidence = station.local_events
-            if evidence.support is Support.VERIFIED:
+            unverified = False
+            for serial, kind in detections.paired_device_kinds(station).items():
+                if not detections.has_detection_entities(kind):
+                    continue
+                evidence = station.local_detections_for(serial)
+                if evidence.support is Support.VERIFIED:
+                    continue
+                unverified = True
+                _LOGGER.debug(
+                    "Detections of %s on %s need cloud push: %s",
+                    redact_serial(serial),
+                    redact_serial(station.serial),
+                    evidence.source,
+                )
+            if not unverified:
                 continue
-            _LOGGER.debug(
-                "Detections from %s need cloud push: %s",
-                redact_serial(station.serial),
-                evidence.source,
-            )
             device = _station_device(hass, entry, station.serial)
             label = station_label(device) if device is not None else ""
             needing.append(label or redact_serial(station.serial))
