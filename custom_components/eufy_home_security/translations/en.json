@@ -438,7 +438,7 @@
       "message": "The device refused the request for {target}, so it did not change. Check in the eufy app that the device is online, then try again."
     },
     "siren_account_rejected": {
-      "message": "The station refused the request for {target}: it does not accept this eufy account. Check in the eufy app that the station is shared with this eufy account; trying again changes nothing until it is."
+      "message": "{station} refused the request for {target}: it does not accept this eufy account. Check in the eufy app that {station} is shared with this eufy account; trying again changes nothing until it is."
     },
     "siren_unsupported": {
       "message": "Home Assistant cannot use {target}: the eufy app offers no such alarm for this device, or eufy's device list no longer pairs it to its station. Nothing was sent; after changing devices in the eufy app, use Refresh device list."

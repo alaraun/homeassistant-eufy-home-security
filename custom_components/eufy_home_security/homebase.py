@@ -32,8 +32,10 @@ serial: devices are named by HA device id and name, a device HA does not know by
 
 Library errors: ``ConfigChangedError`` -> ``config_changed``, ``ModeInUseError`` ->
 ``mode_in_use`` (the library's reason), ``CommandNotAppliedError`` -> ``not_applied``,
-``AccountRejectedError`` (-104) -> ``account_rejected`` (the sharing hint), ``ValueError`` -> ``invalid_format``, ``UnsupportedError`` -> ``not_supported``, any
-other library error -> ``home_assistant_error``. The devices an error names
+``AccountRejectedError`` (-104) -> ``account_rejected`` (the sharing hint; so is a
+member's -104 in an arming group activation), ``ValueError`` -> ``invalid_format``,
+``UnsupportedError`` -> ``not_supported``, any other library error ->
+``home_assistant_error``. The devices an error names
 (``device_sns``) and the request's station read as their HA names; any other redacted
 serial as ``a device``.
 """
@@ -581,6 +583,15 @@ def _members(serials: _Serials, members: Iterable[Mapping[str, str]]) -> dict[st
 type _Handler = Callable[[ResolvedDevice, _Serials], Awaitable[dict[str, Any]]]
 
 
+def _account_hint(serials: _Serials, station_sn: str) -> str:
+    """The sharing hint for a station that refused this account (-104), by its HA name."""
+    return serials.message(
+        f"{station_sn} does not accept this eufy account: check in the eufy app that it is"
+        " shared with this account",
+        (station_sn,),
+    )
+
+
 def _error(err: EufySecurityError, serials: _Serials) -> tuple[str, str]:
     """The websocket error code and message of a library error."""
     text = serials.message(str(err), err.device_sns)
@@ -593,11 +604,7 @@ def _error(err: EufySecurityError, serials: _Serials) -> tuple[str, str]:
     if isinstance(err, CommandNotAppliedError):
         return ERR_NOT_APPLIED, text
     if isinstance(err, AccountRejectedError):
-        hint = (
-            f"{serials.station_sn} does not accept this eufy account: check in the eufy app"
-            " that it is shared with this account"
-        )
-        return ERR_ACCOUNT_REJECTED, serials.message(hint)
+        return ERR_ACCOUNT_REJECTED, _account_hint(serials, serials.station_sn)
     _LOGGER.debug("HomeBase request failed: %s", type(err).__name__)
     return websocket_api.ERR_HOME_ASSISTANT_ERROR, text
 
@@ -1055,7 +1062,11 @@ async def _ws_groups_activate(
                     "mode": mode_id(result.mode),
                     "outcome": str(result.outcome),
                     "error": (
-                        None if error is None else serials.message(str(error), error.device_sns)
+                        None
+                        if error is None
+                        else _account_hint(serials, result.device_sn)
+                        if isinstance(error, AccountRejectedError)
+                        else serials.message(str(error), error.device_sns)
                     ),
                 }
             )

@@ -382,8 +382,8 @@ def device_event_consumed(serial: str, kind: DeviceKind | None, event: SecurityE
 
     Consumed: a catalogued detection on a device with detection entities, and a
     doorbell press on a device with the ring event (:func:`has_doorbell_entity`). A
-    press from anything else goes to the fallback. The caller has already checked that the device is paired to the station
-    that delivered the event.
+    press from anything else goes to the fallback. The caller has already checked that
+    the device is paired to the station that delivered the event.
     """
     if event.detection is DetectionType.DOORBELL_PRESS and has_doorbell_entity(serial):
         return True

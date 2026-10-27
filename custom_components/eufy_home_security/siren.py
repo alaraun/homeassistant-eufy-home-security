@@ -105,6 +105,7 @@ class _EufySiren(SirenEntity):
         return errors.siren_failed(
             err,
             name if isinstance(name, str) else SIREN_KEY,
+            station_name=errors.station_display_name(self.coordinator),
             on_demand=self.coordinator.station.connects_on_demand,
         )
 

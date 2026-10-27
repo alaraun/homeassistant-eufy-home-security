@@ -1107,12 +1107,13 @@ def test_siren_failures_map_to_translated_errors(
     error: EufySecurityError, on_demand: bool, key: str
 ) -> None:
     """Each library error a siren command can meet names the siren, never library text."""
-    translated = errors.siren_failed(error, "Siren", on_demand=on_demand)
+    translated = errors.siren_failed(error, "Siren", station_name="Base", on_demand=on_demand)
 
     assert isinstance(translated, HomeAssistantError)
     assert translated.translation_domain == DOMAIN
     assert translated.translation_key == key
-    assert translated.translation_placeholders == {"target": "Siren"}
+    named = {"station": "Base"} if key == "siren_account_rejected" else {}
+    assert translated.translation_placeholders == {"target": "Siren", **named}
 
 
 # ── a standalone camera ───────────────────────────────────────────────────────

@@ -317,7 +317,7 @@ class EufyCameraCard extends HTMLElement {
     this._rec = null;       // { at } while this card's record action runs
     this._recStop = false;  // a stop_recording call is on its way; cleared when the clip ends
     this._srec = null;      // station recordings: { items, supported, loading, err }
-    this._sfetch = new Map(); // record id -> 'play' | 'save' while its fetch runs
+    this._sfetch = new Map(); // a row's ref -> 'play' | 'save' while its fetch runs
     this._thumbs = new Set(); // station thumbnail URLs already shown (rendered with src at once)
     this._onVis = () => this._visibility();
     this._dd = null;        // setting key whose dropdown is open
@@ -888,6 +888,8 @@ class EufyCameraCard extends HTMLElement {
       }).catch((e) => {
         if (this._sseq !== seq) return;
         const msg = (e && e.message) || 'The station did not answer';
+        // A cursor the integration no longer takes (a newer library): start again from the first page
+        if (more && e && e.code === 'invalid_format') { this._srec = { ...prev, moreLoading: false }; this._loadStation(false); return; }
         if (more) { this._srec = { ...prev, moreLoading: false }; this._toast(msg); this.render(); return; }
         this._srec = { items: same ? prev.items : null, supported: true, loading: false, err: msg, more: false, next: null, day };
         if (same) this._toast(msg);

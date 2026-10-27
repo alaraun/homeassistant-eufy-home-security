@@ -464,6 +464,7 @@ def siren_failed(
     err: EufySecurityError,
     target: str,
     *,
+    station_name: str = "",
     on_demand: bool = False,
 ) -> HomeAssistantError:
     """A siren start or stop the device did not confirm, refused, or could not receive.
@@ -485,7 +486,8 @@ def siren_failed(
     - Anything else (``DeviceTimeoutError``, ``CommunicationError``): the station did not
       answer; with ``on_demand`` the camera may be asleep.
 
-    ``target`` is the only placeholder: the entity's name, never a serial or library text.
+    Placeholders: ``target``, the entity's name, never a serial or library text; and
+    ``station`` (``station_name``) for the account refusal.
     """
     if is_session_replaced_failure(err):
         key = EXC_SESSION_REPLACED_SEE_REPAIRS
@@ -507,10 +509,13 @@ def siren_failed(
         key = EXC_CLOUD_UNAVAILABLE
     else:
         key = EXC_ON_DEMAND_UNREACHABLE if on_demand else EXC_STATION_UNREACHABLE
+    placeholders = {"target": target}
+    if key == EXC_SIREN_ACCOUNT_REJECTED:
+        placeholders["station"] = station_name
     return HomeAssistantError(
         translation_domain=DOMAIN,
         translation_key=key,
-        translation_placeholders={"target": target},
+        translation_placeholders=placeholders,
     )
 
 
@@ -997,13 +1002,23 @@ def recording_unsupported() -> ServiceValidationError:
     )
 
 
-def recording_failed_to_capture(err: EufySecurityError) -> HomeAssistantError:
+def recording_failed_to_capture(
+    err: EufySecurityError, *, target: str = "", station_name: str = ""
+) -> HomeAssistantError:
     """A live capture the camera did not deliver, as a translated error.
 
     Past the sessions per HomeBase (``LiveStreamLimitError``) names the live-stream
-    limit; any other library error (``CameraWakeError``, ``DeviceTimeoutError``, ...)
-    is the camera being unavailable. Never the library's text.
+    limit; a station that refused this account (``AccountRejectedError``, -104) gives
+    ``account_rejected`` naming ``target`` and ``station_name``; any other library error
+    (``CameraWakeError``, ``DeviceTimeoutError``, ...) is the camera being unavailable.
+    Never the library's text.
     """
+    if isinstance(err, AccountRejectedError):
+        return HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key=EXC_ACCOUNT_REJECTED,
+            translation_placeholders={"target": target, "station": station_name},
+        )
     if isinstance(err, LiveStreamLimitError):
         return HomeAssistantError(
             translation_domain=DOMAIN,

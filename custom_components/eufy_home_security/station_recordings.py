@@ -108,6 +108,8 @@ MIN_PAGE_LIMIT: Final = 1
 MAX_PAGE_LIMIT: Final = 50
 # The days one page asks at most (one station query each).
 PAGE_DAYS: Final = 7
+# The listed rows' record ids remembered by ref, for the stored-file check of a fetch.
+REF_IDS_ITEMS: Final = 1000
 # How long a thumbnail's signed path is valid.
 THUMB_SIGN_SECONDS: Final = 3600
 # The thumbnail LRU: at most this many stills, and none larger than this.
@@ -187,6 +189,7 @@ class StationRecordings:
         self._listings: dict[_ListKey, tuple[float, Page]] = {}
         self._listing: dict[_ListKey, asyncio.Task[Page]] = {}
         self._thumbs: OrderedDict[tuple[str, str], bytes] = OrderedDict()
+        self._ref_ids: OrderedDict[tuple[str, str], int] = OrderedDict()
         self.stats = RequestStats()
 
     def diagnostics(self) -> dict[str, Any]:
@@ -272,7 +275,19 @@ class StationRecordings:
         for old in [k for k, (at, _) in self._listings.items() if now - at >= LIST_CACHE_SECONDS]:
             del self._listings[old]
         self._listings[key] = (now, page)
+        for row in page.rows:
+            self._remember(camera, row)
         return page
+
+    def _remember(self, camera: _Camera, row: HistoryRecord) -> None:
+        """Note ``row``'s record id under its ref, the oldest dropped past ``REF_IDS_ITEMS``."""
+        if row.ref is None:
+            return
+        key = (camera.device_sn, row.ref)
+        self._ref_ids[key] = row.record_id
+        self._ref_ids.move_to_end(key)
+        while len(self._ref_ids) > REF_IDS_ITEMS:
+            self._ref_ids.popitem(last=False)
 
     async def async_rows_json(
         self, camera: _Camera, rows: list[HistoryRecord]
@@ -349,17 +364,22 @@ class StationRecordings:
             raise RecordingError(ERR_NOT_FOUND, "No such recording of this camera") from err
         except (EufySecurityError, TimeoutError) as err:
             raise RecordingError(ERR_UNAVAILABLE, "The HomeBase did not answer") from err
-        if found.device_sn != camera.device_sn or found.video_path is None:
+        # The library refuses a ref of another camera (RecordingRefError) for device_sn.
+        if found.video_path is None:
             raise RecordingError(ERR_NOT_FOUND, "No such recording of this camera")
+        self._remember(camera, found)
         return found
 
     async def async_fetch(self, camera: _Camera, ref: str) -> dict[str, str]:
         """Store the recording in the history unless it is; its media id and a play URL."""
         self.stats.fetch_calls += 1
+        # A recording listed before and stored since plays without the station.
+        if (record_id := self._ref_ids.get((camera.device_sn, ref))) is not None and (
+            path := await self._kept_path(camera, record_id)
+        ) is not None:
+            return await self._async_playable(path)
         row = await self.async_row(camera, ref)
-        stored = self._stored.stored_file(row.record_id, camera.device_sn)
-        path = self._stored.path_of(stored, camera.device_sn) if stored is not None else None
-        if path is not None and await self._hass.async_add_executor_job(self._stored.is_kept, path):
+        if (path := await self._kept_path(camera, row.record_id)) is not None:
             return await self._async_playable(path)
         if not Station.recording_settled(row):
             raise RecordingError(ERR_NOT_SETTLED, "The recording is still running")
@@ -391,6 +411,14 @@ class StationRecordings:
             )
             raise RecordingError(ERR_FAILED, "The recording could not be saved") from err
         return await self._async_playable(saved.path)
+
+    async def _kept_path(self, camera: _Camera, record_id: int) -> Path | None:
+        """The history file the recording ``record_id`` was stored to, if it still exists."""
+        stored = self._stored.stored_file(record_id, camera.device_sn)
+        path = self._stored.path_of(stored, camera.device_sn) if stored is not None else None
+        if path is None or not await self._hass.async_add_executor_job(self._stored.is_kept, path):
+            return None
+        return path
 
     async def _async_playable(self, path: Path) -> dict[str, str]:
         content_id = history.media_content_id(self._hass, path)

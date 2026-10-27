@@ -38,7 +38,7 @@ from eufy_home_security import (
     Station,
 )
 from eufy_home_security.p2p import session as session_module
-from eufy_home_security.testing import FakeStation
+from eufy_home_security.testing import FakeCloud, FakeStation, camera_device
 from fake_ffmpeg import REMUX_MAGIC
 from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
 from homeassistant.components.http.auth import async_sign_path
@@ -623,6 +623,56 @@ async def test_listing_errors_name_what_failed(
     assert reply["error"]["code"] == "unavailable"
 
 
+async def test_another_cameras_ref_and_cursor_are_refused_and_a_row_without_a_ref_has_no_links(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    hass_client_no_auth: ClientSessionGenerator,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Through the first camera a second camera's ref is ``not_found`` (fetch and
+    thumbnail) and its cursor ``invalid_format``; a row without a record id lists with no
+    ref and no thumbnail."""
+    fake_cloud.devices.append(
+        camera_device(OTHER_SN, station_sn=fake_station.serial, channel=1, name="Back")
+    )
+    fake_station.images["/zx/other.jpg"] = JPEG
+    fake_station.rows = [
+        _row(1, thumb_path="/zx/rec1.jpg"),
+        _row(0, thumb_path="/zx/rec0.jpg", record_id=0),
+        _row(3, device_sn=OTHER_SN, thumb_path="/zx/other.jpg"),
+        _row(4, device_sn=OTHER_SN),
+    ]
+    entry = await _set_up(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    first = _camera(hass)
+    second = entity_id_for(hass, CAMERA_DOMAIN, OTHER_SN, CAMERA_KEY)
+
+    listed = await _list(client, first)
+    other = await _list(client, second, limit=1)
+    other_row = other["recordings"][0]
+    _expire_listings(monkeypatch)
+
+    no_ref = [r for r in listed["recordings"] if r["record_id"] == 0]
+    assert no_ref
+    assert {(r["ref"], r["thumb_url"]) for r in no_ref} == {(None, None)}
+    fetched = await _fetch(client, first, other_row["ref"])
+    assert fetched["error"]["code"] == "not_found"
+    thumb = async_sign_path(
+        hass,
+        station_recordings.THUMB_URL.format(entity_id=first, ref=other_row["ref"]),
+        timedelta(minutes=5),
+    )
+    assert (await (await hass_client_no_auth()).get(thumb)).status == 404
+    page = await _ws(client, station_recordings.WS_LIST, entity_id=first, before=other["next"])
+    assert page["error"]["code"] == "invalid_format"
+    assert _videos(hass) == []
+    await _unload(hass, entry)
+
+
 # ── fetch ────────────────────────────────────────────────────────────────────
 
 
@@ -669,6 +719,15 @@ async def test_a_fetch_stores_the_recording_as_the_sync_would_and_returns_a_play
     again = await _fetch(client, entity_id, ref)
     assert again["result"] == {**reply["result"], "url": again["result"]["url"]}
     assert downloads == [row["record_id"]]
+
+    # Stored and listed before: plays from the history with the station silent, the listing gone.
+    async def silent(self: Station, ref: str, **kwargs: Any) -> HistoryRecord:
+        raise DeviceTimeoutError("no answer")
+
+    monkeypatch.setattr(Station, "async_history_record_by_ref", silent)
+    _expire_listings(monkeypatch)
+    offline = await _fetch(client, entity_id, ref)
+    assert offline["result"]["media_content_id"] == reply["result"]["media_content_id"]
 
     listed = await _list(client, entity_id)
     assert listed["recordings"][0]["media_content_id"] == content_id

@@ -32,6 +32,7 @@ from eufy_home_security import (
     MODE_ACTION_ALARM_AFFECTING,
     MODE_DELAY_CHOICES,
     SETTING_SECTIONS,
+    AccountRejectedError,
     AlarmChanged,
     CloudApiError,
     EufySecurity,
@@ -1878,6 +1879,42 @@ async def test_a_member_this_account_does_not_serve_fails_and_is_named_without_i
     text = json.dumps(result)
     assert unknown_sn not in text and redact_serial(unknown_sn) not in text
     await advance_to_poll(hass, 2)  # let a written mode's dump-settle timer fire
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_a_member_station_that_refuses_the_account_gets_the_sharing_hint(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A member station answering -104: ``failed`` with the sharing hint naming it by its
+    HA name, never the library's text or its serial."""
+    _house(fake_cloud, _group(mode=1, title="Home"))
+    entry = await set_up_warm(hass, seed_warm_cache)
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+
+    async def refused(mode: GuardMode) -> GuardMode:
+        raise AccountRejectedError(1224, -104)
+
+    monkeypatch.setattr(station, "async_set_guard_mode", refused)
+    client = await hass_ws_client(hass)
+    station_id = _device_id(hass, SYNTHETIC.station_sn)
+
+    result = await _ok(client, homebase.WS_GROUPS_ACTIVATE, device_id=station_id, group_id=_GROUP)
+
+    (own,) = result["results"]
+    name = dr.async_get(hass).async_get(station_id).name  # type: ignore[union-attr]
+    assert own["outcome"] == "failed"
+    assert own["error"] == (
+        f"{name} does not accept this eufy account: check in the eufy app that it is shared"
+        " with this account"
+    )
+    assert "-104" not in json.dumps(result)
+    _no_serial(result)
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
