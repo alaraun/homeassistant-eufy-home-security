@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 
@@ -159,8 +159,16 @@ async def _list(client: MockHAClientWebSocket, entity_id: str, **fields: Any) ->
     return result
 
 
-async def _fetch(client: MockHAClientWebSocket, entity_id: str, record_id: int) -> dict[str, Any]:
-    return await _ws(client, station_recordings.WS_FETCH, entity_id=entity_id, record_id=record_id)
+async def _fetch(
+    client: MockHAClientWebSocket, entity_id: str, record_id: int, *, ref: str | None = None
+) -> dict[str, Any]:
+    return await _ws(
+        client,
+        station_recordings.WS_FETCH,
+        entity_id=entity_id,
+        record_id=record_id,
+        **({"ref": ref} if ref is not None else {}),
+    )
 
 
 def _count_downloads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
@@ -237,8 +245,10 @@ async def test_the_listing_carries_each_recording_of_the_camera_newest_first(
     assert (first["settled"], second["settled"]) == (False, True)
     assert (first["kind"], first["media_content_id"]) == (None, None)
     assert first["thumb_url"].startswith(
-        f"/api/{DOMAIN}/recording_thumb/{_camera(hass)}/{running['record_id']}?authSig="
+        f"/api/{DOMAIN}/recording_thumb/{_camera(hass)}/{running['record_id']}/"
     )
+    assert "?authSig=" in first["thumb_url"]
+    assert isinstance(first["ref"], str)
     assert second["thumb_url"] is None
     assert second["size_bytes"] is None
     await _unload(hass, entry)
@@ -332,14 +342,16 @@ async def test_a_page_asks_only_the_days_it_needs_and_names_where_the_next_start
     first = await _list(client, entity_id, days=30, limit=5)
 
     assert [r["record_id"] for r in first["recordings"]] == ids[:5]
-    assert (first["more"], first["next"]) == (True, str(ids[4]))
+    assert first["more"] and isinstance(first["next"], str)
+    assert first["next"].startswith("v1.")
     assert _queried_days(fake_station) == [_day(0), _day(1)]
 
     fake_station.history_queries.clear()
     second = await _list(client, entity_id, days=30, limit=5, before=first["next"])
 
     assert [r["record_id"] for r in second["recordings"]] == ids[5:10]
-    assert (second["more"], second["next"]) == (True, str(ids[9]))
+    assert second["more"] and isinstance(second["next"], str)
+    assert second["next"] != first["next"]
     assert _queried_days(fake_station) == [_day(1), _day(2)]
     assert fake_station.history_queries[0]["start_id"] == ids[4]
 
@@ -348,7 +360,7 @@ async def test_a_page_asks_only_the_days_it_needs_and_names_where_the_next_start
 
     page_days = station_recordings.PAGE_DAYS
     assert [r["record_id"] for r in rest["recordings"]] == ids[10:]
-    assert (rest["more"], rest["next"]) == (True, _day(2 + page_days).strftime("%Y%m%d"))
+    assert rest["more"] and isinstance(rest["next"], str)
     assert _queried_days(fake_station) == [_day(back) for back in range(2, 2 + page_days)]
     assert _manager(entry).stats.list_queries == 3
     await _unload(hass, entry)
@@ -370,7 +382,7 @@ async def test_a_page_ending_on_a_days_last_row_continues_with_the_day_before(
     entity_id = _camera(hass)
 
     first = await _list(client, entity_id, days=3, limit=3)
-    assert (first["more"], first["next"]) == (True, str(today[-1]["record_id"]))
+    assert first["more"] and isinstance(first["next"], str)
 
     second = await _list(client, entity_id, days=3, before=first["next"])
 
@@ -435,14 +447,14 @@ async def test_a_page_asks_at_most_page_days_and_names_the_day_before_them(
     first = await _list(client, entity_id, days=days, limit=10)
 
     assert first["recordings"] == []
-    assert (first["more"], first["next"]) == (True, _day(page_days).strftime("%Y%m%d"))
+    assert first["more"] and isinstance(first["next"], str)
     assert _queried_days(fake_station) == [_day(back) for back in range(page_days)]
 
     fake_station.history_queries.clear()
     second = await _list(client, entity_id, days=days, limit=10, before=first["next"])
 
     assert [r["record_id"] for r in second["recordings"]] == [rare[0]["record_id"]]
-    assert (second["more"], second["next"]) == (True, _day(2 * page_days).strftime("%Y%m%d"))
+    assert second["more"] and isinstance(second["next"], str)
     assert _queried_days(fake_station) == [_day(back) for back in range(page_days, 2 * page_days)]
 
     fake_station.history_queries.clear()
@@ -559,6 +571,7 @@ async def test_listing_errors_name_what_failed(
         raise DeviceTimeoutError("no answer")
 
     monkeypatch.setattr(Station, "async_list_recordings", silent)
+    monkeypatch.setattr(Station, "async_list_recordings_page", silent)
     reply = await _ws(client, station_recordings.WS_LIST, entity_id=_camera(hass))
     assert reply["error"]["code"] == "unavailable"
     reply = await _ws(client, station_recordings.WS_LIST, entity_id=_camera(hass), limit=10)
@@ -569,31 +582,26 @@ async def test_listing_errors_name_what_failed(
     assert reply["error"]["code"] == "unavailable"
 
 
-def test_local_events_cursor_uses_station_local_day_for_every_10017_station() -> None:
-    """A camera's station-local day survives pagination regardless of HA's zone."""
-    row = HistoryRecord.from_row(
-        {
-            "record_id": 48123,
-            "device_sn": SYNTHETIC.camera_sn,
-            "start_time": "2031-02-03 00:15:00",
-            "end_time": "2031-02-03 00:15:10",
-            "time_zone": "+1400",
-            "storage_path": "/media/mmcblk0p1/Camera05/20310203001500.dat",
-        }
+async def test_malformed_cursor_is_rejected_without_station_queries(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Only the library may issue a cursor; HA passes opaque text unchanged."""
+    entry = await _set_up(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    reply = await _ws(
+        client,
+        station_recordings.WS_LIST,
+        entity_id=_camera(hass),
+        limit=4,
+        before="v1.r.20310203.12345.deadbeef",
     )
-    assert row.station_day == date(2031, 2, 3)
-    assert row.started_at is not None
-    assert row.started_at.astimezone(UTC).date() == date(2031, 2, 2)
-
-    for serial in ("T8010P2000012345", "T8410P2000012345"):
-        cursor = station_recordings._record_cursor(row, serial)
-        assert cursor == station_recordings._RecordingCursor(date(2031, 2, 3), 48123)
-        text = station_recordings._cursor_text(cursor)
-        assert text == "20310203:48123"
-        assert station_recordings._cursor(text) == cursor
-
-    hb3 = HistoryRecord.from_row(_row(5))
-    assert station_recordings._record_cursor(hb3, SYNTHETIC.station_sn) == hb3.record_id
+    assert reply["error"]["code"] == "invalid_format"
+    assert fake_station.history_queries == []
+    await _unload(hass, entry)
 
 
 # ── fetch ────────────────────────────────────────────────────────────────────
@@ -672,38 +680,38 @@ async def test_opaque_record_playback_and_thumbnail_survive_expired_list_cache(
     entity_id = _camera(hass)
     clock = [2000.0]
     monkeypatch.setattr(station_recordings, "_clock", lambda: clock[0])
-    monkeypatch.setattr(
-        station_recordings,
-        "history_query_verb",
-        lambda _serial: station_recordings.DB_QUERY_LOCAL_EVENTS,
-    )
     listed = await _list(client, entity_id, limit=10)
     assert len(listed["recordings"]) == 1
     assert listed["recordings"][0]["record_id"] == 48123
     thumb_url = listed["recordings"][0]["thumb_url"]
+    ref = listed["recordings"][0]["ref"]
+    assert isinstance(ref, str)
     assert thumb_url is not None
 
     async def forbidden_lookup(self: Station, record_id: int) -> HistoryRecord | None:
         pytest.fail("opaque HomeBase 2 ID must not use HomeBase 3 by-ID lookup")
 
+    original_by_id_lookup = Station.async_history_record
     monkeypatch.setattr(Station, "async_history_record", forbidden_lookup)
     clock[0] += station_recordings.LIST_CACHE_SECONDS + 1
     manager = _manager(entry)
     manager._listings.clear()  # another listing would evict the expired page
 
-    reply = await _fetch(client, entity_id, row["record_id"])
+    reply = await _fetch(client, entity_id, row["record_id"], ref=ref)
     assert reply["success"], reply
     assert len(_videos(hass)) == 1
     response = await (await hass_client_no_auth()).get(thumb_url)
     assert response.status == 200
     assert await response.read() == JPEG
 
+    # Restore the legacy lookup before testing the no-reference fallback.
+    monkeypatch.setattr(Station, "async_history_record", original_by_id_lookup)
     unknown = await _fetch(client, entity_id, 49999)
     assert unknown["error"]["code"] == station_recordings.ERR_NOT_FOUND
     await _unload(hass, entry)
 
 
-async def test_opaque_record_lookup_memory_is_bounded(
+async def test_reference_rejects_a_wrong_camera_or_invalid_text(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
     fake_station: FakeStation,
@@ -711,23 +719,19 @@ async def test_opaque_record_lookup_memory_is_bounded(
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The independent metadata LRU does not grow without limit."""
-    monkeypatch.setattr(station_recordings, "RECORD_LOOKUP_ITEMS", 2)
-    monkeypatch.setattr(
-        station_recordings,
-        "history_query_verb",
-        lambda _serial: station_recordings.DB_QUERY_LOCAL_EVENTS,
-    )
+    """Invalid references cannot be used to retrieve an uncached recording."""
+    fake_station.rows = [_row(2)]
     entry = await _set_up(hass, seed_warm_cache)
     client = await hass_ws_client(hass)
-    entity_id = _camera(hass)
-    for counter in (1, 2, 3):
-        fake_station.rows = [_row(counter)]
-        await _list(client, entity_id, limit=10, days=counter)
-    manager = _manager(entry)
-    assert len(manager._record_rows) == 2
-    assert (SYNTHETIC.camera_sn, _row(1)["record_id"]) not in manager._record_rows
-    assert (SYNTHETIC.camera_sn, _row(3)["record_id"]) in manager._record_rows
+    listed = await _list(client, _camera(hass))
+    row = listed["recordings"][0]
+    assert isinstance(row["ref"], str)
+    monkeypatch.setattr(station_recordings, "_clock", lambda: 10_000.0)
+    _manager(entry)._listings.clear()
+
+    bad = await _fetch(client, _camera(hass), row["record_id"], ref="v1.invalid")
+    assert bad["error"]["code"] == "invalid_format"
+    assert not _videos(hass)
     await _unload(hass, entry)
 
 

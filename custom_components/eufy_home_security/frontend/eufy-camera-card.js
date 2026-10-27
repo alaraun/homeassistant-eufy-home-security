@@ -908,7 +908,7 @@ class EufyCameraCard extends HTMLElement {
       [date, time] = t.split(' ');
     } catch (e) { const d = new Date(ms); date = d.toISOString().slice(0, 10); time = d.toTimeString().slice(0, 5); }
     // No kind: the integration names the file `event`, so it reads Event here too
-    return { id: `rec:${x.record_id}`, rid: x.record_id, date, time, kind: x.kind || 'event', video: true, station: true,
+    return { id: `rec:${x.record_id}`, rid: x.record_id, ref: typeof x.ref === 'string' ? x.ref : null, date, time, kind: x.kind || 'event', video: true, station: true,
       thumb: x.thumb_url || null, dur: typeof x.duration_s === 'number' ? x.duration_s : null, settled: !!x.settled,
       mcid: x.media_content_id || null, saved: !!x.media_content_id };
   }
@@ -923,7 +923,7 @@ class EufyCameraCard extends HTMLElement {
     this._sfetch.set(rid, play ? 'play' : 'save');
     this.render();
     const cam = this._camRef();
-    h.callWS({ type: STATION_FETCH_WS, entity_id: cam.id, record_id: rid }).then((r) => {
+    h.callWS({ type: STATION_FETCH_WS, entity_id: cam.id, record_id: rid, ...(it.ref ? { ref: it.ref } : {}) }).then((r) => {
       if (!r || !r.media_content_id) throw new Error('The station sent no file');
       it.mcid = r.media_content_id;
       it.saved = true;

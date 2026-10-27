@@ -137,7 +137,7 @@ def test_the_per_mode_entity_keys_are_each_delay_and_each_named_action_bit() -> 
         if s.key not in delays
         for flag in flags
     ]
-    assert (len(delays), len(bits)) == (10, 50)
+    assert (len(delays), len(bits)) == (10, 80)
     for key in (*delays, *bits):
         assert is_per_mode_entity(entity_unique_id(serial, key)), key
     for key in ("camera_action_away", "hb_keypad_is_password_set", "trigger_interval_time"):
