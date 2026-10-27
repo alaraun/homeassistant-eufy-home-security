@@ -28,6 +28,7 @@ from conftest import (
     wait_until,
 )
 from eufy_home_security import (
+    AccountRejectedError,
     ClipWriter,
     DetectionType,
     DeviceTimeoutError,
@@ -58,7 +59,7 @@ from pytest_homeassistant_custom_component.typing import (
     WebSocketGenerator,
 )
 
-from custom_components.eufy_home_security import history, recordings, station_recordings
+from custom_components.eufy_home_security import errors, history, recordings, station_recordings
 from custom_components.eufy_home_security.const import (
     CAMERA_KEY,
     CONF_EVENT_VIDEOS,
@@ -988,6 +989,94 @@ async def test_fetch_errors_name_what_failed(
     await _unload(hass, entry)
 
 
+async def test_a_station_that_refuses_the_account_answers_account_rejected_on_every_request(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    hass_client_no_auth: ClientSessionGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """-104 on the listing, the lookup by ref, the download and the still: the sharing
+    hint naming the station (a 403 for the still), never "did not answer"."""
+    fake_station.images["/zx/rec1.jpg"] = JPEG
+    row = _row(1, thumb_path="/zx/rec1.jpg")
+    fake_station.rows = [row]
+    entry = await _set_up(hass, seed_warm_cache)
+    coordinator = entry.runtime_data.coordinators[SYNTHETIC.station_sn]
+    client = await hass_ws_client(hass)
+    entity_id = _camera(hass)
+    listed = (await _list(client, entity_id))["recordings"][0]
+    hint = f"{errors.station_display_name(coordinator)} does not accept this eufy account"
+
+    async def refused(*args: Any, **kwargs: Any) -> Any:
+        raise AccountRejectedError(1103, -104)
+
+    def code(reply: dict[str, Any]) -> tuple[str, bool]:
+        return reply["error"]["code"], reply["error"]["message"].startswith(hint)
+
+    monkeypatch.setattr(Station, "async_list_recordings_page", refused)
+    page = await _ws(client, station_recordings.WS_LIST, entity_id=entity_id, limit=5)
+    assert code(page) == ("account_rejected", True)
+
+    monkeypatch.setattr(Station, "async_fetch_still", refused)
+    assert (await (await hass_client_no_auth()).get(listed["thumb_url"])).status == 403
+
+    _fail_downloads(monkeypatch, AccountRejectedError(1024, -104))
+    assert code(await _fetch(client, entity_id, listed["ref"])) == ("account_rejected", True)
+
+    _expire_listings(monkeypatch)
+    monkeypatch.setattr(Station, "async_history_record_by_ref", refused)
+    assert code(await _fetch(client, entity_id, listed["ref"])) == ("account_rejected", True)
+    assert _videos(hass) == []
+    await _unload(hass, entry)
+
+
+async def test_the_refs_remembered_for_stored_recordings_are_bounded_oldest_out(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With room for two refs, a listing of three keeps its two newest; a recording
+    found by a lookup by ref is remembered too, so it plays later while the station is
+    silent."""
+    monkeypatch.setattr(station_recordings, "REF_IDS_ITEMS", 2)
+    rows = [_row(3, ago=timedelta(minutes=5)), _row(2), _row(1, ago=timedelta(minutes=15))]
+    fake_station.rows = list(rows)
+    entry = await _set_up(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    entity_id = _camera(hass)
+    refs = await _refs(client, entity_id)
+    oldest, newest = refs[rows[2]["record_id"]], refs[rows[0]["record_id"]]
+    manager = _manager(entry)
+
+    assert manager.diagnostics()["cached_refs"] == 2
+    # Both stored by fetches from the fresh listing, then the listing expires and the
+    # station goes silent: the newest plays from the history, the evicted oldest cannot.
+    assert (await _fetch(client, entity_id, newest))["success"]
+    assert (await _fetch(client, entity_id, oldest))["success"]
+    _expire_listings(monkeypatch)
+    real = Station.async_history_record_by_ref
+
+    async def silent(self: Station, ref: str, **kwargs: Any) -> HistoryRecord:
+        raise DeviceTimeoutError("no answer")
+
+    monkeypatch.setattr(Station, "async_history_record_by_ref", silent)
+    assert (await _fetch(client, entity_id, newest))["success"]
+    assert (await _fetch(client, entity_id, oldest))["error"]["code"] == "unavailable"
+
+    # A lookup by ref remembers the row it found: silent again, it still plays.
+    monkeypatch.setattr(Station, "async_history_record_by_ref", real)
+    assert (await _fetch(client, entity_id, oldest))["success"]
+    monkeypatch.setattr(Station, "async_history_record_by_ref", silent)
+    assert (await _fetch(client, entity_id, oldest))["success"]
+    await _unload(hass, entry)
+
+
 @pytest.mark.parametrize("fake_station", [HOMEBASE_2_SN], indirect=True)
 @pytest.mark.usefixtures("short_storage")
 async def test_a_homebase_2_recording_pages_and_plays_after_its_listing_expired(
@@ -1012,7 +1101,8 @@ async def test_a_homebase_2_recording_pages_and_plays_after_its_listing_expired(
             "device_sn": SYNTHETIC.camera_sn,
             "start_time": start.strftime(_ROW_TIME),
             "end_time": (start + timedelta(seconds=10)).strftime(_ROW_TIME),
-            "storage_path": f"/zx/hdd_data0/Camera00/{record_id}.zxvideo",
+            # A HomeBase 2 names a recording by its start on its own card.
+            "storage_path": f"/media/mmcblk0p1/Camera00/{start.strftime('%Y%m%d%H%M%S')}.dat",
             "frame_num": 6,
         }
 
@@ -1041,6 +1131,9 @@ async def test_a_homebase_2_recording_pages_and_plays_after_its_listing_expired(
 
     assert reply["success"], reply
     assert lookups == [ref]
+    assert [path for *_head, path in fake_station.native_recording_requests] == [
+        fake_station.rows[2]["storage_path"]
+    ]
     assert [q["start_date"] for q in fake_station.history_queries][:1] == [
         (midnight - timedelta(days=1)).strftime("%Y%m%d")
     ]

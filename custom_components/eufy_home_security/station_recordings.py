@@ -33,7 +33,8 @@ Two websocket commands and one view, registered once per Home Assistant instance
   still that is obfuscated or absent.
 
 Errors carry a code: ``not_found``, ``not_settled``, ``unavailable``, ``busy`` (the
-station's session budget is spent) and ``failed``. Serials, paths, record ids and refs
+station's session budget is spent), ``account_rejected`` (the station refuses this eufy
+account, -104; the message is the sharing hint) and ``failed``. Serials, paths, record ids and refs
 are never logged.
 """
 
@@ -66,6 +67,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.hass_dict import HassKey
 
 from eufy_home_security import (
+    AccountRejectedError,
     EufySecurityError,
     HistoryRecord,
     LiveStreamLimitError,
@@ -77,7 +79,7 @@ from eufy_home_security import (
     redact_serial,
 )
 
-from . import detections, history
+from . import detections, errors, history
 from .const import (
     CAMERA_KEY,
     CONF_EVENT_HISTORY_DAYS,
@@ -123,6 +125,7 @@ ERR_NOT_SETTLED: Final = "not_settled"
 ERR_UNAVAILABLE: Final = "unavailable"
 ERR_BUSY: Final = "busy"
 ERR_FAILED: Final = "failed"
+ERR_ACCOUNT_REJECTED: Final = "account_rejected"
 
 _REGISTERED: HassKey[bool] = HassKey(f"{DOMAIN}_station_recordings")
 
@@ -198,6 +201,7 @@ class StationRecordings:
             **asdict(self.stats),
             "cached_listings": len(self._listings),
             "cached_thumbs": len(self._thumbs),
+            "cached_refs": len(self._ref_ids),
         }
 
     async def async_list(self, camera: _Camera, days: int) -> list[HistoryRecord]:
@@ -263,6 +267,9 @@ class StationRecordings:
             raise RecordingError(
                 websocket_api.ERR_INVALID_FORMAT, "The cursor names no page of this camera"
             ) from err
+        except AccountRejectedError as err:
+            self.stats.list_failed += 1
+            raise _account_refused(camera) from err
         except (EufySecurityError, TimeoutError) as err:
             self.stats.list_failed += 1
             _LOGGER.debug(
@@ -275,7 +282,8 @@ class StationRecordings:
         for old in [k for k, (at, _) in self._listings.items() if now - at >= LIST_CACHE_SECONDS]:
             del self._listings[old]
         self._listings[key] = (now, page)
-        for row in page.rows:
+        # Oldest first, so a long listing evicts its oldest refs, not its newest.
+        for row in reversed(page.rows):
             self._remember(camera, row)
         return page
 
@@ -362,6 +370,8 @@ class StationRecordings:
         except (RecordingRefError, RecordNotFoundError) as err:
             # Before EufySecurityError, which both are.
             raise RecordingError(ERR_NOT_FOUND, "No such recording of this camera") from err
+        except AccountRejectedError as err:
+            raise _account_refused(camera) from err
         except (EufySecurityError, TimeoutError) as err:
             raise RecordingError(ERR_UNAVAILABLE, "The HomeBase did not answer") from err
         # The library refuses a ref of another camera (RecordingRefError) for device_sn.
@@ -393,6 +403,9 @@ class StationRecordings:
         except LiveStreamLimitError as err:
             self.stats.fetch_failed += 1
             raise RecordingError(ERR_BUSY, "Every session of the HomeBase is in use") from err
+        except AccountRejectedError as err:
+            self.stats.fetch_failed += 1
+            raise _account_refused(camera) from err
         # Before OSError: TimeoutError is one.
         except (EufySecurityError, TimeoutError) as err:
             self.stats.fetch_failed += 1
@@ -446,6 +459,8 @@ class StationRecordings:
         self.stats.thumb_fetches += 1
         try:
             still = await camera.station.async_fetch_still(row.thumb_path)
+        except AccountRejectedError as err:
+            raise _account_refused(camera) from err
         except (EufySecurityError, TimeoutError) as err:
             raise RecordingError(ERR_UNAVAILABLE, "The HomeBase did not send it") from err
         if not still.is_image:
@@ -455,6 +470,19 @@ class StationRecordings:
             while len(self._thumbs) > THUMB_CACHE_ITEMS:
                 self._thumbs.popitem(last=False)
         return still.data
+
+
+def _account_refused(camera: _Camera) -> RecordingError:
+    """The station refused this eufy account (-104): the sharing hint, by its HA name."""
+    coordinator = camera.entry.runtime_data.coordinators.get(camera.station.serial)
+    name = (
+        errors.station_display_name(coordinator) if coordinator is not None else ""
+    ) or "The HomeBase"
+    return RecordingError(
+        ERR_ACCOUNT_REJECTED,
+        f"{name} does not accept this eufy account: check in the eufy app that it is shared"
+        " with this account",
+    )
 
 
 def _iso(value: Any) -> str | None:
@@ -593,7 +621,8 @@ class RecordingThumbView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request: web.Request, entity_id: str, ref: str) -> web.Response:
-        """The still as ``image/jpeg``; 404 for none, 503 while the station is away."""
+        """The still as ``image/jpeg``; 404 for none, 403 when the station refuses this
+        account, 503 while the station is away."""
         hass = request.app[KEY_HASS]
         try:
             camera = _camera(hass, entity_id)
@@ -604,6 +633,8 @@ class RecordingThumbView(HomeAssistantView):
             status = (
                 HTTPStatus.NOT_FOUND
                 if err.code == ERR_NOT_FOUND
+                else HTTPStatus.FORBIDDEN
+                if err.code == ERR_ACCOUNT_REJECTED
                 else HTTPStatus.SERVICE_UNAVAILABLE
             )
             return web.Response(status=status)

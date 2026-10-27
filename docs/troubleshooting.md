@@ -64,7 +64,7 @@ an account where no device was found too.
 |---|---|---|
 | setting not applied | the device rejected the write | the value last reported |
 | setting unconfirmed | no answer in time; the write may still apply | unknown until the next update |
-| does not accept this eufy account | the station refused the command for the account it was sent under (an arm, a setting, a siren, a pan/tilt or preset command, a HomeBase card change); trying again changes nothing. In the eufy app, check that the station is shared with this account | the value last reported |
+| does not accept this eufy account | the station refused the request for the account it was sent under (an arm, a setting, a siren, a pan/tilt or preset command, a record action, a HomeBase card change, the camera card's Station list); trying again changes nothing. In the eufy app, check that the station is shared with this account | a setting entity the value last reported; nothing is recorded or saved |
 
 ## Known limitations
 

@@ -5,6 +5,7 @@ FakeCloud and FakeStation."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime, time
@@ -34,6 +35,9 @@ from eufy_home_security import (
     SETTING_SECTIONS,
     AccountRejectedError,
     AlarmChanged,
+    ArmingActivation,
+    ArmingMemberResult,
+    ArmingOutcome,
     CloudApiError,
     EufySecurity,
     EufySecurityError,
@@ -1891,29 +1895,47 @@ async def test_a_member_station_that_refuses_the_account_gets_the_sharing_hint(
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A member station answering -104: ``failed`` with the sharing hint naming it by its
-    HA name, never the library's text or its serial."""
+    """A member station answering -104: ``failed`` with the sharing hint naming that
+    member (not the station the request targets) by its HA name, never the library's
+    text or its serial."""
+    other_sn = "T8030P2000099999"
     _house(fake_cloud, _group(mode=1, title="Home"))
     entry = await set_up_warm(hass, seed_warm_cache)
     station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, other_sn)}, name="Cabin"
+    )
 
     async def refused(mode: GuardMode) -> GuardMode:
         raise AccountRejectedError(1224, -104)
 
     monkeypatch.setattr(station, "async_set_guard_mode", refused)
+    eufy = entry.runtime_data.eufy
+    real = eufy.async_activate_arming_group
+
+    async def with_cabin(group_id: str) -> ArmingActivation:
+        activation = await real(group_id)
+        cabin = ArmingMemberResult(
+            device_sn=other_sn,
+            mode=GuardMode.AWAY,
+            outcome=ArmingOutcome.FAILED,
+            error=AccountRejectedError(1224, -104),
+        )
+        return dataclasses.replace(activation, results=(*activation.results, cabin))
+
+    monkeypatch.setattr(eufy, "async_activate_arming_group", with_cabin)
     client = await hass_ws_client(hass)
     station_id = _device_id(hass, SYNTHETIC.station_sn)
 
     result = await _ok(client, homebase.WS_GROUPS_ACTIVATE, device_id=station_id, group_id=_GROUP)
 
-    (own,) = result["results"]
+    own, other = result["results"]
     name = dr.async_get(hass).async_get(station_id).name  # type: ignore[union-attr]
-    assert own["outcome"] == "failed"
-    assert own["error"] == (
-        f"{name} does not accept this eufy account: check in the eufy app that it is shared"
-        " with this account"
-    )
+    hint = "does not accept this eufy account: check in the eufy app that it is shared with this account"
+    assert (own["outcome"], own["error"]) == ("failed", f"{name} {hint}")
+    assert (other["name"], other["outcome"], other["error"]) == ("Cabin", "failed", f"Cabin {hint}")
     assert "-104" not in json.dumps(result)
+    assert other_sn not in json.dumps(result)
     _no_serial(result)
     assert await hass.config_entries.async_unload(entry.entry_id)
 

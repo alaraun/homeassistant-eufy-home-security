@@ -203,7 +203,9 @@ or saving one copies it into the event history exactly as an event video: same n
 noted as copied (the option's sync skips it), kept and deleted with the history. A
 recording still running cannot be copied until it has finished. Needs **Event
 history** above 0 days. A HomeBase 2's recordings are listed, played and saved the
-same way (tested on a HomeBase 2 by a contributor).
+same way (the library's HomeBase 2 listing, playback and download checked on a
+HomeBase 2 by a contributor; the Station list with a HomeBase 2 tested on the fake
+station only).
 
 ### Recording a clip
 
