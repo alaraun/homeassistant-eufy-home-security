@@ -393,10 +393,12 @@ HomeBase (version strings by parameter id; the subsystems are unnamed) and
   and recording.
 - A setting it can only read is a diagnostic sensor or binary sensor, disabled until
   you enable it. A setting it can neither read nor write has no entity.
-- **Per-mode actions and delays** (what each camera and sensor does in Home, Away and
-  Custom 1–3, and each mode's entry and leaving delays) have no entities: the
+- **Per-mode actions and delays** (what each camera, doorbell and sensor does in Home,
+  Away and Custom 1–3, and each mode's entry and leaving delays) have no entities: the
   [HomeBase card](homebase-card.md) edits them. Their switches, numbers and sensors
-  from an older release are removed at the next start.
+  from an older release are removed at the next start. A doorbell behind a HomeBase
+  offers the actions the eufy app shows for its model (declared from the eufy app, not
+  tested).
 - A write shows the written value at once.
   - The device rejects it: error *setting not applied*; the entity keeps the value
     last reported.

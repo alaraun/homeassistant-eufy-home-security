@@ -965,6 +965,48 @@ async def test_a_motion_sensor_reacts_while_its_bit_is_clear_and_a_write_takes_l
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+_DOORBELL_SN: Final = "T8210P0000000001"
+
+
+@pytest.mark.usefixtures("away_table")
+async def test_a_doorbell_behind_the_homebase_has_its_types_actions_and_takes_a_write(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A paired doorbell lists the actions of its cloud type (a T8210: record, HomeBase
+    alarm, notification, monitoring centre), and a table naming it is written."""
+    fake_cloud.devices.append(
+        camera_device(_DOORBELL_SN, station_sn=fake_station.serial, channel=1, name="Porch")
+    )
+    # A doorbell's table uses a camera's parameters and bits: record + notification.
+    for key, raw in ((_CAMERA_ACTION_AWAY, 9), ("alarm_delay_away", 0), ("leaving_delay_away", 0)):
+        seed_setting(fake_station, key, raw, channel=1, model="T8160")
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    doorbell_id = _device_id(hass, _DOORBELL_SN)
+    before = await _payload(client, hass)
+    porch = next(d for d in before["devices"] if d["name"] == "Porch")
+    assert porch["kind"] == "doorbell"
+    listed = porch.get("flags") or [f["id"] for f in before["flags"]["doorbell"]]
+    assert set(listed) == {"record", "station_alarm", "notification", "report_monitor_center"}
+    flags = before["mode_tables"]["away"]["devices"][doorbell_id]["flags"]
+    assert (flags["record"], flags["notification"]) == (True, True)
+
+    reply = await _set_table(
+        client, hass, before["revision"], actions={doorbell_id: {"notification": False}}
+    )
+
+    assert reply["success"], reply
+    after = reply["result"]["mode_tables"]["away"]["devices"][doorbell_id]["flags"]
+    assert (after["record"], after["notification"]) == (True, False)
+    assert _DOORBELL_SN not in json.dumps(reply)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 # ── configuration writes, restart, alarm ─────────────────────────────────────
 
 
