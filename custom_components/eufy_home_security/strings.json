@@ -314,6 +314,9 @@
     "setting_command_unsupported": {
       "message": "{station} answered that the device does not support changing {target}. The entity shows the value {station} last reported."
     },
+    "account_rejected": {
+      "message": "{station} refused {target}: it does not accept this eufy account. Check in the eufy app that {station} is shared with this eufy account; trying again changes nothing until it is."
+    },
     "setting_device_unavailable": {
       "message": "The device {target} belongs to cannot be addressed, so nothing was sent and the entity still shows the value the HomeBase last reported. eufy's device list does not pair it to this HomeBase, or names no slot for it. If the device was removed or re-paired, reload the integration; otherwise check that it is still paired in the eufy app."
     },
@@ -433,6 +436,9 @@
     },
     "siren_rejected": {
       "message": "The device refused the request for {target}, so it did not change. Check in the eufy app that the device is online, then try again."
+    },
+    "siren_account_rejected": {
+      "message": "The station refused the request for {target}: it does not accept this eufy account. Check in the eufy app that the station is shared with this eufy account; trying again changes nothing until it is."
     },
     "siren_unsupported": {
       "message": "Home Assistant cannot use {target}: the eufy app offers no such alarm for this device, or eufy's device list no longer pairs it to its station. Nothing was sent; after changing devices in the eufy app, use Refresh device list."

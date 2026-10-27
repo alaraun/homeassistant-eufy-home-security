@@ -19,6 +19,7 @@ from conftest import (
     wait_until,
 )
 from eufy_home_security import (
+    AccountRejectedError,
     CommandNotAppliedError,
     CommandRejectedError,
     CommandUnsupportedError,
@@ -975,6 +976,8 @@ async def test_a_default_preset_while_a_capture_holds_the_camera_is_refused(
     [
         (CommandRejectedError(1350, -502), "default_preset_needs_confirmation"),
         (CommandNotAppliedError(1350), "setting_not_applied"),
+        # -104: the station does not accept the account the command was sent under.
+        (AccountRejectedError(1350, -104), "account_rejected"),
         (DeviceTimeoutError("no answer"), "on_demand_unreachable"),
         (DeviceBusyError("busy"), "capture_in_progress"),
         (UnsupportedError("preset 2 is not set"), "preset_not_set"),
@@ -1097,6 +1100,8 @@ async def test_a_pan_tilt_step_while_a_capture_holds_the_camera_is_refused(
     ("error", "translation_key"),
     [
         (CommandRejectedError(1700, 1), "pan_tilt_not_applied"),
+        # -104: the station does not accept the account the command was sent under.
+        (AccountRejectedError(1700, -104), "account_rejected"),
         (CommandUnsupportedError(1700, -108), "ptz_command_not_handled"),
         (DeviceTimeoutError("no answer"), "on_demand_unreachable"),
         (DeviceBusyError("busy"), "capture_in_progress"),
@@ -1281,6 +1286,8 @@ async def test_changing_the_live_view_preset_while_watching_turns_the_running_vi
         (UnsupportedError("preset 1 is not set"), "preset_not_set"),
         (CommandUnsupportedError(1700, -108), "ptz_command_not_handled"),
         (CommandRejectedError(1700, 1), "setting_rejected"),
+        # -104: the station does not accept the account the command was sent under.
+        (AccountRejectedError(1700, -104), "account_rejected"),
     ],
 )
 async def test_a_failed_turn_while_watching_keeps_the_choice_and_says_why(
@@ -1645,21 +1652,38 @@ async def test_the_goto_preset_action_turns_the_camera_and_leaves_the_view_choic
     await hass.async_block_till_done()
 
 
-async def test_a_goto_the_station_does_not_handle_says_so(
-    hass: HomeAssistant, fake_cloud, seed_warm_cache, built_clients, fake_station, monkeypatch
+@pytest.mark.parametrize(
+    ("error", "translation_key"),
+    [
+        # A -108 receipt is the station's refusal of a sent command, not an unset slot.
+        (CommandUnsupportedError(1700, -108), "ptz_command_not_handled"),
+        (CommandRejectedError(1700, 1), "pan_tilt_not_applied"),
+        # -104: the station does not accept the account the command was sent under.
+        (AccountRejectedError(1700, -104), "account_rejected"),
+    ],
+)
+async def test_a_goto_the_station_refuses_says_why(
+    hass: HomeAssistant,
+    fake_cloud,
+    seed_warm_cache,
+    built_clients,
+    fake_station,
+    monkeypatch,
+    error,
+    translation_key,
 ):
-    """A -108 receipt is the station's refusal of a sent command, not an unset slot."""
+    """A go-to the station answered with an error names the cause; nothing turned."""
     entry = await set_up_warm(hass, seed_warm_cache)
     await _read_slots(hass)
 
     async def _fails(self, sn, index, **kw):
-        raise CommandUnsupportedError(1700, -108)
+        raise error
 
     monkeypatch.setattr(Station, "async_goto_preset", _fails)
 
     with pytest.raises(HomeAssistantError) as exc:
         await _camera_action(hass, "goto_preset", preset=2)
-    assert exc.value.translation_key == "ptz_command_not_handled"
+    assert exc.value.translation_key == translation_key
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
@@ -2225,6 +2249,8 @@ async def test_a_save_while_a_capture_holds_the_camera_is_refused(
         (PresetSlotsFullError(6032, "full", slots=5, in_use=(0, 1, 2, 3, 4)), {}, "presets_full"),
         (CommandRejectedError(1700, -502), {}, "default_preset_needs_confirmation"),
         (CommandRejectedError(1700, 1), {}, "preset_not_saved"),
+        # -104: the station does not accept the account the command was sent under.
+        (AccountRejectedError(1700, -104), {}, "account_rejected"),
         (DeviceTimeoutError("no answer"), {}, "on_demand_unreachable"),
         (UnsupportedError("no slot 8"), {"preset": 8}, "preset_slot_unknown"),
         (UnsupportedError("declares no store"), {}, "preset_save_unsupported"),
@@ -2369,6 +2395,8 @@ async def test_deleting_the_default_slot_leaves_the_default_select_unknown(
     ("error", "translation_key"),
     [
         (CommandNotAppliedError(6033), "preset_not_deleted"),
+        # -104: the station does not accept the account the command was sent under.
+        (AccountRejectedError(6033, -104), "account_rejected"),
         (CommandUnsupportedError(1700, -108), "ptz_command_not_handled"),
         (
             PtzActionUnsupportedError("no delete", action=PtzAction.DELETE),

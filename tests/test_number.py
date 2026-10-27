@@ -18,6 +18,7 @@ from conftest import (
     state_of,
 )
 from eufy_home_security import (
+    AccountRejectedError,
     CameraWakeError,
     CommandNotAppliedError,
     CommandRejectedError,
@@ -113,13 +114,14 @@ async def test_a_camera_number_shows_the_station_value_and_writes_it(
 # ── writes the station did not apply or could not receive ────────────────────
 
 
-async def test_a_number_write_the_station_rejects_raises_setting_rejected(
+async def test_a_number_write_under_another_account_raises_the_account_hint(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """A rejected write raises the translated error naming the entity, and keeps the value."""
+    """A write under an account the station does not accept (-104) raises the account
+    hint naming the entity and the station, and keeps the value."""
     seed_setting(fake_station, _RETRIGGER, 30)
     entry = await set_up_warm(hass, seed_warm_cache)
     entity_id = entity_id_for(hass, NUMBER_DOMAIN, SYNTHETIC.camera_sn, _RETRIGGER)
@@ -131,7 +133,7 @@ async def test_a_number_write_the_station_rejects_raises_setting_rejected(
     await hass.async_block_till_done()
 
     assert raised.value.translation_domain == DOMAIN
-    assert raised.value.translation_key == "setting_rejected"
+    assert raised.value.translation_key == "account_rejected"
     placeholders = raised.value.translation_placeholders
     assert placeholders is not None
     assert set(placeholders) == {"target", "station"}
@@ -168,7 +170,7 @@ async def test_a_refusal_names_the_station_as_the_user_renamed_it(
         await set_number(hass, entity_id, 45)
     await hass.async_block_till_done()
 
-    assert raised.value.translation_key == "setting_rejected"
+    assert raised.value.translation_key == "account_rejected"
     assert raised.value.translation_placeholders is not None
     assert raised.value.translation_placeholders["station"] == "Hallway hub"
 
@@ -241,6 +243,8 @@ async def test_a_number_off_its_step_is_refused_as_a_validation_error(
     [
         (CommandNotAppliedError(1250), _NOT_APPLIED),
         (CommandRejectedError(1250, 6, "station reports another value"), "setting_rejected"),
+        # -104: the station does not accept the account the command was sent under.
+        (AccountRejectedError(1250, -104), "account_rejected"),
         # A -108 or -103 receipt: a rejection and an UnsupportedError at once.
         (CommandUnsupportedError(1250, -108), "setting_command_unsupported"),
         (CommandUnsupportedError(1250, -103), "setting_command_unsupported"),
@@ -265,14 +269,14 @@ def test_setting_write_failures_map_to_translated_errors(
 ) -> None:
     """Each library error a setting write can meet becomes a translated error.
 
-    The same twelve errors the arm path maps, so the two write paths cannot drift.
+    The same errors the arm path maps, so the two write paths cannot drift.
     """
     translated = errors.setting_write_failed(error, "Clip length", station_name="Base")
 
     assert isinstance(translated, HomeAssistantError)
     assert translated.translation_domain == DOMAIN
     assert translated.translation_key == key
-    named = {"station": "Base"} if key.startswith("setting_") else {}
+    named = {"station": "Base"} if key.startswith(("setting_", "account_")) else {}
     assert translated.translation_placeholders == {"target": "Clip length", **named}
 
 

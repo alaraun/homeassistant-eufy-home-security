@@ -237,6 +237,8 @@ EXC_GUARD_MODE_COMMAND_UNSUPPORTED: Final = "guard_mode_command_unsupported"
 EXC_SETTING_NOT_APPLIED: Final = "setting_not_applied"
 EXC_SETTING_REJECTED: Final = "setting_rejected"
 EXC_SETTING_COMMAND_UNSUPPORTED: Final = "setting_command_unsupported"
+# An arm or write the station refused for the account it was sent under (-104).
+EXC_ACCOUNT_REJECTED: Final = "account_rejected"
 # A setting write for a device the station cannot address: eufy's device list does
 # not pair it to this station, or its cloud record names no slot. Both are ordinary
 # runtime states rather than programming errors, so both are named.
@@ -320,6 +322,8 @@ EXC_SECURITY_MODE_NOT_SETTABLE: Final = "security_mode_not_settable"
 EXC_SIREN_NOT_CONFIRMED: Final = "siren_not_confirmed"
 # A siren command the device answered with an error (a -108 receipt included).
 EXC_SIREN_REJECTED: Final = "siren_rejected"
+# A siren command the station refused for the account it was sent under (-104).
+EXC_SIREN_ACCOUNT_REJECTED: Final = "siren_account_rejected"
 # A siren command the library refused before sending: the alarm is not offered, or the
 # device is not paired to the station in eufy's latest device list.
 EXC_SIREN_UNSUPPORTED: Final = "siren_unsupported"

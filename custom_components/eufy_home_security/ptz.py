@@ -8,7 +8,9 @@ thing about a failure. Nothing is sent for a refusal the library raises before
 sending (a capture holding the camera, an unset slot, dual view, a full camera).
 A ``CommandUnsupportedError`` is the station's own refusal of a command it sent on
 (receipt -108): it is caught before ``UnsupportedError`` and ``CommandError``, both of
-which it also is, so it is never reported as a refusal before sending.
+which it also is, so it is never reported as a refusal before sending. An
+``AccountRejectedError`` (-104) is caught before ``CommandError``: the account hint of a
+setting write, not the camera's own refusal.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from eufy_home_security import (
+    AccountRejectedError,
     CommandError,
     CommandNotAppliedError,
     CommandRejectedError,
@@ -51,6 +54,18 @@ def _not_handled(action: str, serial: str, err: CommandUnsupportedError) -> Exce
     return errors.ptz_command_not_handled()
 
 
+def _account_rejected(
+    coordinator: StationCoordinator, err: AccountRejectedError, target: str
+) -> Exception:
+    """The error of a command the station refused for this account (-104)."""
+    return errors.setting_write_failed(
+        err,
+        target,
+        station_name=errors.station_display_name(coordinator),
+        on_demand=coordinator.station.connects_on_demand,
+    )
+
+
 def _target(name: object, fallback: str) -> str:
     """The entity's translated name for an error message, else its key."""
     return name if isinstance(name, str) else fallback
@@ -71,6 +86,8 @@ async def async_pan_tilt(
         raise errors.capture_in_progress() from err
     except CommandUnsupportedError as err:
         raise _not_handled(f"Pan/tilt {direction.name}", serial, err) from err
+    except AccountRejectedError as err:
+        raise _account_rejected(coordinator, err, _target(name, direction.name.lower())) from err
     except CommandError as err:
         _LOGGER.debug(
             "Pan/tilt %s of %s refused by the camera: %s",
@@ -111,6 +128,8 @@ async def async_goto_preset(
     except UnsupportedError as err:
         _LOGGER.debug("Go-to %d of %s refused: slot not set, nothing sent", index, serial)
         raise errors.preset_not_set(index) from err
+    except AccountRejectedError as err:
+        raise _account_rejected(coordinator, err, _target(name, "goto_preset")) from err
     except CommandError as err:
         _LOGGER.debug("Go-to %d of %s refused by the camera: %s", index, serial, type(err).__name__)
         raise errors.pan_tilt_not_applied() from err
@@ -210,6 +229,8 @@ async def async_save_preset(
             raise errors.preset_saved_not_default() from err
         _LOGGER.debug("Save to %s of %s not read back (command %d)", target, serial, err.command)
         raise errors.preset_not_saved() from err
+    except AccountRejectedError as err:
+        raise _account_rejected(coordinator, err, _target(name, SERVICE_SAVE_PRESET)) from err
     except CommandRejectedError as err:
         _LOGGER.debug("Save to %s of %s rejected with code %d", target, serial, err.code)
         if err.code == _NEEDS_CONFIRMATION_CODE:
@@ -261,6 +282,8 @@ async def async_delete_preset(
     except UnsupportedError as err:
         _LOGGER.debug("Delete of preset %d of %s refused: %s", index, serial, type(err).__name__)
         raise errors.preset_slot_unknown(index) from err
+    except AccountRejectedError as err:
+        raise _account_rejected(coordinator, err, _target(name, SERVICE_DELETE_PRESET)) from err
     except CommandError as err:
         _LOGGER.debug(
             "Delete of preset %d of %s not applied: %s", index, serial, type(err).__name__

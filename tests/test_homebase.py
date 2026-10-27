@@ -814,6 +814,31 @@ async def test_a_table_the_station_does_not_apply_is_not_applied_named_without_s
 
 
 @pytest.mark.usefixtures("away_table")
+async def test_a_table_refused_for_the_account_answers_account_rejected_with_the_hint(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A -104 receipt: ``account_rejected``, the sharing hint naming the station by its HA
+    name, no serial."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    revision = (await _payload(client, hass))["revision"]
+    fake_station.mode_table_receipt_code = -104
+
+    reply = await _set_table(client, hass, revision)
+
+    assert reply["error"]["code"] == "account_rejected"
+    station_name = dr.async_get(hass).async_get(_device_id(hass, SYNTHETIC.station_sn)).name  # type: ignore[union-attr]
+    assert f"{station_name} does not accept this eufy account" in reply["error"]["message"]
+    assert "shared with this account" in reply["error"]["message"]
+    _no_serial(reply)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.usefixtures("away_table")
 async def test_a_table_two_devices_did_not_take_names_both_by_their_ha_names(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
@@ -1516,14 +1541,14 @@ async def test_an_error_names_its_device_by_the_ha_name(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-async def test_a_rejected_restart_is_home_assistant_error_without_serial(
+async def test_a_restart_under_another_account_is_account_rejected_without_serial(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """The station's own rejection (another account's command): the library's message,
+    """The station's refusal of another account's command (-104): ``account_rejected``,
     the station named by its HA name."""
     entry = await set_up_warm(hass, seed_warm_cache)
     client = await hass_ws_client(hass)
@@ -1532,7 +1557,7 @@ async def test_a_rejected_restart_is_home_assistant_error_without_serial(
 
     reply = await _ws(client, homebase.WS_RESTART, device_id=station_id)
 
-    assert reply["error"]["code"] == "home_assistant_error"
+    assert reply["error"]["code"] == "account_rejected"
     _no_serial(reply)
     assert await hass.config_entries.async_unload(entry.entry_id)
 

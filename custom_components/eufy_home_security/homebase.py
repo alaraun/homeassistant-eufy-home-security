@@ -32,7 +32,7 @@ serial: devices are named by HA device id and name, a device HA does not know by
 
 Library errors: ``ConfigChangedError`` -> ``config_changed``, ``ModeInUseError`` ->
 ``mode_in_use`` (the library's reason), ``CommandNotAppliedError`` -> ``not_applied``,
-``ValueError`` -> ``invalid_format``, ``UnsupportedError`` -> ``not_supported``, any
+``AccountRejectedError`` (-104) -> ``account_rejected`` (the sharing hint), ``ValueError`` -> ``invalid_format``, ``UnsupportedError`` -> ``not_supported``, any
 other library error -> ``home_assistant_error``. The devices an error names
 (``device_sns``) and the request's station read as their HA names; any other redacted
 serial as ``a device``.
@@ -59,6 +59,7 @@ from homeassistant.util.hass_dict import HassKey
 from eufy_home_security import (
     MODE_ACTION_ALARM_AFFECTING,
     MODE_DELAY_CHOICES,
+    AccountRejectedError,
     ArmingGroupList,
     ArmingGroupPreset,
     CommandNotAppliedError,
@@ -139,6 +140,7 @@ ALARM_STOP: Final = "stop"
 ERR_CONFIG_CHANGED: Final = "config_changed"
 ERR_MODE_IN_USE: Final = "mode_in_use"
 ERR_NOT_APPLIED: Final = "not_applied"
+ERR_ACCOUNT_REJECTED: Final = "account_rejected"
 _REGISTERED: HassKey[bool] = HassKey(f"{DOMAIN}_homebase")
 # At most one subscription event per this many seconds.
 _DEBOUNCE_S: Final = 0.5
@@ -484,6 +486,11 @@ class _Serials:
             websocket_api.ERR_INVALID_FORMAT, f"{device_id} is not a device of this HomeBase"
         )
 
+    @property
+    def station_sn(self) -> str:
+        """The target station's serial."""
+        return self._target.station.serial
+
     def message(self, text: str, device_sns: Iterable[str] = ()) -> str:
         """``text`` with ``device_sns`` (the devices a library error names) and the
         target station, plain or redacted, as their HA names; any other redacted serial
@@ -585,6 +592,12 @@ def _error(err: EufySecurityError, serials: _Serials) -> tuple[str, str]:
         return websocket_api.ERR_NOT_SUPPORTED, text
     if isinstance(err, CommandNotAppliedError):
         return ERR_NOT_APPLIED, text
+    if isinstance(err, AccountRejectedError):
+        hint = (
+            f"{serials.station_sn} does not accept this eufy account: check in the eufy app"
+            " that it is shared with this account"
+        )
+        return ERR_ACCOUNT_REJECTED, serials.message(hint)
     _LOGGER.debug("HomeBase request failed: %s", type(err).__name__)
     return websocket_api.ERR_HOME_ASSISTANT_ERROR, text
 

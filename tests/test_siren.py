@@ -26,6 +26,7 @@ from conftest import (
     wait_until,
 )
 from eufy_home_security import (
+    AccountRejectedError,
     CameraWakeError,
     CipherUnusableError,
     CommandNotAppliedError,
@@ -1086,6 +1087,8 @@ async def test_a_homebase_siren_failure_raises_a_translated_error(
     [
         (CommandNotAppliedError(_SET_DEVS_TONE_FILE), False, "siren_not_confirmed"),
         (CommandRejectedError(_SET_DEVS_TONE_FILE, 6, "refused"), False, "siren_rejected"),
+        # -104: the station does not accept the account the command was sent under.
+        (AccountRejectedError(_SET_DEVS_TONE_FILE, -104), False, "siren_account_rejected"),
         # A -108 receipt: a rejection and an UnsupportedError at once.
         (CommandUnsupportedError(_SET_DEVS_TONE_FILE, -108), False, "siren_rejected"),
         (CameraWakeError(_SET_DEVS_TONE_FILE, -204), False, "on_demand_unreachable"),

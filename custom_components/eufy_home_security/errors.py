@@ -39,6 +39,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.hass_dict import HassKey
 
 from eufy_home_security import (
+    AccountRejectedError,
     AuthenticationError,
     CameraWakeError,
     CipherUnavailableError,
@@ -83,6 +84,7 @@ from .const import (
     ERROR_SESSION_REJECTED,
     ERROR_SESSION_REPLACED,
     ERROR_VERIFICATION_REFUSED,
+    EXC_ACCOUNT_REJECTED,
     EXC_AUTH_FAILED,
     EXC_CACHE_UNAVAILABLE,
     EXC_CAMERA_UNAVAILABLE,
@@ -124,6 +126,7 @@ from .const import (
     EXC_SETTING_REJECTED,
     EXC_SETTING_UNCONFIRMED,
     EXC_SETTING_VALUE_INVALID,
+    EXC_SIREN_ACCOUNT_REJECTED,
     EXC_SIREN_DURATION_INVALID,
     EXC_SIREN_NOT_CONFIRMED,
     EXC_SIREN_REJECTED,
@@ -275,6 +278,7 @@ def failure_reason(err: BaseException) -> str:
 # The messages that name the station whose answer they report.
 _STATION_NAMED_KEYS: Final = frozenset(
     {
+        EXC_ACCOUNT_REJECTED,
         EXC_GUARD_MODE_COMMAND_UNSUPPORTED,
         EXC_GUARD_MODE_NOT_APPLIED,
         EXC_GUARD_MODE_NOT_SUPPORTED,
@@ -287,10 +291,13 @@ _STATION_NAMED_KEYS: Final = frozenset(
 
 
 def _command_key(err: CommandError, not_applied: str, unsupported: str, rejected: str) -> str:
-    """The key of a station's answer: acknowledged and not acted on (the wrong-account
-    case), "not supported by this device" (-108, -103), or any other refusal."""
+    """The key of a station's answer: acknowledged and not acted on (usually an owner id
+    it does not hold), refused for the account (-104), "not supported by this device"
+    (-108, -103), or any other refusal."""
     if isinstance(err, CommandNotAppliedError):
         return not_applied
+    if isinstance(err, AccountRejectedError):
+        return EXC_ACCOUNT_REJECTED
     if isinstance(err, CommandUnsupportedError):
         return unsupported
     return rejected
@@ -313,9 +320,10 @@ def arm_failed(
       not wake the camera; the message says the camera may be asleep.
     - ``CommandError``: the station was reached and did not apply the mode. Acknowledged
       and never acted on (``CommandNotAppliedError``, usually an owner id it does not
-      hold: the only message with the sharing hint), answered "not supported"
-      (``CommandUnsupportedError``, -108 or -103), or answered with another error
-      (``CommandRejectedError``).
+      hold), refused for the account it was sent under (``AccountRejectedError``, -104:
+      ``account_rejected``), answered "not supported" (``CommandUnsupportedError``, -108
+      or -103), or answered with another error (``CommandRejectedError``). The first two
+      carry the sharing hint.
     - ``UnsupportedError`` (any other): the library refused before sending, a station
       model whose guard mode it does not set.
     - ``KeyRejectedError``: the write reconnected and the station rejected even its
@@ -466,6 +474,7 @@ def siren_failed(
     - ``CameraWakeError``: the station could not wake the camera.
     - ``CommandNotAppliedError``: acknowledged, never confirmed; the siren may or may
       not have changed.
+    - ``AccountRejectedError`` (-104): the station does not accept this account.
     - ``CommandError`` (any other, a -108 ``CommandUnsupportedError`` included): the
       device answered with an error.
     - ``UnsupportedError``: refused before sending (the alarm is not offered here, or the
@@ -483,6 +492,8 @@ def siren_failed(
         key = EXC_ON_DEMAND_UNREACHABLE
     elif isinstance(err, CommandNotAppliedError):
         key = EXC_SIREN_NOT_CONFIRMED
+    elif isinstance(err, AccountRejectedError):
+        key = EXC_SIREN_ACCOUNT_REJECTED
     elif isinstance(err, CommandError):
         key = EXC_SIREN_REJECTED
     elif isinstance(err, UnsupportedError):
