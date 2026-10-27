@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.23-3';
+const CARD_VERSION = '2026.10.27-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -869,8 +869,8 @@ class EufyCameraCard extends HTMLElement {
         // Hidden at once unless it is the open sub-tab (then from the next opening: the tabs stay under the pointer)
         if (!supported && this._htab !== 'station') this._stationTab = false;
         const rows = supported ? (Array.isArray(r.recordings) ? r.recordings : []).map(x => this._parseRecording(x)).filter(Boolean) : [];
-        const had = new Set(base.map(x => x.rid));
-        const added = rows.filter(x => !had.has(x.rid));
+        const had = new Set(base.map(x => x.id));
+        const added = rows.filter(x => !had.has(x.id));
         const next = supported && r.more && r.next ? String(r.next) : null;
         if (!added.length && next && next !== before) { ask(next); return; }
         const items = [...base, ...added];
@@ -883,7 +883,7 @@ class EufyCameraCard extends HTMLElement {
           // The first enabled button of the first added row, else Show more
           const first = items[base.length];
           const to = (k) => { this._focus(k); const f = this.shadowRoot.activeElement; return !!f && f.dataset.focus === k; };
-          if (!first || !(to(`hist-${first.id}`) || to(`rsave-${first.rid}`))) this._focus('smore');
+          if (!first || !(to(`hist-${first.id}`) || to(`rsave-${first.rid || first.id}`))) this._focus('smore');
         }
       }).catch((e) => {
         if (this._sseq !== seq) return;
@@ -900,7 +900,9 @@ class EufyCameraCard extends HTMLElement {
   // One row of the station list, with its start as date and HH:MM in HA's time zone (like a history file name)
   _parseRecording(x) {
     const ms = x ? Date.parse(x.started_at) : NaN;
-    if (isNaN(ms) || typeof x.record_id !== 'number') return null;
+    if (isNaN(ms)) return null;
+    // The library's ref names the recording in every later request; a row without one is listed, not playable
+    const rid = typeof x.ref === 'string' && x.ref ? x.ref : null;
     let date, time;
     try {
       const t = new Intl.DateTimeFormat('sv-SE', { timeZone: (this._hass.config && this._hass.config.time_zone) || undefined,
@@ -908,7 +910,7 @@ class EufyCameraCard extends HTMLElement {
       [date, time] = t.split(' ');
     } catch (e) { const d = new Date(ms); date = d.toISOString().slice(0, 10); time = d.toTimeString().slice(0, 5); }
     // No kind: the integration names the file `event`, so it reads Event here too
-    return { id: `rec:${x.record_id}`, rid: x.record_id, date, time, kind: x.kind || 'event', video: true, station: true,
+    return { id: rid ? `rec:${rid}` : `rec:${x.record_id}@${ms}`, rid, date, time, kind: x.kind || 'event', video: true, station: true,
       thumb: x.thumb_url || null, dur: typeof x.duration_s === 'number' ? x.duration_s : null, settled: !!x.settled,
       mcid: x.media_content_id || null, saved: !!x.media_content_id };
   }
@@ -918,12 +920,12 @@ class EufyCameraCard extends HTMLElement {
   _fetchRecording(rid, play) {
     const h = this._hass;
     const it = this._srec && this._srec.items && this._srec.items.find(x => x.rid === rid);
-    if (!h || !it || this._sfetch.has(rid) || !it.settled) return;
+    if (!h || !rid || !it || this._sfetch.has(rid) || !it.settled) return;
     if (it.mcid) { if (play) this._showRecording(it); return; }
     this._sfetch.set(rid, play ? 'play' : 'save');
     this.render();
     const cam = this._camRef();
-    h.callWS({ type: STATION_FETCH_WS, entity_id: cam.id, record_id: rid }).then((r) => {
+    h.callWS({ type: STATION_FETCH_WS, entity_id: cam.id, ref: rid }).then((r) => {
       if (!r || !r.media_content_id) throw new Error('The station sent no file');
       it.mcid = r.media_content_id;
       it.saved = true;
@@ -1511,7 +1513,7 @@ class EufyCameraCard extends HTMLElement {
     const rp = has('rplay') || has('rsave');
     if (rp) {
       const save = rp.dataset.rsave !== undefined;
-      this._fetchRecording(parseInt(save ? rp.dataset.rsave : rp.dataset.rplay, 10), !save);
+      this._fetchRecording(save ? rp.dataset.rsave : rp.dataset.rplay, !save);
       return;
     }
     if (has('srefresh')) { this._loadStation(); return; }
@@ -2637,13 +2639,13 @@ class EufyCameraCard extends HTMLElement {
       const th = it.thumb && !THUMB_BAD.has(it.thumb) ? it.thumb : null;
       const img = th ? (this._thumbs.has(th) ? `<img src="${escapeHtml(th)}" alt="" draggable="false">` : `<img data-src="${escapeHtml(th)}" alt="" draggable="false">`) : '<ha-icon icon="mdi:filmstrip"></ha-icon>';
       const what = `${lb.kind}, ${lb.when}${dur ? `, ${dur}` : ''}`;
-      const btn = (k, icon, label, off) => `<button class="sb${f === k ? ' run' : ''}" type="button" data-r${k}="${it.rid}" data-focus="${k === 'play' ? `hist-${escapeHtml(it.id)}` : `rsave-${it.rid}`}"
+      const btn = (k, icon, label, off) => `<button class="sb${f === k ? ' run' : ''}" type="button" data-r${k}="${escapeHtml(it.rid || '')}" data-focus="${k === 'play' ? `hist-${escapeHtml(it.id)}` : `rsave-${escapeHtml(it.rid || it.id)}`}"
               aria-label="${escapeHtml(`${label} ${what}${f === k ? ', fetching from the station' : ''}`)}"${f === k || (f && !off) ? ' aria-disabled="true"' : ''}${off ? ' disabled' : ''}>${f === k ? '<i class="spin sm" aria-hidden="true"></i>' : `<ha-icon icon="${icon}"></ha-icon>`}</button>`;
       return `<div class="srow${on ? ' on' : ''}${it.settled ? '' : ' unset'}" role="listitem">
             <span class="sth">${img}</span>
             <span class="stx"><span class="sl1"><span class="swhen">${escapeHtml(lb.when)}</span>${dur ? `<span class="sdur">${dur}</span>` : ''}</span>
               <span class="sl2"><span class="skind"><ha-icon icon="${lb.icon}"></ha-icon><span>${escapeHtml(lb.kind)}</span></span>${state ? `<span class="sst${it.saved ? ' ok' : ''}">${state}</span>` : ''}</span></span>
-            ${btn('play', 'mdi:play', 'Play', !it.settled)}${btn('save', it.saved ? 'mdi:check' : 'mdi:download', it.saved ? 'Saved:' : 'Save to the history:', !it.settled || it.saved)}
+            ${btn('play', 'mdi:play', 'Play', !it.settled || !it.rid)}${btn('save', it.saved ? 'mdi:check' : 'mdi:download', it.saved ? 'Saved:' : 'Save to the history:', !it.settled || it.saved || !it.rid)}
           </div>`;
     };
     const sMsg = t => `<div class="slist msg" role="status"><div class="hmsg">${t}</div></div>`;
