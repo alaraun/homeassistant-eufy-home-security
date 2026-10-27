@@ -46,6 +46,7 @@ from eufy_home_security.devices import (
     DeviceKind,
     Support,
     model_for_serial,
+    profile_for_serial,
 )
 
 from .const import (
@@ -345,12 +346,11 @@ def standalone_wake_allowed(station: Station, serial: str) -> bool:
     return device_kind(serial) in DETECTION_ENTITY_KINDS or has_live_stream(station, serial)
 
 
-def has_doorbell_entity(kind: DeviceKind | None) -> bool:
-    """Whether a device of ``kind`` gets the doorbell ring event.
-
-    Only the library catalog's DOORBELL, never a serial-prefix list.
-    """
-    return kind is DeviceKind.DOORBELL
+def has_doorbell_entity(serial: str) -> bool:
+    """Whether the device ``serial`` gets the doorbell ring event: the library grades its
+    ``DOORBELL_RING`` (a doorbell, a video smart lock), never a serial-prefix list."""
+    profile = profile_for_serial(serial)
+    return profile is not None and profile.support(Capability.DOORBELL_RING) is not Support.UNKNOWN
 
 
 def detection_event_type(event: SecurityEvent) -> str | None:
@@ -376,15 +376,16 @@ def is_kind_upgrade(event: SecurityEvent, delivered_rank: int | None) -> bool:
     )
 
 
-def device_event_consumed(kind: DeviceKind | None, event: SecurityEvent) -> bool:
-    """Whether an entity of a paired device of ``kind`` consumes the device event ``event``.
+def device_event_consumed(serial: str, kind: DeviceKind | None, event: SecurityEvent) -> bool:
+    """Whether an entity of the paired device ``serial`` (of entity kind ``kind``) consumes
+    the device event ``event``.
 
     Consumed: a catalogued detection on a device with detection entities, and a
-    doorbell press on a doorbell. A press from anything else goes to the
-    fallback. The caller has already checked that the device is paired to the station
+    doorbell press on a device with the ring event (:func:`has_doorbell_entity`). A
+    press from anything else goes to the fallback. The caller has already checked that the device is paired to the station
     that delivered the event.
     """
-    if has_doorbell_entity(kind) and event.detection is DetectionType.DOORBELL_PRESS:
+    if event.detection is DetectionType.DOORBELL_PRESS and has_doorbell_entity(serial):
         return True
     return has_detection_entities(kind) and detection_event_type(event) is not None
 
