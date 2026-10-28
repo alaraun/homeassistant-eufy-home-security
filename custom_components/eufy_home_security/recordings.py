@@ -19,7 +19,10 @@ finished and stored by ``history.EventHistory.async_save_clip``:
   (``station_recordings.py``).
 - **What.** A pass lists the station's recordings since the newest one stored (with a
   margin, so one left unsettled or failed is listed again), keeps the settled rows
-  not stored yet, and downloads them oldest first, one at a time.
+  not stored yet, and downloads them oldest first, one at a time. It lists one
+  host-local day per request (the library's days), oldest first, and stores a day's
+  rows before asking the next, so each request stays within ``LIST_TIMEOUT_SECONDS``
+  on a slow station and a pass that stops resumes at the day it stopped on.
 - **Names.** A recording whose detection's still was written takes that still's stamp
   and kind (the history notes them per camera and ``record_id``), so a browser pairs
   the two by name; any other is named by the recording's start, kind ``event``.
@@ -44,7 +47,7 @@ import logging
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
@@ -87,11 +90,13 @@ _STORE_MINOR_VERSION: Final = 2
 _EVENT_KIND: Final = "event"
 # Rows that started up to this long before the newest stored one are listed again.
 _SINCE_MARGIN: Final = timedelta(minutes=30)
+_DAY: Final = timedelta(days=1)
 # The soonest a follow-up pass for a running recording is scheduled.
 _MIN_FOLLOW_UP_SECONDS: Final = 5.0
 # The camera setting that holds its recording length in seconds.
 _CLIP_LENGTH_SETTING: Final = "video_clip_length"
-# A HA-side cap on one listing or page (the library asks one history query per day and page).
+# A HA-side cap on one listing or page, and on one day of the sync (the library asks one
+# history query per day and page).
 LIST_TIMEOUT_SECONDS: Final = 60.0
 
 
@@ -529,7 +534,8 @@ class RecordingManager:
                 return
 
     async def _async_pass(self, sync: RecordingSync) -> None:
-        """List the station's recordings and store each settled one not stored yet."""
+        """List the station's recordings one day at a time, oldest first, and store each
+        settled one not stored yet before the next day is asked."""
         station = sync.station
         serial = redact_serial(station.serial)
         if not station.connected:
@@ -538,46 +544,59 @@ class RecordingManager:
         sync.stats.passes += 1
         sync.stats.last_pass = dt_util.utcnow().isoformat(timespec="seconds")
         since = self._since(sync)
-        try:
-            # Bounded as a request's listing is; a hung one ends the pass, the next retries.
-            async with asyncio.timeout(LIST_TIMEOUT_SECONDS):
-                rows = await station.async_list_recordings(
-                    days=max(self._history.days, 1), since=since
-                )
-        except (EufySecurityError, TimeoutError) as err:
-            sync.stats.last_error = type(err).__name__
-            _LOGGER.debug(
-                "Recording sync of %s: listing failed (%s)", serial, errors.failure_reason(err)
-            )
-            return
-        now = dt_util.utcnow()
-        wanted: list[HistoryRecord] = []
         running: list[HistoryRecord] = []
-        for row in rows:
-            if (
-                not row.record_id
-                or row.started_at is None
-                or self._stored.noted(station.serial, row.record_id, row.started_at) is not None
-            ):
-                continue
-            if Station.recording_settled(row, now=now):
-                wanted.append(row)
-            else:
-                running.append(row)
-        wanted.sort(key=lambda row: row.started_at or now)
-        _LOGGER.debug(
-            "Recording sync of %s: %d listed, %d to store, %d still recording",
-            serial,
-            len(rows),
-            len(wanted),
-            len(running),
-        )
-        for row in wanted:
-            if self._stopped:
+        for day in _host_days(since):
+            start = max(since, _host_day_start(day))
+            try:
+                # Bounded as a request's listing is; a hung day ends the pass, the next
+                # pass starts at it again.
+                async with asyncio.timeout(LIST_TIMEOUT_SECONDS):
+                    rows = await station.async_list_recordings(
+                        days=max(self._history.days, 1), since=start, until=day
+                    )
+            except (EufySecurityError, TimeoutError) as err:
+                sync.stats.last_error = type(err).__name__
+                _LOGGER.debug(
+                    "Recording sync of %s: listing failed (%s)", serial, errors.failure_reason(err)
+                )
                 return
-            await self._async_store(sync, row)
+            now = dt_util.utcnow()
+            wanted: list[HistoryRecord] = []
+            held: list[HistoryRecord] = []
+            for row in rows:
+                if (
+                    not row.record_id
+                    or row.started_at is None
+                    or self._stored.noted(station.serial, row.record_id, row.started_at) is not None
+                ):
+                    continue
+                if Station.recording_settled(row, now=now):
+                    wanted.append(row)
+                else:
+                    held.append(row)
+            wanted.sort(key=lambda row: row.started_at or now)
+            _LOGGER.debug(
+                "Recording sync of %s: a day listed %d, %d to store, %d still recording",
+                serial,
+                len(rows),
+                len(wanted),
+                len(held),
+            )
+            for row in wanted:
+                if self._stopped:
+                    return
+                await self._async_store(sync, row)
+            running.extend(held)
+            # The next pass starts after this day, unless a recording here still runs.
+            if not running:
+                sync.watermark = max(
+                    sync.watermark or start, min(_host_day_start(day + _DAY), now - _SINCE_MARGIN)
+                )
         sync.watermark = min(
-            [now - _SINCE_MARGIN, *(row.started_at for row in running if row.started_at)]
+            [
+                dt_util.utcnow() - _SINCE_MARGIN,
+                *(row.started_at for row in running if row.started_at),
+            ]
         )
         if running:
             self._async_follow_up(station.serial, running)
@@ -693,6 +712,18 @@ def _clip_seconds(station: Station, device_sn: str | None) -> float:
     if isinstance(value, int | float) and not isinstance(value, bool) and 0 < value <= 600:
         return float(value)
     return RECORDING_DEFAULT_CLIP_SECONDS
+
+
+def _host_days(since: datetime) -> list[date]:
+    """The host-local days from ``since``'s through today, oldest first: the days the
+    library lists by."""
+    first, today = since.astimezone().date(), datetime.now().astimezone().date()
+    return [first + timedelta(days=n) for n in range((today - first).days + 1)]
+
+
+def _host_day_start(day: date) -> datetime:
+    """The start of the host-local ``day``, aware."""
+    return datetime(day.year, day.month, day.day).astimezone()
 
 
 def _plain(name: str) -> bool:

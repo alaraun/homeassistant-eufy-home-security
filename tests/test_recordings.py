@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 
@@ -625,6 +625,140 @@ async def test_a_listing_that_never_answers_ends_the_pass_and_the_next_pass_list
     await _pass(hass, entry, RECORDING_SYNC_INTERVAL_SECONDS + 1)
 
     assert len(_videos(hass)) == 1
+    await _unload(hass, entry)
+
+
+def _record_listings(monkeypatch: pytest.MonkeyPatch) -> list[tuple[date, datetime]]:
+    """Record each sync listing's ``until`` day and ``since``."""
+    calls: list[tuple[date, datetime]] = []
+    real = Station.async_list_recordings
+
+    async def listing(self: Station, *args: Any, **kwargs: Any) -> list[HistoryRecord]:
+        calls.append((kwargs["until"], kwargs["since"]))
+        return await real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Station, "async_list_recordings", listing)
+    return calls
+
+
+def _host_days(since: datetime) -> list[date]:
+    """Every host-local day from ``since``'s to today."""
+    day, today = since.astimezone().date(), datetime.now().astimezone().date()
+    return [day + timedelta(days=n) for n in range((today - day).days + 1)]
+
+
+async def test_a_backlog_is_listed_one_day_at_a_time_oldest_first(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each listing asks one host-local day, oldest first, and that day's recordings are
+    stored before the next day is asked, so no request covers the whole backlog."""
+    downloads = _count_downloads(monkeypatch)
+    calls = _record_listings(monkeypatch)
+    noon = datetime.now().astimezone().replace(hour=12, minute=0, second=0, microsecond=0)
+    since = noon - timedelta(days=3)
+    rows = [_row(n + 1, started=noon - timedelta(days=n) + timedelta(hours=1)) for n in (3, 2, 1)]
+    rows.append(_row(9, started=datetime.now().astimezone() - timedelta(minutes=10)))
+    fake_station.rows = list(reversed(rows))
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage, since=since)
+
+    await _first_pass(hass, entry)
+
+    assert [until for until, _since in calls] == _host_days(since)
+    for until, asked in calls:
+        assert asked == max(since, datetime(until.year, until.month, until.day).astimezone())
+    by_start = sorted(rows, key=_started)
+    assert downloads == [row["record_id"] for row in by_start]
+    await _unload(hass, entry)
+
+
+async def test_a_day_that_never_answers_ends_the_pass_and_the_next_pass_starts_at_it(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Days before the hung one are stored; the next pass lists from the hung day on,
+    not from the first day again."""
+    monkeypatch.setattr(recordings, "LIST_TIMEOUT_SECONDS", 0.05)
+    downloads = _count_downloads(monkeypatch)
+    calls = _record_listings(monkeypatch)
+    noon = datetime.now().astimezone().replace(hour=12, minute=0, second=0, microsecond=0)
+    since = noon - timedelta(days=2)
+    rows = [_row(n + 1, started=noon - timedelta(days=n) + timedelta(hours=1)) for n in (2, 1)]
+    rows.append(_row(9, started=datetime.now().astimezone() - timedelta(minutes=10)))
+    fake_station.rows = list(reversed(rows))
+    hung = _host_days(since)[1]
+    recorded = Station.async_list_recordings
+    hang = True
+
+    async def listing(self: Station, *args: Any, **kwargs: Any) -> list[HistoryRecord]:
+        if hang and kwargs["until"] == hung:
+            await asyncio.Event().wait()
+        return await recorded(self, *args, **kwargs)
+
+    monkeypatch.setattr(Station, "async_list_recordings", listing)
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage, since=since)
+
+    await _first_pass(hass, entry)
+
+    stats = _manager(entry).stats(SYNTHETIC.station_sn)
+    assert stats is not None
+    assert stats["last_error"] == "TimeoutError"
+    assert downloads == [rows[0]["record_id"]]
+    # The hung day never reaches the recorder below the hang.
+    assert [until for until, _since in calls] == _host_days(since)[:1]
+
+    hang = False
+    calls.clear()
+    await _pass(hass, entry, RECORDING_SYNC_INTERVAL_SECONDS + 1)
+
+    assert calls[0][0] == hung
+    assert downloads == [row["record_id"] for row in sorted(rows, key=_started)]
+    await _unload(hass, entry)
+
+
+async def test_a_recording_still_running_on_an_earlier_day_keeps_the_next_pass_there(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pass that stops after a day holding a running recording starts at that day
+    again, not after it."""
+    monkeypatch.setattr(recordings, "LIST_TIMEOUT_SECONDS", 0.05)
+    calls = _record_listings(monkeypatch)
+    noon = datetime.now().astimezone().replace(hour=12, minute=0, second=0, microsecond=0)
+    since = noon - timedelta(days=1)
+    long_running = _row(1, started=since + timedelta(hours=1), length_s=3 * 86_400)
+    fake_station.rows = [long_running]
+    today = _host_days(since)[-1]
+    recorded = Station.async_list_recordings
+    hang = True
+
+    async def listing(self: Station, *args: Any, **kwargs: Any) -> list[HistoryRecord]:
+        if hang and kwargs["until"] == today:
+            await asyncio.Event().wait()
+        return await recorded(self, *args, **kwargs)
+
+    monkeypatch.setattr(Station, "async_list_recordings", listing)
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage, since=since)
+    await _first_pass(hass, entry)
+    assert [until for until, _since in calls] == _host_days(since)[:1]
+
+    hang = False
+    calls.clear()
+    await _pass(hass, entry, RECORDING_SYNC_INTERVAL_SECONDS + 1)
+
+    assert calls[0][0] == _host_days(since)[0]
     await _unload(hass, entry)
 
 
