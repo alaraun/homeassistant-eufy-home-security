@@ -24,6 +24,10 @@ entries from the conventional commits.
 * the cloud push repair names a station only when a device with detection entities needs push (library 0.4.8) ([351fb51](https://github.com/alaraun/homeassistant-eufy-home-security/commit/351fb51ea70e1883e996bacb2d8db2550cd6af72))
 * with several HomeBases, a recording is no longer taken as stored because another station's recording has the same id ([351fb51](https://github.com/alaraun/homeassistant-eufy-home-security/commit/351fb51ea70e1883e996bacb2d8db2550cd6af72))
 
+### New Contributors
+
+* [@screamerbg](https://github.com/screamerbg) made their first contribution in [#131](https://github.com/alaraun/homeassistant-eufy-home-security/pull/131)
+
 ## [0.4.7](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.6...v0.4.7) (2026-10-23)
 
 
