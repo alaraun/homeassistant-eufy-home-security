@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.27-1';
+const CARD_VERSION = '2026.10.28-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -561,6 +561,7 @@ class EufyCameraCard extends HTMLElement {
 
   disconnectedCallback() {
     // Leaving the view ends live view: nothing keeps a battery camera awake without a viewer
+    this._setWinFull(false);
     this._stop('');
     clearTimeout(this._timer);
     this._timer = null;
@@ -1685,6 +1686,7 @@ class EufyCameraCard extends HTMLElement {
       this._focus(`lp-${i}`);
       return;
     }
+    if (this._winFull && ev.key === 'Escape') { ev.preventDefault(); this._setWinFull(false); this._focus('live-full'); return; }
     if (this._preOpen && ev.key === 'Escape' && !this._isFull()) { ev.preventDefault(); this._preOpen = false; this.render(); this._focus('live-presets'); return; }
     if (this._menuOpen && (ev.key === 'ArrowDown' || ev.key === 'ArrowUp')) {
       const items = [...this.content.querySelectorAll('.menu .mi:not(:disabled)')];
@@ -1701,9 +1703,10 @@ class EufyCameraCard extends HTMLElement {
   // or frame of another shape) with bars instead of cutting its sides
   _fit() { return this._isFull() || (this._config && this._shape().portrait) ? 'contain' : 'cover'; }
 
-  // The picture is in full screen. document.fullscreenElement names the card host (shadow retargeting), so the
-  // card's own root is asked.
-  _isFull() { return !!this._pic && this.shadowRoot.fullscreenElement === this._pic; }
+  // The picture is in full screen: the browser's, or the card's window full screen where the browser offers the
+  // page none (the Home Assistant app on iOS, a web app on the Home Screen). document.fullscreenElement names the
+  // card host (shadow retargeting), so the card's own root is asked.
+  _isFull() { return !!this._pic && (!!this._winFull || this.shadowRoot.fullscreenElement === this._pic); }
 
   // The list host: in the picture while it is full screen (only it is drawn), else in the card. Also on render: a
   // full screen that ended while the card was detached fired its event unseen.
@@ -1720,8 +1723,38 @@ class EufyCameraCard extends HTMLElement {
 
   _fullscreen() {
     const pic = this.content.querySelector('.pic');
+    if (this._winFull) { this._setWinFull(false); return; }
     if (this._isFull()) { document.exitFullscreen().catch(() => {}); return; }
-    if (pic && pic.requestFullscreen) pic.requestFullscreen().catch(() => {});
+    if (!pic) return;
+    if (document.fullscreenEnabled === false || !pic.requestFullscreen) { this._setWinFull(true); return; }
+    pic.requestFullscreen().catch(() => this._setWinFull(true));
+  }
+
+  // The window full screen: the picture in the page's top layer (a manual popover; fixed where popovers are
+  // missing), filling the window inside its safe area. The picture stays where it is, so a running player goes
+  // on; the card keeps its height behind it, so the dashboard does not move.
+  _setWinFull(on) {
+    const pic = this._pic;
+    if (!pic || !!this._winFull === on) return;
+    this._winFull = on;
+    this.content.style.minHeight = on ? `${this.content.offsetHeight}px` : '';
+    pic.classList.toggle('winfull', on);
+    try {
+      if (on && pic.showPopover) { pic.popover = 'manual'; pic.showPopover(); }
+      if (!on && pic.hasAttribute('popover')) {
+        if (pic.matches(':popover-open')) pic.hidePopover();
+        pic.removeAttribute('popover');
+      }
+    } catch (e) { /* the class alone fills the window */ }
+    this._onFullChange();
+  }
+
+  // The full-screen button's icon and label, the list host and the player's fit follow the state
+  _onFullChange() {
+    if (!this.isConnected) return;
+    this._homeDd();
+    if (this._stream) this._stream.fitMode = this._fit();
+    this.render();
   }
 
   _setMenu(open) { this._menuOpen = open; this._watchOutside(open || !!this._dd); this.render(); }
@@ -2778,13 +2811,7 @@ class EufyCameraCard extends HTMLElement {
       if (Math.abs(ev.deltaY) < 4) return;
       this._zoom(ev.deltaY < 0 ? 'in' : 'out');
     }, { passive: false });
-    // The full-screen button's icon and label follow the state
-    document.addEventListener('fullscreenchange', () => {
-      if (!this.isConnected) return;
-      this._homeDd();
-      if (this._stream) this._stream.fitMode = this._fit();
-      this.render();
-    });
+    document.addEventListener('fullscreenchange', () => this._onFullChange());
     this._vslot.addEventListener('streams', ev => this._onStreams(ev));
     // A press held HOLD_MS on a preset tile asks to replace that preset; the click that ends the hold goes nowhere
     const tileOf = ev => ev.composedPath().find(n => n.classList && n.classList.contains('lp') && n.dataset.goto !== undefined);
@@ -2984,11 +3011,15 @@ const CSS_TEXT = `
   /* The picture is its own size container: in full screen the overlay sizes follow the screen, not the card */
   .pic { position: relative; aspect-ratio: var(--pic-ratio, 16 / 9); overflow: hidden; background: #111; color: #fff; container-type: inline-size; }
   .pic:fullscreen { aspect-ratio: auto; width: 100%; height: 100%; background: #000; }
-  .pic:fullscreen .stillimg { object-fit: contain; }
+  .pic:fullscreen .stillimg, .pic.winfull .stillimg { object-fit: contain; }
+  /* The window full screen (a popover's own sizes undone); black around it into the safe-area insets */
+  .pic.winfull { position: fixed; inset: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+    width: auto; height: auto; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; aspect-ratio: auto; z-index: 2147483647;
+    background: #000; color: #fff; overflow: hidden; overscroll-behavior: contain; box-shadow: 0 0 0 100vmax #000; }
   /* Portrait: the camera's own ratio, at most 80 % of the screen height (a wide card), the whole picture shown */
   /* width 100 %: a capped height must not narrow the frame (aspect-ratio would carry the cap over to the width) */
   .pic.portrait { width: 100%; max-height: 80vh; }
-  .pic.portrait:fullscreen { max-height: none; }
+  .pic.portrait:fullscreen, .pic.portrait.winfull { max-height: none; }
   .pic.portrait .stillimg { object-fit: contain; }
   .vslot, .still, .over { position: absolute; inset: 0; }
   .vslot ha-camera-stream, .vslot ha-web-rtc-player, .vslot ha-hls-player { display: block; width: 100%; height: 100%; }
