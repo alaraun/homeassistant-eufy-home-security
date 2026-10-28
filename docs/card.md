@@ -116,7 +116,13 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   or `● LIVE 1:42` while live; next to it the battery chip (charging and solar charging shown on its icon).
   - Idle: a play button (timed live view) and ∞ (continuous). A camera without live video shows
     `No live view for this model` instead, and its menu has no live view or `Record a clip`.
-  - Live: a bar with Stop, ∞, Record, sound (starts muted), presets and full screen.
+  - Live: a bar with Stop, ∞, Record, sound (starts muted), presets and full screen. Where the browser lets the
+    page go full screen, the picture fills the screen; where it does not (the Home Assistant app on an iPhone or
+    iPad, a dashboard added to the Home Screen), it fills the app's window instead, with its own exit button at the
+    top right that stays after live view ends and while the other controls fade. The full-screen button or Esc goes
+    back too.
+  - On a pan/tilt camera whose picture in the card is narrower than about 390 px, the bar leaves out ∞ and full
+    screen to keep room for the pan/tilt pad; the header menu has both (`Keep live`, `Full screen`).
   - Pan/tilt cameras: a pan/tilt pad with a home button (the default preset), usable once the live picture shows.
     Zoom cameras: a zoom pill (−, the value, +, and a reset to 1×), usable in every state.
   - Presets: the bar's preset button opens a row of the preset slots' pictures; a tap turns the camera there.
