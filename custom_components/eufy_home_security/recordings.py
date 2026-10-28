@@ -21,14 +21,15 @@ finished and stored by ``history.EventHistory.async_save_clip``:
   margin, so one left unsettled or failed is listed again), keeps the settled rows
   not stored yet, and downloads them oldest first, one at a time.
 - **Names.** A recording whose detection's still was written takes that still's stamp
-  and kind (the history notes them by ``record_id``), so a browser pairs the two by
-  name; any other is named by the recording's start, kind ``event``.
+  and kind (the history notes them per camera and ``record_id``), so a browser pairs
+  the two by name; any other is named by the recording's start, kind ``event``.
 - **Once.** Each stored recording is kept in a ``Store`` per entry under its station
   and ``record_id`` (:func:`record_key`; ids are per station) with its start and file
   name, pruned with the retention, so a restart downloads nothing again and a file
   the user deleted is not fetched back. A record whose start differs from the row's
-  is another recording under a reused id: it does not count as stored. A download that fails or comes back
-  incomplete keeps nothing and is tried again on a later pass, up to three attempts.
+  is another recording under a reused id: it does not count as stored. A download
+  that fails or comes back incomplete keeps nothing and is tried again on a later
+  pass, up to three attempts.
 - **One path.** The sync and a fetch on request store through
   :meth:`StoredRecordings.async_store`: same names, same Store, and a second request
   for a recording being downloaded joins that download.
@@ -113,11 +114,17 @@ class _RecordStore(Store[dict[str, Any]]):
         )
 
     async def _async_migrate_func(
-        self, old_major_version: int, old_minor_version: int, old_data: dict[str, Any]
+        self, old_major_version: int, old_minor_version: int, old_data: Any
     ) -> dict[str, Any]:
-        """Key each record by its noted station; a record that names none is dropped."""
+        """Key each record by its noted station; a record that names none is dropped.
+
+        A key that is already its station's :func:`record_key` stays: a release on
+        minor 1 saves a minor-2 document back as it read it.
+        """
         if old_major_version != _STORE_VERSION:
             raise NotImplementedError
+        if not isinstance(old_data, Mapping):
+            return {}
         data = dict(old_data)
         records = data.get("records")
         if old_minor_version < 2 and isinstance(records, Mapping):
@@ -127,7 +134,7 @@ class _RecordStore(Store[dict[str, Any]]):
                 if isinstance(record, Mapping)
                 and isinstance(station := record.get("station"), str)
                 and station
-                and (record_id := _int(key)) is not None
+                and (record_id := _record_id(str(key), station)) is not None
             }
         return data
 
@@ -223,7 +230,8 @@ class StoredRecordings:
     ) -> dict[str, Any] | None:
         """The record of ``station_sn``'s recording ``record_id`` that started at
         ``started``; None when there is none or it notes another start (a reused id).
-        ``started`` None matches on the key alone."""
+        ``started`` None matches on the key alone. Starts compare as the library parses
+        the row, so both sides must come from the same parse of the station's time."""
         record = self.records.get(record_key(station_sn, record_id))
         if record is None or started is None:
             return record
@@ -692,10 +700,11 @@ def _plain(name: str) -> bool:
     return name not in {"", ".", ".."} and "/" not in name and "\\" not in name
 
 
-def _int(value: object) -> int | None:
-    """``value`` as a record id, from its Store key text; None for anything else."""
+def _record_id(key: str, station_sn: str) -> int | None:
+    """The record id of a Store key: a bare id, or ``station_sn``'s :func:`record_key`."""
+    head, sep, tail = key.rpartition(":")
     try:
-        return int(str(value))
+        return int(tail if sep and head == station_sn else key)
     except ValueError:
         return None
 

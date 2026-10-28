@@ -290,7 +290,8 @@ class StationRecordings:
         return page
 
     def _remember(self, camera: _Camera, row: HistoryRecord) -> None:
-        """Note ``row``'s record id under its ref, the oldest dropped past ``REF_IDS_ITEMS``."""
+        """Note ``row``'s record id and start under its ref, the oldest dropped past
+        ``REF_IDS_ITEMS``."""
         if row.ref is None:
             return
         key = (camera.device_sn, row.ref)

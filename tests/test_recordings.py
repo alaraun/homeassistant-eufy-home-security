@@ -329,7 +329,8 @@ async def test_a_store_keyed_by_record_id_alone_is_keyed_by_station_on_load(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Minor version 1: each record moves under its noted station, so a recording stored
-    before the change is not downloaded again; a record naming no station is dropped."""
+    before the change is not downloaded again; a key already its station's stays; a
+    record naming no station, or keyed for another one, is dropped."""
     downloads = _count_downloads(monkeypatch)
     row = _row(4, started=datetime.now().astimezone() - timedelta(minutes=10))
     fake_station.rows = [row]
@@ -343,6 +344,14 @@ async def test_a_store_keyed_by_record_id_alone_is_keyed_by_station_on_load(
         entry,
         {
             str(row["record_id"]): _record(SYNTHETIC.station_sn, SYNTHETIC.camera_sn, started),
+            # Saved back as read by a release on minor 1: stays.
+            recordings.record_key(SYNTHETIC.station_sn, 88): _record(
+                SYNTHETIC.station_sn, SYNTHETIC.camera_sn, started
+            ),
+            # Another station's key under this station's record: dropped.
+            recordings.record_key(_OTHER_STATION, 89): _record(
+                SYNTHETIC.station_sn, SYNTHETIC.camera_sn, started
+            ),
             "77": stationless,
             "not a record id": _record(SYNTHETIC.station_sn, SYNTHETIC.camera_sn, started),
         },
@@ -356,9 +365,30 @@ async def test_a_store_keyed_by_record_id_alone_is_keyed_by_station_on_load(
     await _unload(hass, entry)
     document = hass_storage[recordings.store_key(entry.entry_id)]
     assert document["minor_version"] == 2
-    assert list(document["data"]["records"]) == [
-        recordings.record_key(SYNTHETIC.station_sn, row["record_id"])
-    ]
+    assert sorted(document["data"]["records"]) == sorted(
+        [
+            recordings.record_key(SYNTHETIC.station_sn, row["record_id"]),
+            recordings.record_key(SYNTHETIC.station_sn, 88),
+        ]
+    )
+
+
+async def test_a_store_document_that_is_no_mapping_loads_empty(
+    hass: HomeAssistant,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+) -> None:
+    """A minor-1 document whose data is not a mapping: the entry still sets up."""
+    seed_warm_cache()
+    entry = add_entry(hass, options=VIDEOS_ON)
+    key = recordings.store_key(entry.entry_id)
+    hass_storage[key] = {"version": 1, "minor_version": 1, "key": key, "data": "garbled"}
+
+    assert await setup_entry(hass, entry)
+
+    assert _manager(entry).stats(SYNTHETIC.station_sn) is not None
+    await _unload(hass, entry)
 
 
 async def test_a_still_names_only_its_own_cameras_recording(

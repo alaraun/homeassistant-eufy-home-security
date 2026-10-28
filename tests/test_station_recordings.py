@@ -772,7 +772,7 @@ async def test_a_fetch_with_a_key_it_does_not_take_is_refused(
     await _unload(hass, entry)
 
 
-@pytest.mark.parametrize("other", ["station", "start", "none"])
+@pytest.mark.parametrize("other", ["station", "start", "camera", "none"])
 async def test_a_stored_file_of_another_recording_under_the_same_id_is_not_offered(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
@@ -784,9 +784,10 @@ async def test_a_stored_file_of_another_recording_under_the_same_id_is_not_offer
     other: str,
 ) -> None:
     """A file stored for the same record id of another station, or of this station's
-    earlier recording, is not this row's: the listing offers no file and a fetch
-    downloads the row, also once the listing has expired and the ref is looked up.
-    ``none``: the row's own record, offered and played without a download."""
+    earlier recording, or noted for another camera, is not this row's: the listing
+    offers no file and a fetch downloads the row, also once the listing has expired and
+    the ref is looked up. ``none``: the row's own record, offered and played without a
+    download; another camera's still under the same id does not name it."""
     downloads = _count_downloads(monkeypatch)
     row = _row(4)
     fake_station.rows = [row]
@@ -812,7 +813,7 @@ async def test_a_stored_file_of_another_recording_under_the_same_id_is_not_offer
                     "file": name,
                     "folder": CAMERA_NAME,
                     "station": station_sn,
-                    "device": SYNTHETIC.camera_sn,
+                    "device": "T8113P2000099999" if other == "camera" else SYNTHETIC.camera_sn,
                     "started": noted_start.isoformat(),
                 }
             }
@@ -822,11 +823,16 @@ async def test_a_stored_file_of_another_recording_under_the_same_id_is_not_offer
     client = await hass_ws_client(hass)
     entity_id = _camera(hass)
 
+    entry.runtime_data.history.async_save(
+        "T8113P2000099999", JPEG, dt_util.utcnow(), "person", record_id=row["record_id"]
+    )
+
     listed = (await _list(client, entity_id))["recordings"][0]
     _expire_listings(monkeypatch)
     reply = await _fetch(client, entity_id, listed["ref"])
 
     assert reply["success"], reply
+    assert listed["kind"] is None
     if other == "none":
         assert listed["media_content_id"].endswith(name)
         assert reply["result"]["media_content_id"].endswith(name)
