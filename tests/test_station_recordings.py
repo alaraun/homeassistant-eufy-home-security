@@ -734,7 +734,9 @@ async def test_a_fetch_stores_the_recording_as_the_sync_would_and_returns_a_play
     assert listed["recordings"][0]["media_content_id"] == content_id
 
     await _unload(hass, entry)
-    stored = _store_data(hass_storage, entry)["records"][str(row["record_id"])]
+    stored = _store_data(hass_storage, entry)["records"][
+        recordings.record_key(SYNTHETIC.station_sn, row["record_id"])
+    ]
     assert stored == {
         "file": video.name,
         "folder": CAMERA_NAME,
@@ -767,6 +769,73 @@ async def test_a_fetch_with_a_key_it_does_not_take_is_refused(
         assert reply["error"]["code"] == "invalid_format", fields
     assert downloads == []
     assert _videos(hass) == []
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("other", ["station", "start", "none"])
+async def test_a_stored_file_of_another_recording_under_the_same_id_is_not_offered(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    hass_storage: dict[str, Any],
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    other: str,
+) -> None:
+    """A file stored for the same record id of another station, or of this station's
+    earlier recording, is not this row's: the listing offers no file and a fetch
+    downloads the row, also once the listing has expired and the ref is looked up.
+    ``none``: the row's own record, offered and played without a download."""
+    downloads = _count_downloads(monkeypatch)
+    row = _row(4)
+    fake_station.rows = [row]
+    started = HistoryRecord.from_row(row).started_at
+    assert started is not None
+    earlier = started - timedelta(minutes=1)
+    name = f"{dt_util.as_local(earlier).strftime('%Y-%m-%d_%H-%M-%S')}_{CAMERA_NAME}_event.mp4"
+    folder = history.history_dir(hass) / CAMERA_NAME
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / name).write_bytes(b"another recording")
+    station_sn = "T8030P2000099999" if other == "station" else SYNTHETIC.station_sn
+    noted_start = earlier if other == "start" else started
+    seed_warm_cache()
+    entry = add_entry(hass)
+    key = recordings.store_key(entry.entry_id)
+    hass_storage[key] = {
+        "version": 1,
+        "minor_version": 2,
+        "key": key,
+        "data": {
+            "records": {
+                recordings.record_key(station_sn, row["record_id"]): {
+                    "file": name,
+                    "folder": CAMERA_NAME,
+                    "station": station_sn,
+                    "device": SYNTHETIC.camera_sn,
+                    "started": noted_start.isoformat(),
+                }
+            }
+        },
+    }
+    assert await setup_entry(hass, entry)
+    client = await hass_ws_client(hass)
+    entity_id = _camera(hass)
+
+    listed = (await _list(client, entity_id))["recordings"][0]
+    _expire_listings(monkeypatch)
+    reply = await _fetch(client, entity_id, listed["ref"])
+
+    assert reply["success"], reply
+    if other == "none":
+        assert listed["media_content_id"].endswith(name)
+        assert reply["result"]["media_content_id"].endswith(name)
+        assert downloads == []
+    else:
+        assert listed["media_content_id"] is None
+        assert not reply["result"]["media_content_id"].endswith(name)
+        assert downloads == [row["record_id"]]
+    assert (folder / name).read_bytes() == b"another recording"
     await _unload(hass, entry)
 
 

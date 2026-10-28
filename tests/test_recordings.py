@@ -228,6 +228,159 @@ async def test_recordings_are_stored_oldest_first(
     await _unload(hass, entry)
 
 
+_OTHER_STATION: Final = "T8030P2000099999"
+_OTHER_CAMERA: Final = "T8113P2000099999"
+
+
+def _seed_records(
+    hass_storage: dict[str, Any],
+    entry: MockConfigEntry,
+    records: dict[str, dict[str, Any]],
+    *,
+    minor_version: int = 2,
+) -> None:
+    """Seed the entry's Store with ``records``, the option switched on an hour ago."""
+    key = recordings.store_key(entry.entry_id)
+    hass_storage[key] = {
+        "version": 1,
+        "minor_version": minor_version,
+        "key": key,
+        "data": {
+            "records": records,
+            "since": (dt_util.utcnow() - timedelta(hours=1)).isoformat(),
+        },
+    }
+
+
+def _started(row: dict[str, Any]) -> datetime:
+    started = HistoryRecord.from_row(row).started_at
+    assert started is not None
+    return started
+
+
+def _record(station_sn: str, device_sn: str, started: datetime) -> dict[str, Any]:
+    return {
+        "file": "2026-01-01_00-00-00_Other_event.mp4",
+        "folder": "Other",
+        "station": station_sn,
+        "device": device_sn,
+        "started": started.isoformat(),
+    }
+
+
+async def test_a_record_of_another_station_or_start_under_the_same_id_is_not_stored(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Record ids are per station: another station's record under the same id, and this
+    station's record of an earlier recording under a reused id, leave the row to be
+    downloaded; the record of the same recording does not."""
+    downloads = _count_downloads(monkeypatch)
+    now = datetime.now().astimezone()
+    rows = [_row(n, started=now - timedelta(minutes=10 * n)) for n in (1, 2, 3)]
+    fake_station.rows = rows
+    starts = [_started(row) for row in rows]
+    seed_warm_cache()
+    entry = add_entry(hass, options=VIDEOS_ON)
+    ours = SYNTHETIC.station_sn
+    _seed_records(
+        hass_storage,
+        entry,
+        {
+            # Another station's recording under row 1's id.
+            recordings.record_key(_OTHER_STATION, rows[0]["record_id"]): _record(
+                _OTHER_STATION, _OTHER_CAMERA, starts[0]
+            ),
+            # An earlier recording of this station under row 2's id.
+            recordings.record_key(ours, rows[1]["record_id"]): _record(
+                ours, SYNTHETIC.camera_sn, starts[1] + timedelta(minutes=1)
+            ),
+            # Row 3 itself.
+            recordings.record_key(ours, rows[2]["record_id"]): _record(
+                ours, SYNTHETIC.camera_sn, starts[2]
+            ),
+        },
+    )
+    assert await setup_entry(hass, entry)
+
+    await _first_pass(hass, entry)
+
+    assert downloads == [rows[1]["record_id"], rows[0]["record_id"]]
+    await _unload(hass, entry)
+    records = hass_storage[recordings.store_key(entry.entry_id)]["data"]["records"]
+    assert records[recordings.record_key(_OTHER_STATION, rows[0]["record_id"])]["station"] == (
+        _OTHER_STATION
+    )
+    for row, started in zip(rows[:2], starts[:2], strict=True):
+        record = records[recordings.record_key(ours, row["record_id"])]
+        assert (record["device"], record["started"]) == (SYNTHETIC.camera_sn, started.isoformat())
+
+
+async def test_a_store_keyed_by_record_id_alone_is_keyed_by_station_on_load(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Minor version 1: each record moves under its noted station, so a recording stored
+    before the change is not downloaded again; a record naming no station is dropped."""
+    downloads = _count_downloads(monkeypatch)
+    row = _row(4, started=datetime.now().astimezone() - timedelta(minutes=10))
+    fake_station.rows = [row]
+    started = _started(row)
+    seed_warm_cache()
+    entry = add_entry(hass, options=VIDEOS_ON)
+    stationless = _record(SYNTHETIC.station_sn, SYNTHETIC.camera_sn, started)
+    del stationless["station"]
+    _seed_records(
+        hass_storage,
+        entry,
+        {
+            str(row["record_id"]): _record(SYNTHETIC.station_sn, SYNTHETIC.camera_sn, started),
+            "77": stationless,
+            "not a record id": _record(SYNTHETIC.station_sn, SYNTHETIC.camera_sn, started),
+        },
+        minor_version=1,
+    )
+    assert await setup_entry(hass, entry)
+
+    await _first_pass(hass, entry)
+
+    assert downloads == []
+    await _unload(hass, entry)
+    document = hass_storage[recordings.store_key(entry.entry_id)]
+    assert document["minor_version"] == 2
+    assert list(document["data"]["records"]) == [
+        recordings.record_key(SYNTHETIC.station_sn, row["record_id"])
+    ]
+
+
+async def test_a_still_names_only_its_own_cameras_recording(
+    hass: HomeAssistant,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Stills are noted per camera: another camera's still under the same record id does
+    not name this camera's recording."""
+    seed_warm_cache()
+    entry = add_entry(hass, options=VIDEOS_ON)
+    assert await setup_entry(hass, entry)
+    events: history.EventHistory = entry.runtime_data.history
+    moment = dt_util.utcnow()
+
+    events.async_save(_OTHER_CAMERA, b"\xff\xd8", moment, "person", record_id=5)
+
+    assert events.still_name(SYNTHETIC.camera_sn, 5) is None
+    assert events.still_name(_OTHER_CAMERA, 5) == (dt_util.as_local(moment), "person")
+    await _unload(hass, entry)
+
+
 async def test_a_recording_is_named_after_its_detections_still(
     hass: HomeAssistant,
     fake_station: FakeStation,

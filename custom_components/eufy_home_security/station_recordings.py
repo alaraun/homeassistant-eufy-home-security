@@ -87,7 +87,7 @@ from .const import (
     DOMAIN,
 )
 from .history import ClipStoreError, IncompleteClipError
-from .recordings import LIST_TIMEOUT_SECONDS, join
+from .recordings import LIST_TIMEOUT_SECONDS, StoredFile, join
 
 if TYPE_CHECKING:
     from .recordings import StoredRecordings
@@ -192,7 +192,9 @@ class StationRecordings:
         self._listings: dict[_ListKey, tuple[float, Page]] = {}
         self._listing: dict[_ListKey, asyncio.Task[Page]] = {}
         self._thumbs: OrderedDict[tuple[str, str], bytes] = OrderedDict()
-        self._ref_ids: OrderedDict[tuple[str, str], int] = OrderedDict()
+        # Per (camera, ref): the row's record id and start, so a stored file is found
+        # while the station is silent.
+        self._ref_ids: OrderedDict[tuple[str, str], tuple[int, datetime | None]] = OrderedDict()
         self.stats = RequestStats()
 
     def diagnostics(self) -> dict[str, Any]:
@@ -292,7 +294,7 @@ class StationRecordings:
         if row.ref is None:
             return
         key = (camera.device_sn, row.ref)
-        self._ref_ids[key] = row.record_id
+        self._ref_ids[key] = (row.record_id, row.started_at)
         self._ref_ids.move_to_end(key)
         while len(self._ref_ids) > REF_IDS_ITEMS:
             self._ref_ids.popitem(last=False)
@@ -305,7 +307,7 @@ class StationRecordings:
         stored = {
             row.record_id: found
             for row in rows
-            if (found := self._stored.stored_file(row.record_id, camera.device_sn)) is not None
+            if (found := self._stored_file(camera, row.record_id, row.started_at)) is not None
         }
         paths = {
             record_id: path
@@ -317,7 +319,7 @@ class StationRecordings:
         )
         result: list[dict[str, Any]] = []
         for row in rows:
-            named = self._stored.history.still_name(row.record_id)
+            named = self._stored.history.still_name(camera.device_sn, row.record_id)
             path = paths.get(row.record_id)
             result.append(
                 {
@@ -384,12 +386,12 @@ class StationRecordings:
         """Store the recording in the history unless it is; its media id and a play URL."""
         self.stats.fetch_calls += 1
         # A recording listed before and stored since plays without the station.
-        if (record_id := self._ref_ids.get((camera.device_sn, ref))) is not None and (
-            path := await self._kept_path(camera, record_id)
+        if (noted := self._ref_ids.get((camera.device_sn, ref))) is not None and (
+            path := await self._kept_path(camera, *noted)
         ) is not None:
             return await self._async_playable(path)
         row = await self.async_row(camera, ref)
-        if (path := await self._kept_path(camera, row.record_id)) is not None:
+        if (path := await self._kept_path(camera, row.record_id, row.started_at)) is not None:
             return await self._async_playable(path)
         if not Station.recording_settled(row):
             raise RecordingError(ERR_NOT_SETTLED, "The recording is still running")
@@ -425,9 +427,16 @@ class StationRecordings:
             raise RecordingError(ERR_FAILED, "The recording could not be saved") from err
         return await self._async_playable(saved.path)
 
-    async def _kept_path(self, camera: _Camera, record_id: int) -> Path | None:
-        """The history file the recording ``record_id`` was stored to, if it still exists."""
-        stored = self._stored.stored_file(record_id, camera.device_sn)
+    def _stored_file(
+        self, camera: _Camera, record_id: int, started: datetime | None
+    ) -> StoredFile | None:
+        return self._stored.stored_file(camera.station.serial, record_id, started, camera.device_sn)
+
+    async def _kept_path(
+        self, camera: _Camera, record_id: int, started: datetime | None
+    ) -> Path | None:
+        """The history file the camera's recording was stored to, if it still exists."""
+        stored = self._stored_file(camera, record_id, started)
         path = self._stored.path_of(stored, camera.device_sn) if stored is not None else None
         if path is None or not await self._hass.async_add_executor_job(self._stored.is_kept, path):
             return None

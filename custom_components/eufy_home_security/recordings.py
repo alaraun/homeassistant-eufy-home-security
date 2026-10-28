@@ -23,9 +23,11 @@ finished and stored by ``history.EventHistory.async_save_clip``:
 - **Names.** A recording whose detection's still was written takes that still's stamp
   and kind (the history notes them by ``record_id``), so a browser pairs the two by
   name; any other is named by the recording's start, kind ``event``.
-- **Once.** Each stored ``record_id`` is kept in a ``Store`` per entry with its file
+- **Once.** Each stored recording is kept in a ``Store`` per entry under its station
+  and ``record_id`` (:func:`record_key`; ids are per station) with its start and file
   name, pruned with the retention, so a restart downloads nothing again and a file
-  the user deleted is not fetched back. A download that fails or comes back
+  the user deleted is not fetched back. A record whose start differs from the row's
+  is another recording under a reused id: it does not count as stored. A download that fails or comes back
   incomplete keeps nothing and is tried again on a later pass, up to three attempts.
 - **One path.** The sync and a fetch on request store through
   :meth:`StoredRecordings.async_store`: same names, same Store, and a second request
@@ -78,6 +80,8 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 _STORE_VERSION: Final = 1
+# 2: records keyed by station and record id (record_key), not by record id alone.
+_STORE_MINOR_VERSION: Final = 2
 # The kind of a recording whose detection's still is unknown.
 _EVENT_KIND: Final = "event"
 # Rows that started up to this long before the newest stored one are listed again.
@@ -95,9 +99,42 @@ def store_key(entry_id: str) -> str:
     return f"{DOMAIN}.recordings.{entry_id}"
 
 
+def record_key(station_sn: str, record_id: int) -> str:
+    """The Store key of a station's recording: record ids are unique per station only."""
+    return f"{station_sn}:{record_id}"
+
+
+class _RecordStore(Store[dict[str, Any]]):
+    """The stored-recordings document; minor 1 keyed records by record id alone."""
+
+    def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
+        super().__init__(
+            hass, _STORE_VERSION, store_key(entry_id), minor_version=_STORE_MINOR_VERSION
+        )
+
+    async def _async_migrate_func(
+        self, old_major_version: int, old_minor_version: int, old_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Key each record by its noted station; a record that names none is dropped."""
+        if old_major_version != _STORE_VERSION:
+            raise NotImplementedError
+        data = dict(old_data)
+        records = data.get("records")
+        if old_minor_version < 2 and isinstance(records, Mapping):
+            data["records"] = {
+                record_key(station, record_id): record
+                for key, record in records.items()
+                if isinstance(record, Mapping)
+                and isinstance(station := record.get("station"), str)
+                and station
+                and (record_id := _int(key)) is not None
+            }
+        return data
+
+
 async def async_remove_store(hass: HomeAssistant, entry_id: str) -> None:
     """Delete one entry's stored-recordings document."""
-    await Store[dict[str, Any]](hass, _STORE_VERSION, store_key(entry_id)).async_remove()
+    await _RecordStore(hass, entry_id).async_remove()
 
 
 async def join[T](task: asyncio.Task[T], stopped: Exception) -> T:
@@ -130,8 +167,9 @@ class StoredFile:
 class StoredRecordings:
     """One entry's record of the recordings stored in the history, and the one way in.
 
-    Per record id (as text): ``file`` (None: given up), ``folder``, ``station``,
-    ``device`` and ``started``. ``since`` is the event-videos mark: the sync lists nothing before it.
+    Per :func:`record_key`: ``file`` (None: given up), ``folder``, ``station``,
+    ``device`` and ``started``. ``since`` is the event-videos mark: the sync lists
+    nothing before it.
     """
 
     def __init__(self, hass: HomeAssistant, entry: EufyConfigEntry, events: EventHistory) -> None:
@@ -139,10 +177,10 @@ class StoredRecordings:
         self._hass = hass
         self._entry = entry
         self._history = events
-        self._store: Store[dict[str, Any]] = Store(hass, _STORE_VERSION, store_key(entry.entry_id))
+        self._store: Store[dict[str, Any]] = _RecordStore(hass, entry.entry_id)
         self.records: dict[str, dict[str, Any]] = {}
         self._since: datetime | None = None
-        self._running: dict[int, asyncio.Task[SavedClip]] = {}
+        self._running: dict[str, asyncio.Task[SavedClip]] = {}
 
     @property
     def history(self) -> EventHistory:
@@ -180,17 +218,34 @@ class StoredRecordings:
             self._since = None
             self.save()
 
-    def stored_file(self, record_id: int, device_sn: str | None = None) -> StoredFile | None:
-        """Where ``record_id`` was stored; None when it is not, was given up, or (with
-        ``device_sn``) is noted for another camera."""
-        record = self.records.get(str(record_id))
+    def noted(
+        self, station_sn: str, record_id: int, started: datetime | None
+    ) -> dict[str, Any] | None:
+        """The record of ``station_sn``'s recording ``record_id`` that started at
+        ``started``; None when there is none or it notes another start (a reused id).
+        ``started`` None matches on the key alone."""
+        record = self.records.get(record_key(station_sn, record_id))
+        if record is None or started is None:
+            return record
+        return record if _parse(record.get("started")) == started else None
+
+    def stored_file(
+        self,
+        station_sn: str,
+        record_id: int,
+        started: datetime | None,
+        device_sn: str | None = None,
+    ) -> StoredFile | None:
+        """Where the recording was stored (:meth:`noted`); None when it is not, was
+        given up, or (with ``device_sn``) is noted for another camera."""
+        record = self.noted(station_sn, record_id, started)
         file = record.get("file") if record is not None else None
-        if not isinstance(file, str) or not file:
+        if record is None or not isinstance(file, str) or not file:
             return None
-        noted = record.get("device") if record is not None else None
+        noted = record.get("device")
         if device_sn is not None and noted is not None and noted != device_sn:
             return None
-        folder = record.get("folder") if record is not None else None
+        folder = record.get("folder")
         return StoredFile(folder if isinstance(folder, str) and folder else None, file)
 
     def path_of(self, stored: StoredFile, device_sn: str) -> Path | None:
@@ -215,8 +270,8 @@ class StoredRecordings:
         return False
 
     def give_up(self, record_id: int, station_sn: str, started: datetime) -> None:
-        """Note ``record_id`` as never to be synced again."""
-        self.records[str(record_id)] = {
+        """Note ``station_sn``'s recording ``record_id`` as never to be synced again."""
+        self.records[record_key(station_sn, record_id)] = {
             "file": None,
             "station": station_sn,
             "started": started.isoformat(),
@@ -247,18 +302,19 @@ class StoredRecordings:
         without a start or a camera, or a download stopped by an unload. A cancelled
         waiter leaves the download running.
         """
-        task = self._running.get(row.record_id)
+        key = record_key(station.serial, row.record_id)
+        task = self._running.get(key)
         if task is None:
             task = self._entry.async_create_background_task(
                 self._hass, self._async_download(station, row), name=f"{DOMAIN} recording download"
             )
-            self._running[row.record_id] = task
-            task.add_done_callback(lambda done: self._finished(row.record_id, done))
+            self._running[key] = task
+            task.add_done_callback(lambda done: self._finished(key, done))
         return await join(task, ClipStoreError("the download was stopped"))
 
-    def _finished(self, record_id: int, task: asyncio.Task[SavedClip]) -> None:
+    def _finished(self, key: str, task: asyncio.Task[SavedClip]) -> None:
         """Forget a finished download; its outcome went to whoever waited for it."""
-        self._running.pop(record_id, None)
+        self._running.pop(key, None)
         if not task.cancelled():
             task.exception()
 
@@ -267,7 +323,7 @@ class StoredRecordings:
         device_sn = row.device_sn
         if started is None or device_sn is None:
             raise ClipStoreError("the recording names no start or camera")
-        named = self._history.still_name(row.record_id)
+        named = self._history.still_name(device_sn, row.record_id)
         moment, kind = named if named is not None else (started, _EVENT_KIND)
 
         async def produce(write: ClipWriter) -> MediaClip:
@@ -277,7 +333,7 @@ class StoredRecordings:
             saved = await self._history.async_save_clip(
                 device_sn, produce, kind=kind, moment=moment, require_complete=True
             )
-        self.records[str(row.record_id)] = {
+        self.records[record_key(station.serial, row.record_id)] = {
             "file": saved.path.name,
             "folder": saved.path.parent.name,
             "station": station.serial,
@@ -493,7 +549,7 @@ class RecordingManager:
             if (
                 not row.record_id
                 or row.started_at is None
-                or str(row.record_id) in self._stored.records
+                or self._stored.noted(station.serial, row.record_id, row.started_at) is not None
             ):
                 continue
             if Station.recording_settled(row, now=now):
@@ -634,6 +690,14 @@ def _clip_seconds(station: Station, device_sn: str | None) -> float:
 def _plain(name: str) -> bool:
     """Whether ``name`` is one path part: no separator, not ``.`` or ``..``, not empty."""
     return name not in {"", ".", ".."} and "/" not in name and "\\" not in name
+
+
+def _int(value: object) -> int | None:
+    """``value`` as a record id, from its Store key text; None for anything else."""
+    try:
+        return int(str(value))
+    except ValueError:
+        return None
 
 
 def _parse(value: object) -> datetime | None:
