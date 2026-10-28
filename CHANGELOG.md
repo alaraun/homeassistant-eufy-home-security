@@ -5,6 +5,29 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.8](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.7...v0.4.8) (2026-10-28)
+
+
+### Features
+
+* a station that refuses this eufy account says so, with the sharing hint, on every command (library 0.4.8) ([351fb51](https://github.com/alaraun/homeassistant-eufy-home-security/commit/351fb51ea70e1883e996bacb2d8db2550cd6af72))
+* doorbells behind a HomeBase get their per-mode actions in the HomeBase card (library 0.4.8) ([351fb51](https://github.com/alaraun/homeassistant-eufy-home-security/commit/351fb51ea70e1883e996bacb2d8db2550cd6af72))
+* HomeBase 2 recordings are listed, played and saved from the camera card, by [@screamerbg](https://github.com/screamerbg) in [#134](https://github.com/alaraun/homeassistant-eufy-home-security/issues/134) (library 0.4.8) ([351fb51](https://github.com/alaraun/homeassistant-eufy-home-security/commit/351fb51ea70e1883e996bacb2d8db2550cd6af72))
+* T8910 PIR motion sensors get a motion binary sensor and a motion event, by [@screamerbg](https://github.com/screamerbg) (library 0.4.8) ([#131](https://github.com/alaraun/homeassistant-eufy-home-security/issues/131)) ([be7c834](https://github.com/alaraun/homeassistant-eufy-home-security/commit/be7c834c9d7edab8c8302579761c6ed0815566db))
+* video smart locks get the doorbell ring event (library 0.4.8) ([351fb51](https://github.com/alaraun/homeassistant-eufy-home-security/commit/351fb51ea70e1883e996bacb2d8db2550cd6af72))
+
+
+### Bug Fixes
+
+* a listed station recording stays playable after the list was loaded; recordings page with the library's cursor (library 0.4.8) ([351fb51](https://github.com/alaraun/homeassistant-eufy-home-security/commit/351fb51ea70e1883e996bacb2d8db2550cd6af72))
+* cameras with several lenses open their live view as the eufy app does, not tested here (library 0.4.8) ([issue 132](https://github.com/alaraun/homeassistant-eufy-home-security/issues/132)) ([351fb51](https://github.com/alaraun/homeassistant-eufy-home-security/commit/351fb51ea70e1883e996bacb2d8db2550cd6af72))
+* the cloud push repair names a station only when a device with detection entities needs push (library 0.4.8) ([351fb51](https://github.com/alaraun/homeassistant-eufy-home-security/commit/351fb51ea70e1883e996bacb2d8db2550cd6af72))
+* with several HomeBases, a recording is no longer taken as stored because another station's recording has the same id ([351fb51](https://github.com/alaraun/homeassistant-eufy-home-security/commit/351fb51ea70e1883e996bacb2d8db2550cd6af72))
+
+### New Contributors
+
+* [@screamerbg](https://github.com/screamerbg) made their first contribution in [#131](https://github.com/alaraun/homeassistant-eufy-home-security/pull/131)
+
 ## [0.4.7](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.6...v0.4.7) (2026-10-23)
 
 
