@@ -372,7 +372,12 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
         except CaptureStoppedError as err:
             raise errors.recording_stopped_empty() from err
         except EufySecurityError as err:
-            raise errors.recording_failed_to_capture(err) from err
+            state = self.hass.states.get(self.entity_id)
+            raise errors.recording_failed_to_capture(
+                err,
+                target=state.name if state is not None else CAMERA_KEY,
+                station_name=errors.station_display_name(self.coordinator),
+            ) from err
         except (history.ClipStoreError, OSError, TimeoutError) as err:
             # The type only: an OSError's text carries the clip's path and camera name.
             _LOGGER.warning(

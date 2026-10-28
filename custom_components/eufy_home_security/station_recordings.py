@@ -6,34 +6,36 @@ Two websocket commands and one view, registered once per Home Assistant instance
   camera's recordings on the station's disk, newest first: start, end, length, size,
   whether it has settled, the kind of its detection's still when known, the media id
   of its MP4 once stored, and a signed URL of its thumbnail. ``days`` is the window
-  back from today (default the entry's history days, 1-30). With ``limit`` or
-  ``before`` the answer is one page of ``Station.async_list_recordings``: up to
-  ``limit`` rows (default 10) older than the cursor ``before``, the library asking the
-  days from today (or the cursor's day) backwards until the page is full, ``PAGE_DAYS``
-  days at most. A full page says ``more`` (the next one may be empty) and ``next``, an
-  opaque text cursor for it; so does a short page with days of the window left (``next``
-  then names the day before the ones it asked); any other short page ends the window.
-  ``day`` (``YYYY-MM-DD``) pages only that day's recordings: the window reaches back to
-  it (up to ``MAX_LIST_DAYS``; an older day lists nothing). Without ``limit``,
-  ``before`` or ``day``, the whole window in one answer (``more`` False). A listing or
-  page is reused for ``LIST_CACHE_SECONDS`` per camera and arguments, and identical
-  queries in flight share one. A standalone camera keeps no recordings on a station:
-  ``supported`` False, nothing is queried.
-- ``eufy_home_security/recordings/fetch`` ``{entity_id, record_id}`` stores one
+  back from today (default the entry's history days, 1-30). Each row carries the
+  library's ``ref``, the key every later request names it by. With ``limit`` or
+  ``before`` the answer is one page of ``Station.async_list_recordings_page``: up to
+  ``limit`` rows (default 10) after the cursor ``before``, ``PAGE_DAYS`` days asked at
+  most. ``more`` and ``next`` (the library's opaque cursor) say whether and where the
+  next page starts (a full page says ``more``; the next one may be empty); a cursor the
+  library did not issue for this camera is ``invalid_format``. ``day`` (``YYYY-MM-DD``)
+  pages only that day's recordings: the window reaches back to it (up to
+  ``MAX_LIST_DAYS``; an older day lists nothing). Without ``limit``, ``before`` or
+  ``day``, the whole window in one answer (``more`` False). A listing or page is reused
+  for ``LIST_CACHE_SECONDS`` per camera and arguments, and identical queries in flight
+  share one. A standalone camera keeps no recordings on a station: ``supported`` False,
+  nothing is queried.
+- ``eufy_home_security/recordings/fetch`` ``{entity_id, ref}`` stores one
   recording in the event history exactly as the event-videos sync does
   (``recordings.StoredRecordings``: same name, same Store, so the sync never fetches
   it again and the retention covers it) and returns its ``media_content_id`` and a
   signed ``url`` from the media source, playable by a ``<video>``. A stored one whose
-  file still exists returns at once. The station plays it off its disk: no camera is
-  woken.
-- ``/api/eufy_home_security/recording_thumb/<entity id>/<record id>`` serves a
+  file still exists returns without a download. The station plays it off its disk: no
+  camera is woken. A ``ref`` no fresh listing holds is looked up on the station
+  (``Station.async_history_record_by_ref``).
+- ``/api/eufy_home_security/recording_thumb/<entity id>/<ref>`` serves a
   recording's still off the station's disk as ``image/jpeg``, behind Home Assistant's
   auth (the listing hands out signed paths), kept in a small in-memory LRU; 404 for a
   still that is obfuscated or absent.
 
 Errors carry a code: ``not_found``, ``not_settled``, ``unavailable``, ``busy`` (the
-station's session budget is spent) and ``failed``. Serials, paths and record ids are
-never logged.
+station's session budget is spent), ``account_rejected`` (the station refuses this eufy
+account, -104; the message is the sharing hint) and ``failed``. Serials, paths, record ids and refs
+are never logged.
 """
 
 from __future__ import annotations
@@ -44,7 +46,6 @@ import time
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
-from datetime import time as dt_time
 from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
@@ -66,16 +67,19 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.hass_dict import HassKey
 
 from eufy_home_security import (
+    AccountRejectedError,
     EufySecurityError,
     HistoryRecord,
     LiveStreamLimitError,
+    RecordingCursorError,
+    RecordingRefError,
+    RecordNotFoundError,
     Station,
-    UnsupportedError,
     entity_unique_id,
     redact_serial,
 )
 
-from . import detections, history
+from . import detections, errors, history
 from .const import (
     CAMERA_KEY,
     CONF_EVENT_HISTORY_DAYS,
@@ -83,7 +87,7 @@ from .const import (
     DOMAIN,
 )
 from .history import ClipStoreError, IncompleteClipError
-from .recordings import LIST_TIMEOUT_SECONDS, join
+from .recordings import LIST_TIMEOUT_SECONDS, StoredFile, join
 
 if TYPE_CHECKING:
     from .recordings import StoredRecordings
@@ -93,7 +97,7 @@ _LOGGER = logging.getLogger(__name__)
 
 WS_LIST: Final = f"{DOMAIN}/recordings"
 WS_FETCH: Final = f"{DOMAIN}/recordings/fetch"
-THUMB_URL: Final = "/api/" + DOMAIN + "/recording_thumb/{entity_id}/{record_id}"
+THUMB_URL: Final = "/api/" + DOMAIN + "/recording_thumb/{entity_id}/{ref}"
 THUMB_VIEW_NAME: Final = f"api:{DOMAIN}:recording_thumb"
 # How long a listing or page is reused per camera and arguments.
 LIST_CACHE_SECONDS: Final = 60.0
@@ -106,11 +110,8 @@ MIN_PAGE_LIMIT: Final = 1
 MAX_PAGE_LIMIT: Final = 50
 # The days one page asks at most (one station query each).
 PAGE_DAYS: Final = 7
-# A page cursor naming a day: ``YYYYMMDD``; a record id is that day times
-# ``_RECORD_DAY_FACTOR`` plus a sequence.
-_DAY_CURSOR_FORMAT: Final = "%Y%m%d"
-_DAY_CURSOR_LEN: Final = 8
-_RECORD_DAY_FACTOR: Final = 100_000
+# The listed rows' record ids remembered by ref, for the stored-file check of a fetch.
+REF_IDS_ITEMS: Final = 1000
 # How long a thumbnail's signed path is valid.
 THUMB_SIGN_SECONDS: Final = 3600
 # The thumbnail LRU: at most this many stills, and none larger than this.
@@ -124,6 +125,7 @@ ERR_NOT_SETTLED: Final = "not_settled"
 ERR_UNAVAILABLE: Final = "unavailable"
 ERR_BUSY: Final = "busy"
 ERR_FAILED: Final = "failed"
+ERR_ACCOUNT_REJECTED: Final = "account_rejected"
 
 _REGISTERED: HassKey[bool] = HassKey(f"{DOMAIN}_station_recordings")
 
@@ -133,57 +135,18 @@ def _clock() -> float:
     return time.monotonic()
 
 
-def _cursor(value: Any) -> int | date:
-    """A page cursor as ``next`` gave it: a record id, or a day as ``YYYYMMDD``."""
-    text = str(value)
-    if not (text.isascii() and text.isdigit()):
-        raise vol.Invalid("expected the cursor a page's next named")
-    if len(text) != _DAY_CURSOR_LEN:
-        return int(text)
-    try:
-        return _day_of(text)
-    except ValueError as err:
-        raise vol.Invalid("expected the cursor a page's next named") from err
-
-
-def _day_of(text: str) -> date:
-    """The day ``YYYYMMDD`` names; ValueError for none."""
-    if len(text) != _DAY_CURSOR_LEN:
-        raise ValueError(text)
-    return date(int(text[:4]), int(text[4:6]), int(text[6:]))
-
-
-def _cursor_text(cursor: int | date) -> str:
-    return cursor.strftime(_DAY_CURSOR_FORMAT) if isinstance(cursor, date) else str(cursor)
-
-
-def _page_days(days: int, before: int | date | None, day: date | None) -> tuple[date, date, date]:
-    """A page's first day of the window, the day it starts at and the oldest day it asks."""
-    today = datetime.now().astimezone().date()
-    window_first = today - timedelta(days=days - 1)
-    if isinstance(before, int):
-        try:
-            start = _day_of(str(before // _RECORD_DAY_FACTOR))
-        except ValueError:
-            start = today  # the library refuses the cursor
-    else:
-        start = before or day or today
-    start = min(start, today)
-    return window_first, start, max(window_first, start - timedelta(days=PAGE_DAYS - 1))
-
-
-# A listing's arguments: camera serial, days, limit, before, day (all None: the whole window).
-type _ListKey = tuple[str, int, int | None, int | date | None, date | None]
+# A listing's arguments: camera serial, days, limit, cursor, day (all None: the whole window).
+type _ListKey = tuple[str, int, int | None, str | None, date | None]
 
 
 @dataclass(frozen=True, slots=True)
 class Page:
-    """One page of a camera's recordings, newest first; ``next`` is its last record id,
-    or the day before the ones it asked."""
+    """One page of a camera's recordings, newest first; ``next`` is the library's cursor
+    of the page after it."""
 
     rows: list[HistoryRecord]
     more: bool
-    next: int | date | None
+    next: str | None
 
 
 class RecordingError(Exception):
@@ -226,9 +189,12 @@ class StationRecordings:
         """``stored`` is the record of what the history holds, shared with the sync."""
         self._hass = hass
         self._stored = stored
-        self._listings: dict[_ListKey, tuple[float, list[HistoryRecord]]] = {}
-        self._listing: dict[_ListKey, asyncio.Task[list[HistoryRecord]]] = {}
-        self._thumbs: OrderedDict[tuple[str, int], bytes] = OrderedDict()
+        self._listings: dict[_ListKey, tuple[float, Page]] = {}
+        self._listing: dict[_ListKey, asyncio.Task[Page]] = {}
+        self._thumbs: OrderedDict[tuple[str, str], bytes] = OrderedDict()
+        # Per (camera, ref): the row's record id and start, so a stored file is found
+        # while the station is silent.
+        self._ref_ids: OrderedDict[tuple[str, str], tuple[int, datetime | None]] = OrderedDict()
         self.stats = RequestStats()
 
     def diagnostics(self) -> dict[str, Any]:
@@ -237,11 +203,13 @@ class StationRecordings:
             **asdict(self.stats),
             "cached_listings": len(self._listings),
             "cached_thumbs": len(self._thumbs),
+            "cached_refs": len(self._ref_ids),
         }
 
     async def async_list(self, camera: _Camera, days: int) -> list[HistoryRecord]:
         """The camera's recordings over ``days``, newest first."""
-        return await self._async_listing((camera.device_sn, days, None, None, None), camera)
+        page = await self._async_listing((camera.device_sn, days, None, None, None), camera)
+        return page.rows
 
     async def async_page(
         self,
@@ -249,27 +217,17 @@ class StationRecordings:
         *,
         days: int,
         limit: int,
-        before: int | date | None,
+        before: str | None,
         day: date | None = None,
     ) -> Page:
-        """Up to ``limit`` of the camera's recordings older than ``before``.
+        """Up to ``limit`` of the camera's recordings after the library cursor ``before``.
 
-        ``before`` is a record id or a day (its recordings and older ones). One
-        ``Station.async_list_recordings`` call within the window of ``days``, asking
-        ``PAGE_DAYS`` days at most; with ``day`` only that day's recordings (the host's
-        local day, as the station keeps). A full page may hold more after it (the
-        library cannot tell before asking); a short one ends the window unless days of
-        it are left.
+        One ``Station.async_list_recordings_page`` call within the window of ``days``,
+        asking ``PAGE_DAYS`` days at most; with ``day`` the page starts at that day.
         """
-        rows = await self._async_listing((camera.device_sn, days, limit, before, day), camera)
-        if len(rows) >= limit:
-            return Page(rows, True, rows[-1].record_id)
-        window_first, _start, oldest = _page_days(days, before, day)
-        if oldest > window_first:
-            return Page(rows, True, oldest - timedelta(days=1))
-        return Page(rows, False, None)
+        return await self._async_listing((camera.device_sn, days, limit, before, day), camera)
 
-    async def _async_listing(self, key: _ListKey, camera: _Camera) -> list[HistoryRecord]:
+    async def _async_listing(self, key: _ListKey, camera: _Camera) -> Page:
         """The listing ``key`` names; cached and coalesced."""
         cached = self._listings.get(key)
         if cached is not None and _clock() - cached[0] < LIST_CACHE_SECONDS:
@@ -283,36 +241,37 @@ class StationRecordings:
             task.add_done_callback(lambda _done: self._listing.pop(key, None))
         return await join(task, RecordingError(ERR_UNAVAILABLE, "The listing was stopped"))
 
-    async def _async_query(self, key: _ListKey, camera: _Camera) -> list[HistoryRecord]:
+    async def _async_query(self, key: _ListKey, camera: _Camera) -> Page:
         _sn, days, limit, before, day = key
-        since: datetime | None = None
-        until = day
-        cursor = before if isinstance(before, int) else None
-        if limit is not None:
-            # A page: the walk starts at its day and stops before the day before its oldest
-            _first, start, oldest = _page_days(days, before, day)
-            since = datetime.combine(oldest, dt_time.min).astimezone()
-            if isinstance(before, date):
-                until = start
         station = camera.station
         if not station.connected:
             raise RecordingError(ERR_UNAVAILABLE, "The HomeBase is not connected")
         self.stats.list_queries += 1
         try:
             async with asyncio.timeout(LIST_TIMEOUT_SECONDS):
-                rows = await station.async_list_recordings(
-                    camera.device_sn,
-                    days=days,
-                    limit=limit,
-                    before=cursor,
-                    until=until,
-                    since=since,
-                )
-        except ValueError as err:
-            # Raised before anything is sent: a cursor that names no recording's day.
+                if limit is None:
+                    rows = await station.async_list_recordings(
+                        camera.device_sn, days=days, until=day
+                    )
+                    page = Page(list(rows), False, None)
+                else:
+                    found = await station.async_list_recordings_page(
+                        camera.device_sn,
+                        days=days,
+                        limit=limit,
+                        cursor=before,
+                        until=day,
+                        page_days=PAGE_DAYS,
+                    )
+                    page = Page(list(found.rows), found.next_cursor is not None, found.next_cursor)
+        except RecordingCursorError as err:
+            # Before EufySecurityError, which it is; raised before anything is sent.
             raise RecordingError(
-                websocket_api.ERR_INVALID_FORMAT, "The cursor names no recording"
+                websocket_api.ERR_INVALID_FORMAT, "The cursor names no page of this camera"
             ) from err
+        except AccountRejectedError as err:
+            self.stats.list_failed += 1
+            raise _account_refused(camera) from err
         except (EufySecurityError, TimeoutError) as err:
             self.stats.list_failed += 1
             _LOGGER.debug(
@@ -324,8 +283,22 @@ class StationRecordings:
         now = _clock()
         for old in [k for k, (at, _) in self._listings.items() if now - at >= LIST_CACHE_SECONDS]:
             del self._listings[old]
-        self._listings[key] = (now, rows)
-        return rows
+        self._listings[key] = (now, page)
+        # Oldest first, so a long listing evicts its oldest refs, not its newest.
+        for row in reversed(page.rows):
+            self._remember(camera, row)
+        return page
+
+    def _remember(self, camera: _Camera, row: HistoryRecord) -> None:
+        """Note ``row``'s record id and start under its ref, the oldest dropped past
+        ``REF_IDS_ITEMS``."""
+        if row.ref is None:
+            return
+        key = (camera.device_sn, row.ref)
+        self._ref_ids[key] = (row.record_id, row.started_at)
+        self._ref_ids.move_to_end(key)
+        while len(self._ref_ids) > REF_IDS_ITEMS:
+            self._ref_ids.popitem(last=False)
 
     async def async_rows_json(
         self, camera: _Camera, rows: list[HistoryRecord]
@@ -335,7 +308,7 @@ class StationRecordings:
         stored = {
             row.record_id: found
             for row in rows
-            if (found := self._stored.stored_file(row.record_id, camera.device_sn)) is not None
+            if (found := self._stored_file(camera, row.record_id, row.started_at)) is not None
         }
         paths = {
             record_id: path
@@ -347,11 +320,12 @@ class StationRecordings:
         )
         result: list[dict[str, Any]] = []
         for row in rows:
-            named = self._stored.history.still_name(row.record_id)
+            named = self._stored.history.still_name(camera.device_sn, row.record_id)
             path = paths.get(row.record_id)
             result.append(
                 {
                     "record_id": row.record_id,
+                    "ref": row.ref,
                     "started_at": _iso(row.started_at),
                     "ended_at": _iso(row.ended_at),
                     "duration_s": row.duration_s,
@@ -366,45 +340,60 @@ class StationRecordings:
                     "thumb_url": (
                         async_sign_path(
                             self._hass,
-                            THUMB_URL.format(entity_id=camera.entity_id, record_id=row.record_id),
+                            THUMB_URL.format(entity_id=camera.entity_id, ref=row.ref),
                             timedelta(seconds=THUMB_SIGN_SECONDS),
                         )
-                        if row.thumb_path
+                        if row.thumb_path and row.ref
                         else None
                     ),
                 }
             )
         return result
 
-    async def async_row(self, camera: _Camera, record_id: int) -> HistoryRecord:
-        """The camera's recording ``record_id``: from a fresh listing, else one query."""
+    async def async_row(self, camera: _Camera, ref: str) -> HistoryRecord:
+        """The camera's recording ``ref``: from a fresh listing, else one lookup by ref.
+
+        ``not_found`` for a ref the library did not issue for this camera
+        (``RecordingRefError``) or a row the station no longer lists
+        (``RecordNotFoundError``); neither is retried.
+        """
         now = _clock()
-        for (device_sn, *_args), (at, rows) in self._listings.items():
+        for (device_sn, *_args), (at, page) in self._listings.items():
             if device_sn != camera.device_sn or now - at >= LIST_CACHE_SECONDS:
                 continue
-            for row in rows:
-                if row.record_id == record_id:
+            for row in page.rows:
+                if row.ref == ref:
                     return row
         if not camera.station.connected:
             raise RecordingError(ERR_UNAVAILABLE, "The HomeBase is not connected")
         try:
-            found = await camera.station.async_history_record(record_id)
-        except UnsupportedError as err:
+            found = await camera.station.async_history_record_by_ref(
+                ref, device_sn=camera.device_sn
+            )
+        except (RecordingRefError, RecordNotFoundError) as err:
+            # Before EufySecurityError, which both are.
             raise RecordingError(ERR_NOT_FOUND, "No such recording of this camera") from err
+        except AccountRejectedError as err:
+            raise _account_refused(camera) from err
         except (EufySecurityError, TimeoutError) as err:
             raise RecordingError(ERR_UNAVAILABLE, "The HomeBase did not answer") from err
-        if found is None or found.device_sn != camera.device_sn or found.video_path is None:
+        # The library refuses a ref of another camera (RecordingRefError) for device_sn.
+        if found.video_path is None:
             raise RecordingError(ERR_NOT_FOUND, "No such recording of this camera")
+        self._remember(camera, found)
         return found
 
-    async def async_fetch(self, camera: _Camera, record_id: int) -> dict[str, str]:
+    async def async_fetch(self, camera: _Camera, ref: str) -> dict[str, str]:
         """Store the recording in the history unless it is; its media id and a play URL."""
         self.stats.fetch_calls += 1
-        stored = self._stored.stored_file(record_id, camera.device_sn)
-        path = self._stored.path_of(stored, camera.device_sn) if stored is not None else None
-        if path is not None and await self._hass.async_add_executor_job(self._stored.is_kept, path):
+        # A recording listed before and stored since plays without the station.
+        if (noted := self._ref_ids.get((camera.device_sn, ref))) is not None and (
+            path := await self._kept_path(camera, *noted)
+        ) is not None:
             return await self._async_playable(path)
-        row = await self.async_row(camera, record_id)
+        row = await self.async_row(camera, ref)
+        if (path := await self._kept_path(camera, row.record_id, row.started_at)) is not None:
+            return await self._async_playable(path)
         if not Station.recording_settled(row):
             raise RecordingError(ERR_NOT_SETTLED, "The recording is still running")
         if not self._stored.history.enabled:
@@ -417,6 +406,9 @@ class StationRecordings:
         except LiveStreamLimitError as err:
             self.stats.fetch_failed += 1
             raise RecordingError(ERR_BUSY, "Every session of the HomeBase is in use") from err
+        except AccountRejectedError as err:
+            self.stats.fetch_failed += 1
+            raise _account_refused(camera) from err
         # Before OSError: TimeoutError is one.
         except (EufySecurityError, TimeoutError) as err:
             self.stats.fetch_failed += 1
@@ -436,6 +428,21 @@ class StationRecordings:
             raise RecordingError(ERR_FAILED, "The recording could not be saved") from err
         return await self._async_playable(saved.path)
 
+    def _stored_file(
+        self, camera: _Camera, record_id: int, started: datetime | None
+    ) -> StoredFile | None:
+        return self._stored.stored_file(camera.station.serial, record_id, started, camera.device_sn)
+
+    async def _kept_path(
+        self, camera: _Camera, record_id: int, started: datetime | None
+    ) -> Path | None:
+        """The history file the camera's recording was stored to, if it still exists."""
+        stored = self._stored_file(camera, record_id, started)
+        path = self._stored.path_of(stored, camera.device_sn) if stored is not None else None
+        if path is None or not await self._hass.async_add_executor_job(self._stored.is_kept, path):
+            return None
+        return path
+
     async def _async_playable(self, path: Path) -> dict[str, str]:
         content_id = history.media_content_id(self._hass, path)
         try:
@@ -447,14 +454,14 @@ class StationRecordings:
             "url": async_process_play_media_url(self._hass, media.url, allow_relative_url=True),
         }
 
-    async def async_thumbnail(self, camera: _Camera, record_id: int) -> bytes | None:
+    async def async_thumbnail(self, camera: _Camera, ref: str) -> bytes | None:
         """The recording's still as a JPEG; None when it has none or it is no image."""
         self.stats.thumb_calls += 1
-        key = (camera.device_sn, record_id)
+        key = (camera.device_sn, ref)
         if (cached := self._thumbs.get(key)) is not None:
             self._thumbs.move_to_end(key)
             return cached
-        row = await self.async_row(camera, record_id)
+        row = await self.async_row(camera, ref)
         if not row.thumb_path:
             return None
         if not camera.station.connected:
@@ -462,6 +469,8 @@ class StationRecordings:
         self.stats.thumb_fetches += 1
         try:
             still = await camera.station.async_fetch_still(row.thumb_path)
+        except AccountRejectedError as err:
+            raise _account_refused(camera) from err
         except (EufySecurityError, TimeoutError) as err:
             raise RecordingError(ERR_UNAVAILABLE, "The HomeBase did not send it") from err
         if not still.is_image:
@@ -471,6 +480,19 @@ class StationRecordings:
             while len(self._thumbs) > THUMB_CACHE_ITEMS:
                 self._thumbs.popitem(last=False)
         return still.data
+
+
+def _account_refused(camera: _Camera) -> RecordingError:
+    """The station refused this eufy account (-104): the sharing hint, by its HA name."""
+    coordinator = camera.entry.runtime_data.coordinators.get(camera.station.serial)
+    name = (
+        errors.station_display_name(coordinator) if coordinator is not None else ""
+    ) or "The HomeBase"
+    return RecordingError(
+        ERR_ACCOUNT_REJECTED,
+        f"{name} does not accept this eufy account: check in the eufy app that it is shared"
+        " with this account",
+    )
 
 
 def _iso(value: Any) -> str | None:
@@ -532,7 +554,7 @@ def _default_days(entry: EufyConfigEntry) -> int:
         vol.Optional("limit"): vol.All(
             vol.Coerce(int), vol.Range(min=MIN_PAGE_LIMIT, max=MAX_PAGE_LIMIT)
         ),
-        vol.Optional("before"): vol.Any(None, _cursor),
+        vol.Optional("before"): vol.Any(None, cv.string),
         vol.Optional("day"): cv.date,
     }
 )
@@ -572,7 +594,7 @@ async def _ws_list(
             "supported": True,
             "recordings": result,
             "more": page.more,
-            "next": _cursor_text(page.next) if page.next is not None else None,
+            "next": page.next,
         },
     )
 
@@ -581,7 +603,7 @@ async def _ws_list(
     {
         vol.Required("type"): WS_FETCH,
         vol.Required(ATTR_ENTITY_ID): cv.entity_id,
-        vol.Required("record_id"): cv.positive_int,
+        vol.Required("ref"): cv.string,
     }
 )
 @websocket_api.async_response
@@ -593,7 +615,7 @@ async def _ws_fetch(
         camera = _camera(hass, msg[ATTR_ENTITY_ID])
         if camera.station.is_standalone:
             raise RecordingError(ERR_NOT_FOUND, "A standalone camera keeps no recordings")
-        result = await camera.recordings.async_fetch(camera, msg["record_id"])
+        result = await camera.recordings.async_fetch(camera, msg["ref"])
     except RecordingError as err:
         connection.send_error(msg["id"], err.code, str(err))
         return
@@ -608,22 +630,21 @@ class RecordingThumbView(HomeAssistantView):
     # An <img> sends no Authorization header: the listing hands out signed paths.
     requires_auth = True
 
-    async def get(self, request: web.Request, entity_id: str, record_id: str) -> web.Response:
-        """The still as ``image/jpeg``; 404 for none, 503 while the station is away."""
+    async def get(self, request: web.Request, entity_id: str, ref: str) -> web.Response:
+        """The still as ``image/jpeg``; 404 for none, 403 when the station refuses this
+        account, 503 while the station is away."""
         hass = request.app[KEY_HASS]
-        try:
-            number = int(record_id)
-        except ValueError:
-            return web.Response(status=HTTPStatus.NOT_FOUND)
         try:
             camera = _camera(hass, entity_id)
             if camera.station.is_standalone:
                 return web.Response(status=HTTPStatus.NOT_FOUND)
-            body = await camera.recordings.async_thumbnail(camera, number)
+            body = await camera.recordings.async_thumbnail(camera, ref)
         except RecordingError as err:
             status = (
                 HTTPStatus.NOT_FOUND
                 if err.code == ERR_NOT_FOUND
+                else HTTPStatus.FORBIDDEN
+                if err.code == ERR_ACCOUNT_REJECTED
                 else HTTPStatus.SERVICE_UNAVAILABLE
             )
             return web.Response(status=status)

@@ -180,13 +180,14 @@ async def test_the_time_zone_is_a_select_of_zone_ids_written_in_the_device_form(
     await hass.async_block_till_done()
 
 
-async def test_a_select_write_the_station_rejects_keeps_the_last_option(
+async def test_a_select_write_under_another_account_keeps_the_last_option(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """A rejected write raises the translated error and leaves the option where it was."""
+    """A write the station refuses for the account (-104) raises the account hint and
+    leaves the option where it was."""
     setting = settings_of("T8160")[_WATERMARK]
     seed_setting(fake_station, _WATERMARK, 1)
     entry = await set_up_warm(hass, seed_warm_cache)
@@ -200,7 +201,7 @@ async def test_a_select_write_the_station_rejects_keeps_the_last_option(
     await hass.async_block_till_done()
 
     assert raised.value.translation_domain == DOMAIN
-    assert raised.value.translation_key == "setting_rejected"
+    assert raised.value.translation_key == "account_rejected"
     placeholders = raised.value.translation_placeholders
     assert placeholders == {
         "target": setting.name,

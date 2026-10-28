@@ -33,7 +33,7 @@ from eufy_home_security.devices.model_settings import (
     settings_of,
 )
 
-from custom_components.eufy_home_security import card, const, preset_upload
+from custom_components.eufy_home_security import card, const, preset_upload, station_recordings
 
 _ROOT: Final = Path(__file__).resolve().parent.parent / "custom_components" / "eufy_home_security"
 _SOURCE: Final = card.CARD_FILE.read_text(encoding="utf-8")
@@ -224,6 +224,17 @@ def test_the_station_list_fields_the_card_sends_are_accepted() -> None:
     accepted = {name or "entity_id" for name in accepted}
     missing = sorted(sent - accepted)
     assert not missing, f"the card sends fields the list command refuses: {missing}"
+
+
+def test_the_station_fetch_fields_the_card_sends_are_the_commands_schema() -> None:
+    """Play and Save send ``STATION_FETCH_WS`` with exactly the fields its schema takes:
+    the camera and the library's ``ref`` of the row."""
+    literal = re.search(r"\{ type: STATION_FETCH_WS, ([^}]*) \}", _SOURCE)
+    assert literal, "the card's station fetch request"
+    sent = set(re.findall(r"(\w+):", literal.group(1)))
+    schema = getattr(station_recordings._ws_fetch, "_ws_schema")  # noqa: B009
+    accepted = {str(key) for key in schema.schema} - {"type", "id"}
+    assert sent == accepted == {"entity_id", "ref"}
 
 
 def test_the_preset_picture_the_card_sends_fits_the_command() -> None:

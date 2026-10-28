@@ -26,9 +26,9 @@ signal, once per transition and without the push opt-in; from a push it fires on
 an entry delay, and a trigger that was not authenticated, marked so. The arming
 event fires only from an authenticated push, naming the mode in force.
 
-**The doorbell ring.** A device the library catalogues as a doorbell also gets a
-ring event, fired from its doorbell press, beside its detection event. A camera's
-press goes to the fallback bus event.
+**The doorbell ring.** A device the library says rings (``Capability.DOORBELL_RING``:
+a doorbell, a video smart lock) also gets a ring event, fired from its doorbell
+press, beside its detection event. A camera's press goes to the fallback bus event.
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ async def async_setup_entry(
                 entities.append(EufyDetectionEvent(coordinator, device_sn))
             elif detections.has_motion_sensor_entities(device_sn):
                 entities.append(EufyMotionSensorEvent(coordinator, device_sn))
-            if detections.has_doorbell_entity(kind):
+            if detections.has_doorbell_entity(device_sn):
                 entities.append(EufyDoorbellEvent(coordinator, device_sn))
     async_add_entities(entities)
 
@@ -146,7 +146,7 @@ class EufyMotionSensorEvent(EufyDetectionEvent):
 
 
 class EufyDoorbellEvent(EufyPushAvailability, EufyDeviceEntity, EventEntity):
-    """A catalogued doorbell's ring, fired once per press."""
+    """A doorbell's or video smart lock's ring, fired once per press."""
 
     entity_description = EventEntityDescription(
         key=DOORBELL_EVENT_KEY,

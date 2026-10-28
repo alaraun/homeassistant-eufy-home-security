@@ -929,15 +929,32 @@ _EN_JSON: Final = (
 )
 
 
-def test_doorbell_selection_follows_the_library_device_kind() -> None:
-    """Only a DOORBELL gets the ring, and it keeps its detections."""
-    for kind in [*DeviceKind, None]:
-        assert detections.has_doorbell_entity(kind) is (kind is DeviceKind.DOORBELL)
+_DOORBELL_SN: Final = "T8210P0000000001"
+_VIDEO_LOCK_SN: Final = "T8530P0000000001"
+_LOCK_SN: Final = "T8510P0000000001"
+
+
+@pytest.mark.parametrize(
+    ("serial", "rings"),
+    [
+        (_DOORBELL_SN, True),
+        (_VIDEO_LOCK_SN, True),  # the eufy app rings a video smart lock as a doorbell
+        (_LOCK_SN, False),
+        (SYNTHETIC.camera_sn, False),
+        ("X0000P0000000001", False),  # a model the library does not catalogue
+    ],
+)
+def test_doorbell_selection_follows_the_library_ring_capability(serial: str, rings: bool) -> None:
+    """A device the library grades ``DOORBELL_RING`` gets the ring and its press;
+    detections still follow the entity kind."""
+    assert detections.has_doorbell_entity(serial) is rings
+    kind = detections.entity_kind(serial)
     press = detection_event(DetectionType.DOORBELL_PRESS, t_ms=now_ms())
     person = detection_event(DetectionType.PERSON, t_ms=now_ms())
-    assert detections.device_event_consumed(DeviceKind.DOORBELL, press) is True
-    assert detections.device_event_consumed(DeviceKind.CAMERA, press) is False
-    assert detections.device_event_consumed(DeviceKind.DOORBELL, person) is True
+    assert detections.device_event_consumed(serial, kind, press) is rings
+    assert detections.device_event_consumed(serial, kind, person) is (
+        kind in {DeviceKind.CAMERA, DeviceKind.DOORBELL}
+    )
 
 
 async def test_a_doorbell_press_on_a_doorbell_fires_ring(
@@ -947,20 +964,18 @@ async def test_a_doorbell_press_on_a_doorbell_fires_ring(
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A catalogued doorbell's press fires its ring event end to end.
+    """A ringing device's press fires its ring event end to end.
 
     ``SYNTHETIC`` has no doorbell serial and the fake station pushes for its synthetic
-    camera, so the integration's own ``detections.device_kind`` lookup is replaced by
-    one that calls that camera a doorbell. The library itself is never replaced.
+    camera, so the integration's own ``detections.has_doorbell_entity`` lookup is
+    replaced by one that says that camera rings. The library itself is never replaced.
     """
-    original = detections.device_kind
+    original = detections.has_doorbell_entity
 
-    def doorbell_kind(serial: str) -> DeviceKind | None:
-        if serial == SYNTHETIC.camera_sn:
-            return DeviceKind.DOORBELL
-        return original(serial)
+    def rings(serial: str) -> bool:
+        return serial == SYNTHETIC.camera_sn or original(serial)
 
-    monkeypatch.setattr(detections, "device_kind", doorbell_kind)
+    monkeypatch.setattr(detections, "has_doorbell_entity", rings)
     entry = await set_up_warm(hass, seed_warm_cache)
     entity_id = entity_id_for(hass, EVENT_DOMAIN, SYNTHETIC.camera_sn, DOORBELL_EVENT_KEY)
     state = hass.states.get(entity_id)
@@ -1032,7 +1047,7 @@ async def test_every_station_has_one_alarm_and_one_arming_event_entity(
 def test_device_event_consumption_follows_the_device_kind(kind: DeviceKind | None) -> None:
     """Only a camera or a doorbell consumes a detection; an unknown model does not."""
     event = detection_event(DetectionType.PERSON, t_ms=now_ms())
-    assert detections.device_event_consumed(kind, event) is (
+    assert detections.device_event_consumed(SYNTHETIC.camera_sn, kind, event) is (
         kind in {DeviceKind.CAMERA, DeviceKind.DOORBELL}
     )
 

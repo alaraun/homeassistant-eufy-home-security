@@ -39,6 +39,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.hass_dict import HassKey
 
 from eufy_home_security import (
+    AccountRejectedError,
     AuthenticationError,
     CameraWakeError,
     CipherUnavailableError,
@@ -73,6 +74,7 @@ from eufy_home_security import (
 from eufy_home_security.cloud.const import LOGIN_BUDGET, LOGIN_BUDGET_WINDOW_SECONDS, scope_country
 from eufy_home_security.devices import Support
 
+from . import detections
 from .const import (
     CONF_COUNTRY,
     DOMAIN,
@@ -83,6 +85,7 @@ from .const import (
     ERROR_SESSION_REJECTED,
     ERROR_SESSION_REPLACED,
     ERROR_VERIFICATION_REFUSED,
+    EXC_ACCOUNT_REJECTED,
     EXC_AUTH_FAILED,
     EXC_CACHE_UNAVAILABLE,
     EXC_CAMERA_UNAVAILABLE,
@@ -124,6 +127,7 @@ from .const import (
     EXC_SETTING_REJECTED,
     EXC_SETTING_UNCONFIRMED,
     EXC_SETTING_VALUE_INVALID,
+    EXC_SIREN_ACCOUNT_REJECTED,
     EXC_SIREN_DURATION_INVALID,
     EXC_SIREN_NOT_CONFIRMED,
     EXC_SIREN_REJECTED,
@@ -275,6 +279,7 @@ def failure_reason(err: BaseException) -> str:
 # The messages that name the station whose answer they report.
 _STATION_NAMED_KEYS: Final = frozenset(
     {
+        EXC_ACCOUNT_REJECTED,
         EXC_GUARD_MODE_COMMAND_UNSUPPORTED,
         EXC_GUARD_MODE_NOT_APPLIED,
         EXC_GUARD_MODE_NOT_SUPPORTED,
@@ -287,10 +292,13 @@ _STATION_NAMED_KEYS: Final = frozenset(
 
 
 def _command_key(err: CommandError, not_applied: str, unsupported: str, rejected: str) -> str:
-    """The key of a station's answer: acknowledged and not acted on (the wrong-account
-    case), "not supported by this device" (-108, -103), or any other refusal."""
+    """The key of a station's answer: acknowledged and not acted on (usually an owner id
+    it does not hold), refused for the account (-104), "not supported by this device"
+    (-108, -103), or any other refusal."""
     if isinstance(err, CommandNotAppliedError):
         return not_applied
+    if isinstance(err, AccountRejectedError):
+        return EXC_ACCOUNT_REJECTED
     if isinstance(err, CommandUnsupportedError):
         return unsupported
     return rejected
@@ -313,9 +321,10 @@ def arm_failed(
       not wake the camera; the message says the camera may be asleep.
     - ``CommandError``: the station was reached and did not apply the mode. Acknowledged
       and never acted on (``CommandNotAppliedError``, usually an owner id it does not
-      hold: the only message with the sharing hint), answered "not supported"
-      (``CommandUnsupportedError``, -108 or -103), or answered with another error
-      (``CommandRejectedError``).
+      hold), refused for the account it was sent under (``AccountRejectedError``, -104:
+      ``account_rejected``), answered "not supported" (``CommandUnsupportedError``, -108
+      or -103), or answered with another error (``CommandRejectedError``). The first two
+      carry the sharing hint.
     - ``UnsupportedError`` (any other): the library refused before sending, a station
       model whose guard mode it does not set.
     - ``KeyRejectedError``: the write reconnected and the station rejected even its
@@ -455,6 +464,7 @@ def siren_failed(
     err: EufySecurityError,
     target: str,
     *,
+    station_name: str = "",
     on_demand: bool = False,
 ) -> HomeAssistantError:
     """A siren start or stop the device did not confirm, refused, or could not receive.
@@ -466,6 +476,7 @@ def siren_failed(
     - ``CameraWakeError``: the station could not wake the camera.
     - ``CommandNotAppliedError``: acknowledged, never confirmed; the siren may or may
       not have changed.
+    - ``AccountRejectedError`` (-104): the station does not accept this account.
     - ``CommandError`` (any other, a -108 ``CommandUnsupportedError`` included): the
       device answered with an error.
     - ``UnsupportedError``: refused before sending (the alarm is not offered here, or the
@@ -475,7 +486,8 @@ def siren_failed(
     - Anything else (``DeviceTimeoutError``, ``CommunicationError``): the station did not
       answer; with ``on_demand`` the camera may be asleep.
 
-    ``target`` is the only placeholder: the entity's name, never a serial or library text.
+    Placeholders: ``target``, the entity's name, never a serial or library text; and
+    ``station`` (``station_name``) for the account refusal.
     """
     if is_session_replaced_failure(err):
         key = EXC_SESSION_REPLACED_SEE_REPAIRS
@@ -483,6 +495,8 @@ def siren_failed(
         key = EXC_ON_DEMAND_UNREACHABLE
     elif isinstance(err, CommandNotAppliedError):
         key = EXC_SIREN_NOT_CONFIRMED
+    elif isinstance(err, AccountRejectedError):
+        key = EXC_SIREN_ACCOUNT_REJECTED
     elif isinstance(err, CommandError):
         key = EXC_SIREN_REJECTED
     elif isinstance(err, UnsupportedError):
@@ -495,10 +509,13 @@ def siren_failed(
         key = EXC_CLOUD_UNAVAILABLE
     else:
         key = EXC_ON_DEMAND_UNREACHABLE if on_demand else EXC_STATION_UNREACHABLE
+    placeholders = {"target": target}
+    if key == EXC_SIREN_ACCOUNT_REJECTED:
+        placeholders["station"] = station_name
     return HomeAssistantError(
         translation_domain=DOMAIN,
         translation_key=key,
-        translation_placeholders={"target": target},
+        translation_placeholders=placeholders,
     )
 
 
@@ -985,13 +1002,23 @@ def recording_unsupported() -> ServiceValidationError:
     )
 
 
-def recording_failed_to_capture(err: EufySecurityError) -> HomeAssistantError:
+def recording_failed_to_capture(
+    err: EufySecurityError, *, target: str = "", station_name: str = ""
+) -> HomeAssistantError:
     """A live capture the camera did not deliver, as a translated error.
 
     Past the sessions per HomeBase (``LiveStreamLimitError``) names the live-stream
-    limit; any other library error (``CameraWakeError``, ``DeviceTimeoutError``, ...)
-    is the camera being unavailable. Never the library's text.
+    limit; a station that refused this account (``AccountRejectedError``, -104) gives
+    ``account_rejected`` naming ``target`` and ``station_name``; any other library error
+    (``CameraWakeError``, ``DeviceTimeoutError``, ...) is the camera being unavailable.
+    Never the library's text.
     """
+    if isinstance(err, AccountRejectedError):
+        return HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key=EXC_ACCOUNT_REJECTED,
+            translation_placeholders={"target": target, "station": station_name},
+        )
     if isinstance(err, LiveStreamLimitError):
         return HomeAssistantError(
             translation_domain=DOMAIN,
@@ -1442,23 +1469,32 @@ def sync_push_needed_issue(
 ) -> None:
     """Name the served stations whose detections need cloud push while it is off.
 
-    A station whose ``local_events`` is not ``Support.VERIFIED`` delivers its cameras'
-    detections only through cloud push (library guide). Fixable: the fix switches the
-    option on. Not persistent; the placeholders are the account's label and the
+    A station is named when one of its devices with detection entities (a standalone
+    camera: itself) is not ``Support.VERIFIED`` in ``Station.local_detections_for``: its
+    detections arrive only through cloud push (library guide). Fixable: the fix switches
+    the option on. Not persistent; the placeholders are the account's label and the
     stations' device names. The library's reason text is logged at debug, never shown.
     """
     issue_id = push_needed_issue_id(entry.entry_id)
     needing: list[str] = []
     if not cloud_push:
         for station in stations:
-            evidence = station.local_events
-            if evidence.support is Support.VERIFIED:
+            unverified = False
+            for serial, kind in detections.paired_device_kinds(station).items():
+                if not detections.has_detection_entities(kind):
+                    continue
+                evidence = station.local_detections_for(serial)
+                if evidence.support is Support.VERIFIED:
+                    continue
+                unverified = True
+                _LOGGER.debug(
+                    "Detections of %s on %s need cloud push: %s",
+                    redact_serial(serial),
+                    redact_serial(station.serial),
+                    evidence.source,
+                )
+            if not unverified:
                 continue
-            _LOGGER.debug(
-                "Detections from %s need cloud push: %s",
-                redact_serial(station.serial),
-                evidence.source,
-            )
             device = _station_device(hass, entry, station.serial)
             label = station_label(device) if device is not None else ""
             needing.append(label or redact_serial(station.serial))

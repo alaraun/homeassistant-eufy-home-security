@@ -131,13 +131,14 @@ async def test_an_inverted_1350_switch_writes_the_wire_code_the_library_renders(
     await hass.async_block_till_done()
 
 
-async def test_a_switch_write_the_station_rejects_raises_setting_rejected(
+async def test_a_switch_write_under_another_account_raises_the_account_hint(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """A rejected write raises the translated error and leaves the switch where it was."""
+    """A write the station refuses for the account (-104) raises the account hint and
+    leaves the switch where it was."""
     seed_setting(fake_station, _STATUS_LED, 0)
     entry = await set_up_warm(hass, seed_warm_cache)
     led_id = _switch_id(hass, _STATUS_LED)
@@ -150,7 +151,7 @@ async def test_a_switch_write_the_station_rejects_raises_setting_rejected(
     await hass.async_block_till_done()
 
     assert raised.value.translation_domain == DOMAIN
-    assert raised.value.translation_key == "setting_rejected"
+    assert raised.value.translation_key == "account_rejected"
     assert raised.value.translation_placeholders == {
         "target": settings_of("T8160")[_STATUS_LED].name,
         "station": entry.runtime_data.coordinators[SYNTHETIC.station_sn].station.name,

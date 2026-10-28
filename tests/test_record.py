@@ -26,6 +26,7 @@ from conftest import (
     wait_until,
 )
 from eufy_home_security import (
+    AccountRejectedError,
     CameraWakeError,
     CaptureStoppedError,
     ClipWriter,
@@ -46,7 +47,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.eufy_home_security import history
+from custom_components.eufy_home_security import errors, history
 from custom_components.eufy_home_security.const import (
     ATTR_COMPLETE,
     ATTR_DURATION,
@@ -285,8 +286,10 @@ async def test_record_needs_the_event_history(
         (LiveStreamLimitError("budget", limit=2), "live_stream_limit"),
         (CameraWakeError(1003, -204), "camera_unavailable"),
         (DeviceTimeoutError("no keyframe"), "camera_unavailable"),
+        # -104: the station does not accept the account the open was sent under.
+        (AccountRejectedError(1003, -104), "account_rejected"),
     ],
-    ids=["limit", "wake", "timeout"],
+    ids=["limit", "wake", "timeout", "account"],
 )
 async def test_a_capture_the_camera_did_not_deliver_raises_a_translated_error(
     hass: HomeAssistant,
@@ -308,6 +311,14 @@ async def test_a_capture_the_camera_did_not_deliver_raises_a_translated_error(
     assert raised.value.translation_key == key
     if key == "live_stream_limit":
         assert raised.value.translation_placeholders == {"limit": "2"}
+    if key == "account_rejected":
+        coordinator = entry.runtime_data.coordinators[SYNTHETIC.station_sn]
+        camera = hass.states.get(_camera(hass))
+        assert camera is not None
+        assert raised.value.translation_placeholders == {
+            "target": camera.name,
+            "station": errors.station_display_name(coordinator),
+        }
     assert _all_files(hass) == []
     assert state_of(hass, _camera(hass)) == before
     await _unload(hass, entry)

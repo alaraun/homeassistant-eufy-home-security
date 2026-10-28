@@ -487,7 +487,7 @@ class EventRouter:
             # comes from the payload, which an ECB frame can forge.
             kinds = detections.paired_device_kinds(coordinator.station)
             if event.device_sn in kinds and detections.device_event_consumed(
-                kinds[event.device_sn], event
+                event.device_sn, kinds[event.device_sn], event
             ):
                 _LOGGER.debug(
                     "Push for %s dispatched to its device entities%s",

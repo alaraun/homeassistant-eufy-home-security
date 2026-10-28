@@ -189,7 +189,8 @@ async def test_a_video_smart_lock_gets_the_camera_entities_and_stays_a_lock(
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """A lock the eufy app files under its cameras gets a camera's entities, no ring event.
+    """A lock the eufy app files under its cameras gets a camera's entities and the ring
+    event (the eufy app rings it as a video doorbell).
 
     Its kind stays the library's LOCK (the HomeBase card's per-mode actions read it).
     """
@@ -203,7 +204,7 @@ async def test_a_video_smart_lock_gets_the_camera_entities_and_stays_a_lock(
 
     entities = _entities_of(hass, VIDEO_LOCK_SN)
     assert _CAMERA_ENTITIES | _STATUS_ENTITIES <= entities
-    assert ("event", DOORBELL_EVENT_KEY) not in entities
+    assert ("event", DOORBELL_EVENT_KEY) in entities
 
 
 def _camera_state(hass: HomeAssistant, serial: str) -> State:
