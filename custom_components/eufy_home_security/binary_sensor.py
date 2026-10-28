@@ -1,14 +1,15 @@
-"""Read-only bool settings, and what each camera is detecting right now.
+"""Read-only bool settings and recent camera or motion-sensor detections.
 
 **Bool settings.** A readable bool setting with no control shows as a binary sensor.
 
-**Detection sensors.** Each camera (and doorbell) has a motion, person, pet and
-vehicle sensor. A detection turns on only the sensor of its own class. The
-station announces a detection but never its end, so a sensor turns itself off on a
-timer, a configurable hold after the detection's own time rather than its arrival.
-A detection that arrives after its hold ran out leaves the sensor off; the
-detection event entity still fires for it. The hold is read once at platform setup,
-and the options flow's reload rebuilds the sensors with a new one.
+**Detection sensors.** Each camera (and doorbell) has Motion, Person, Pet and
+Vehicle sensors; a motion sensor has Motion only. A detection turns on only the
+sensor of its own class. The station announces a detection but never its end, so a
+sensor turns itself off on a timer, a configurable hold after the detection's own
+time rather than its arrival. A detection that arrives after its hold ran out
+leaves the sensor off; the detection event entity still fires for it. The hold is
+read once at platform setup, and the options flow's reload rebuilds the sensors
+with a new one.
 
 **Storage sensors.** From the station's storage record (``storage.py``): a problem
 sensor per medium (disk and eMMC) that is on while the library reports that medium not
@@ -247,7 +248,7 @@ async def async_setup_entry(
     entry: EufyConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Add every read-only bool setting, then each camera's detection sensors."""
+    """Add read-only settings and camera or motion-sensor detection sensors."""
     del hass  # the coordinators carry everything this platform needs
     hold = int(entry.options.get(CONF_DETECTION_HOLD, DEFAULT_DETECTION_HOLD_SECONDS))
     entities: list[BinarySensorEntity] = [
@@ -257,12 +258,16 @@ async def async_setup_entry(
         if spec.platform is Platform.BINARY_SENSOR
     ]
     for coordinator in entry.runtime_data.coordinators.values():
-        entities.extend(
-            EufyDetectionBinarySensor(coordinator, device_sn, key, hold)
-            for device_sn, kind in detections.paired_device_kinds(coordinator.station).items()
-            if detections.has_detection_entities(kind)
-            for key in detections.DETECTION_CLASSES
-        )
+        for device_sn, kind in detections.paired_device_kinds(coordinator.station).items():
+            if detections.has_detection_entities(kind):
+                keys: tuple[str, ...] = tuple(detections.DETECTION_CLASSES)
+            elif detections.has_motion_sensor_entities(device_sn):
+                keys = (MOTION_DETECTED_KEY,)
+            else:
+                continue
+            entities.extend(
+                EufyDetectionBinarySensor(coordinator, device_sn, key, hold) for key in keys
+            )
     async_add_entities(entities)
     for coordinator in entry.runtime_data.coordinators.values():
         _async_add_state_binary_sensors(entry, coordinator, async_add_entities)
@@ -282,10 +287,10 @@ class EufySettingBinarySensor(EufySettingEntity, BinarySensorEntity):
 
 
 class EufyDetectionBinarySensor(EufyPushAvailability, EufyDeviceEntity, BinarySensorEntity):
-    """Whether one camera detected one class of thing within the hold.
+    """Whether a camera or motion sensor detected one class within the hold.
 
     Off until a detection of its class; no state is restored across a restart, so a
-    camera that has had no detection shows off, never unknown. The off edge is a
+    device that has had no detection shows off, never unknown. The off edge is a
     timer computed once at arrival, and it only ever moves later: an older detection
     arriving after a newer one never shortens the running hold.
     """

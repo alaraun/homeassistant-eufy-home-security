@@ -179,14 +179,14 @@ async def _unload(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     await hass.async_block_till_done()
 
 
-async def test_each_camera_has_four_detection_binary_sensors_and_the_motion_sensor_none(
+async def test_camera_has_four_detection_sensors_and_pir_has_motion_only(
     hass: HomeAssistant,
     fake_station: FakeStation,
     fake_cloud: FakeCloud,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """A camera has motion, person, pet and vehicle sensors; the T8910 and station none.
+    """Cameras have four detection sensors; PIRs have motion only; stations have none.
 
     They are primary readings, not diagnostics, each with its own entity id.
     """
@@ -205,14 +205,22 @@ async def test_each_camera_has_four_detection_binary_sensors_and_the_motion_sens
         entity_ids.add(entity_id)
     assert len(entity_ids) == len(_DETECTION_KEYS)
 
-    for serial in (SENSOR_SN, SYNTHETIC.station_sn):
-        for key in _DETECTION_KEYS:
-            assert (
-                registry.async_get_entity_id(
-                    BINARY_SENSOR_DOMAIN, DOMAIN, entity_unique_id(serial, key)
-                )
-                is None
-            ), (serial, key)
+    sensor_motion = registry.async_get(
+        entity_id_for(hass, BINARY_SENSOR_DOMAIN, SENSOR_SN, "motion_detected")
+    )
+    assert sensor_motion is not None
+    assert sensor_motion.original_device_class == BinarySensorDeviceClass.MOTION
+    assert sensor_motion.entity_category is None
+
+    absent = [(SYNTHETIC.station_sn, key) for key in _DETECTION_KEYS]
+    absent += [(SENSOR_SN, key) for key in _DETECTION_KEYS if key != "motion_detected"]
+    for serial, key in absent:
+        assert (
+            registry.async_get_entity_id(
+                BINARY_SENSOR_DOMAIN, DOMAIN, entity_unique_id(serial, key)
+            )
+            is None
+        ), (serial, key)
 
     await _unload(hass, entry)
 

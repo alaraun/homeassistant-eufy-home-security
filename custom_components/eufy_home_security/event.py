@@ -90,6 +90,8 @@ async def async_setup_entry(
         for device_sn, kind in detections.paired_device_kinds(coordinator.station).items():
             if detections.has_detection_entities(kind):
                 entities.append(EufyDetectionEvent(coordinator, device_sn))
+            elif detections.has_motion_sensor_entities(device_sn):
+                entities.append(EufyMotionSensorEvent(coordinator, device_sn))
             if detections.has_doorbell_entity(device_sn):
                 entities.append(EufyDoorbellEvent(coordinator, device_sn))
     async_add_entities(entities)
@@ -131,6 +133,16 @@ class EufyDetectionEvent(EufyPushAvailability, EufyDeviceEntity, EventEntity):
             return
         self._trigger_event(event_type, detections.detection_attributes(event))
         self.async_write_ha_state()
+
+
+class EufyMotionSensorEvent(EufyDetectionEvent):
+    """Motion-only event entity for a dedicated PIR sensor."""
+
+    entity_description = EventEntityDescription(
+        key=DETECTION_EVENT_KEY,
+        translation_key=DETECTION_EVENT_KEY,
+        event_types=["motion"],
+    )
 
 
 class EufyDoorbellEvent(EufyPushAvailability, EufyDeviceEntity, EventEntity):

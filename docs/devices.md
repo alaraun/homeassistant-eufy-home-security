@@ -34,7 +34,7 @@ Details: [usage.md](usage.md#device-settings).
 | T8030 | HomeBase 3 (S380) | guard mode, status, storage, detections, event history, stills, settings (clock format), entry and leaving delays of Home, Away and Custom 1 |
 | T8160 | eufyCam 3 (S330), on a HomeBase | detections, stills, live video and audio, settings (detection sensitivity, trigger interval, clip length, speaker volume, streaming quality, night vision, working mode) |
 | T8170 | Battery SoloCam, standalone | guard mode, status, live video, presets, pan/tilt, zoom, settings (detection sensitivity, motion detection, status LED, night vision, record audio, AI tracking, streaming quality, privacy zones, spotlight, lighting) |
-| T8910 | Motion sensor, on a HomeBase | battery and signal only |
+| T8910 | Motion sensor, on a HomeBase | battery, signal and Motion binary sensor / motion-only Detection event (HomeBase 2, cloud push verified) |
 
 ## Models from eufy app code
 
@@ -45,6 +45,7 @@ are offered, but none is tested:
 |---|---|---|
 | T8161 | eufyCam 3C, on a HomeBase | as the T8160: detections, stills, live video, settings |
 | T8410 | Indoor Cam 2K Pan & Tilt, standalone | live video, pan/tilt one step; no presets, no zoom |
+| T90M0 | Motion sensor | as the T8910: Motion and a motion-only Detection event |
 
 Report what works and what does not ([below](#reporting-a-new-device)).
 
