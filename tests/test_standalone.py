@@ -300,7 +300,7 @@ async def test_a_standalone_camera_lists_no_station_recordings(
     await client.send_json_auto_id({"type": f"{DOMAIN}/recordings", "entity_id": entity_id})
     listed = await client.receive_json()
     await client.send_json_auto_id(
-        {"type": f"{DOMAIN}/recordings/fetch", "entity_id": entity_id, "record_id": 1}
+        {"type": f"{DOMAIN}/recordings/fetch", "entity_id": entity_id, "ref": "v1.r.any"}
     )
     fetched = await client.receive_json()
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
@@ -17,15 +17,18 @@ from typing import Any, Final
 import pytest
 from conftest import (
     PUSHED_THUMB_PATH,
+    PUSHED_THUMBNAIL,
     SYNTHETIC,
     add_entry,
     detection_event,
     entity_id_for,
     panel_entity_id,
+    set_guard_mode,
     setup_entry,
     wait_until,
 )
 from eufy_home_security import (
+    AccountRejectedError,
     ClipWriter,
     DetectionType,
     DeviceTimeoutError,
@@ -35,9 +38,11 @@ from eufy_home_security import (
     MediaClip,
     Station,
 )
-from eufy_home_security.testing import FakeStation
+from eufy_home_security.p2p import session as session_module
+from eufy_home_security.testing import FakeCloud, FakeStation, camera_device
 from fake_ffmpeg import REMUX_MAGIC
 from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
+from homeassistant.components.http.auth import async_sign_path
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
@@ -54,7 +59,7 @@ from pytest_homeassistant_custom_component.typing import (
     WebSocketGenerator,
 )
 
-from custom_components.eufy_home_security import history, recordings, station_recordings
+from custom_components.eufy_home_security import errors, history, recordings, station_recordings
 from custom_components.eufy_home_security.const import (
     CAMERA_KEY,
     CONF_EVENT_VIDEOS,
@@ -69,6 +74,25 @@ _ROW_TIME: Final = "%Y-%m-%d %H:%M:%S"
 JPEG: Final = b"\xff\xd8RECORDING-STILL\xff\xd9"
 OBFUSCATED: Final = b"v8_eufysecurity" + b"\x00" * 32
 OTHER_SN: Final = "T8160P2000099999"
+HOMEBASE_2_SN: Final = "T8010" + SYNTHETIC.station_sn[5:]
+
+
+@pytest.fixture
+async def fake_station(request: pytest.FixtureRequest) -> AsyncIterator[FakeStation]:
+    """The conftest station, with the serial a test passes indirectly (default HomeBase 3)."""
+    station = FakeStation(serial=getattr(request, "param", SYNTHETIC.station_sn))
+    set_guard_mode(station, station.guard_mode)
+    station.images[PUSHED_THUMB_PATH] = PUSHED_THUMBNAIL
+    await station.start()
+    yield station
+    station.stop()
+
+
+@pytest.fixture
+def short_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake HomeBase 2 answers no storage query: give up after a tenth of a second."""
+    monkeypatch.setattr(session_module, "STORAGE_TIMEOUT", 0.1)
+    monkeypatch.setattr(session_module, "SD_INFO_TIMEOUT", 0.1)
 
 
 def _row(
@@ -159,8 +183,20 @@ async def _list(client: MockHAClientWebSocket, entity_id: str, **fields: Any) ->
     return result
 
 
-async def _fetch(client: MockHAClientWebSocket, entity_id: str, record_id: int) -> dict[str, Any]:
-    return await _ws(client, station_recordings.WS_FETCH, entity_id=entity_id, record_id=record_id)
+async def _fetch(client: MockHAClientWebSocket, entity_id: str, ref: str) -> dict[str, Any]:
+    return await _ws(client, station_recordings.WS_FETCH, entity_id=entity_id, ref=ref)
+
+
+async def _refs(client: MockHAClientWebSocket, entity_id: str, **fields: Any) -> dict[int, str]:
+    """Each listed recording's library ref, by record id."""
+    listed = await _list(client, entity_id, **fields)
+    return {r["record_id"]: r["ref"] for r in listed["recordings"]}
+
+
+def _expire_listings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Age every cached listing past ``LIST_CACHE_SECONDS``."""
+    later = station_recordings._clock() + station_recordings.LIST_CACHE_SECONDS + 1
+    monkeypatch.setattr(station_recordings, "_clock", lambda: later)
 
 
 def _count_downloads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
@@ -175,6 +211,19 @@ def _count_downloads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
         return await real(self, record, write, wait=wait)
 
     monkeypatch.setattr(Station, "async_download_recording", counting)
+    return calls
+
+
+def _count_lookups(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the ref of every lookup by ref the station is asked for."""
+    calls: list[str] = []
+    real = Station.async_history_record_by_ref
+
+    async def counting(self: Station, ref: str, **kwargs: Any) -> HistoryRecord:
+        calls.append(ref)
+        return await real(self, ref, **kwargs)
+
+    monkeypatch.setattr(Station, "async_history_record_by_ref", counting)
     return calls
 
 
@@ -236,8 +285,10 @@ async def test_the_listing_carries_each_recording_of_the_camera_newest_first(
     assert (first["duration_s"], first["size_bytes"]) == (10.0, 2048)
     assert (first["settled"], second["settled"]) == (False, True)
     assert (first["kind"], first["media_content_id"]) == (None, None)
+    assert all(isinstance(r["ref"], str) and r["ref"] for r in result["recordings"])
+    assert first["ref"] != second["ref"]
     assert first["thumb_url"].startswith(
-        f"/api/{DOMAIN}/recording_thumb/{_camera(hass)}/{running['record_id']}?authSig="
+        f"/api/{DOMAIN}/recording_thumb/{_camera(hass)}/{first['ref']}?authSig="
     )
     assert second["thumb_url"] is None
     assert second["size_bytes"] is None
@@ -319,8 +370,8 @@ async def test_a_page_asks_only_the_days_it_needs_and_names_where_the_next_start
     seed_warm_cache: Callable[..., None],
 ) -> None:
     """``limit`` rows newest first from today backwards: no day after the page filled is
-    asked; ``next`` continues below the page's last row, in its day; a short page asks
-    ``PAGE_DAYS`` days and no more."""
+    asked; the library's ``next`` continues below the page's last row, in its day; a
+    short page asks ``PAGE_DAYS`` days and no more."""
     today, day_before, two_back = _day_rows(0, 3), _day_rows(1, 4), _day_rows(2, 5)
     old = _day_rows(5, 2)
     fake_station.rows = [*today, *day_before, *two_back, *old, *_day_rows(1, 2, device_sn=OTHER_SN)]
@@ -332,14 +383,15 @@ async def test_a_page_asks_only_the_days_it_needs_and_names_where_the_next_start
     first = await _list(client, entity_id, days=30, limit=5)
 
     assert [r["record_id"] for r in first["recordings"]] == ids[:5]
-    assert (first["more"], first["next"]) == (True, str(ids[4]))
+    assert first["more"] is True
+    assert isinstance(first["next"], str)
     assert _queried_days(fake_station) == [_day(0), _day(1)]
 
     fake_station.history_queries.clear()
     second = await _list(client, entity_id, days=30, limit=5, before=first["next"])
 
     assert [r["record_id"] for r in second["recordings"]] == ids[5:10]
-    assert (second["more"], second["next"]) == (True, str(ids[9]))
+    assert second["more"] is True
     assert _queried_days(fake_station) == [_day(1), _day(2)]
     assert fake_station.history_queries[0]["start_id"] == ids[4]
 
@@ -348,7 +400,7 @@ async def test_a_page_asks_only_the_days_it_needs_and_names_where_the_next_start
 
     page_days = station_recordings.PAGE_DAYS
     assert [r["record_id"] for r in rest["recordings"]] == ids[10:]
-    assert (rest["more"], rest["next"]) == (True, _day(2 + page_days).strftime("%Y%m%d"))
+    assert rest["more"] is True
     assert _queried_days(fake_station) == [_day(back) for back in range(2, 2 + page_days)]
     assert _manager(entry).stats.list_queries == 3
     await _unload(hass, entry)
@@ -370,7 +422,7 @@ async def test_a_page_ending_on_a_days_last_row_continues_with_the_day_before(
     entity_id = _camera(hass)
 
     first = await _list(client, entity_id, days=3, limit=3)
-    assert (first["more"], first["next"]) == (True, str(today[-1]["record_id"]))
+    assert first["more"] is True
 
     second = await _list(client, entity_id, days=3, before=first["next"])
 
@@ -435,14 +487,14 @@ async def test_a_page_asks_at_most_page_days_and_names_the_day_before_them(
     first = await _list(client, entity_id, days=days, limit=10)
 
     assert first["recordings"] == []
-    assert (first["more"], first["next"]) == (True, _day(page_days).strftime("%Y%m%d"))
+    assert first["more"] is True
     assert _queried_days(fake_station) == [_day(back) for back in range(page_days)]
 
     fake_station.history_queries.clear()
     second = await _list(client, entity_id, days=days, limit=10, before=first["next"])
 
     assert [r["record_id"] for r in second["recordings"]] == [rare[0]["record_id"]]
-    assert (second["more"], second["next"]) == (True, _day(2 * page_days).strftime("%Y%m%d"))
+    assert second["more"] is True
     assert _queried_days(fake_station) == [_day(back) for back in range(page_days, 2 * page_days)]
 
     fake_station.history_queries.clear()
@@ -518,7 +570,8 @@ async def test_a_page_request_out_of_bounds_is_refused(
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """``limit`` 1..50, ``before`` a cursor a page named; nothing is queried."""
+    """``limit`` 1..50, ``before`` a cursor the library issued for this camera (else the
+    library refuses it before sending); nothing is queried."""
     entry = await _set_up(hass, seed_warm_cache)
     client = await hass_ws_client(hass)
     entity_id = _camera(hass)
@@ -530,6 +583,7 @@ async def test_a_page_request_out_of_bounds_is_refused(
         {"before": "2000-01-02/12"},  # hygiene: ok
         {"before": "12345"},
         {"before": "20261399"},
+        {"before": "v1.d.20260101.0000"},
         {"day": "yesterday"},  # hygiene: ok
     ):
         reply = await _ws(client, station_recordings.WS_LIST, entity_id=entity_id, **fields)
@@ -559,6 +613,7 @@ async def test_listing_errors_name_what_failed(
         raise DeviceTimeoutError("no answer")
 
     monkeypatch.setattr(Station, "async_list_recordings", silent)
+    monkeypatch.setattr(Station, "async_list_recordings_page", silent)
     reply = await _ws(client, station_recordings.WS_LIST, entity_id=_camera(hass))
     assert reply["error"]["code"] == "unavailable"
     reply = await _ws(client, station_recordings.WS_LIST, entity_id=_camera(hass), limit=10)
@@ -567,6 +622,56 @@ async def test_listing_errors_name_what_failed(
     await _unload(hass, entry)
     reply = await _ws(client, station_recordings.WS_LIST, entity_id=_camera(hass))
     assert reply["error"]["code"] == "unavailable"
+
+
+async def test_another_cameras_ref_and_cursor_are_refused_and_a_row_without_a_ref_has_no_links(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    hass_client_no_auth: ClientSessionGenerator,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Through the first camera a second camera's ref is ``not_found`` (fetch and
+    thumbnail) and its cursor ``invalid_format``; a row without a record id lists with no
+    ref and no thumbnail."""
+    fake_cloud.devices.append(
+        camera_device(OTHER_SN, station_sn=fake_station.serial, channel=1, name="Back")
+    )
+    fake_station.images["/zx/other.jpg"] = JPEG
+    fake_station.rows = [
+        _row(1, thumb_path="/zx/rec1.jpg"),
+        _row(0, thumb_path="/zx/rec0.jpg", record_id=0),
+        _row(3, device_sn=OTHER_SN, thumb_path="/zx/other.jpg"),
+        _row(4, device_sn=OTHER_SN),
+    ]
+    entry = await _set_up(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    first = _camera(hass)
+    second = entity_id_for(hass, CAMERA_DOMAIN, OTHER_SN, CAMERA_KEY)
+
+    listed = await _list(client, first)
+    other = await _list(client, second, limit=1)
+    other_row = other["recordings"][0]
+    _expire_listings(monkeypatch)
+
+    no_ref = [r for r in listed["recordings"] if r["record_id"] == 0]
+    assert no_ref
+    assert {(r["ref"], r["thumb_url"]) for r in no_ref} == {(None, None)}
+    fetched = await _fetch(client, first, other_row["ref"])
+    assert fetched["error"]["code"] == "not_found"
+    thumb = async_sign_path(
+        hass,
+        station_recordings.THUMB_URL.format(entity_id=first, ref=other_row["ref"]),
+        timedelta(minutes=5),
+    )
+    assert (await (await hass_client_no_auth()).get(thumb)).status == 404
+    page = await _ws(client, station_recordings.WS_LIST, entity_id=first, before=other["next"])
+    assert page["error"]["code"] == "invalid_format"
+    assert _videos(hass) == []
+    await _unload(hass, entry)
 
 
 # ── fetch ────────────────────────────────────────────────────────────────────
@@ -591,10 +696,13 @@ async def test_a_fetch_stores_the_recording_as_the_sync_would_and_returns_a_play
     entry = await _set_up(hass, seed_warm_cache)
     client = await hass_ws_client(hass)
     entity_id = _camera(hass)
+    ref = (await _refs(client, entity_id))[row["record_id"]]
+    lookups = _count_lookups(monkeypatch)
 
-    reply = await _fetch(client, entity_id, row["record_id"])
+    reply = await _fetch(client, entity_id, ref)
 
     assert reply["success"], reply
+    assert lookups == [], "a fresh listing's row is not looked up again"
     (video,) = _videos(hass)
     started = HistoryRecord.from_row(row).started_at
     assert started is not None
@@ -609,15 +717,26 @@ async def test_a_fetch_stores_the_recording_as_the_sync_would_and_returns_a_play
     assert response.status == 200
     assert (await response.read()).startswith(REMUX_MAGIC)
 
-    again = await _fetch(client, entity_id, row["record_id"])
+    again = await _fetch(client, entity_id, ref)
     assert again["result"] == {**reply["result"], "url": again["result"]["url"]}
     assert downloads == [row["record_id"]]
+
+    # Stored and listed before: plays from the history with the station silent, the listing gone.
+    async def silent(self: Station, ref: str, **kwargs: Any) -> HistoryRecord:
+        raise DeviceTimeoutError("no answer")
+
+    monkeypatch.setattr(Station, "async_history_record_by_ref", silent)
+    _expire_listings(monkeypatch)
+    offline = await _fetch(client, entity_id, ref)
+    assert offline["result"]["media_content_id"] == reply["result"]["media_content_id"]
 
     listed = await _list(client, entity_id)
     assert listed["recordings"][0]["media_content_id"] == content_id
 
     await _unload(hass, entry)
-    stored = _store_data(hass_storage, entry)["records"][str(row["record_id"])]
+    stored = _store_data(hass_storage, entry)["records"][
+        recordings.record_key(SYNTHETIC.station_sn, row["record_id"])
+    ]
     assert stored == {
         "file": video.name,
         "folder": CAMERA_NAME,
@@ -635,25 +754,94 @@ async def test_a_fetch_with_a_key_it_does_not_take_is_refused(
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Only ``entity_id`` and ``record_id``: anything else is ``invalid_format``, and
-    nothing is downloaded."""
+    """Only ``entity_id`` and ``ref``: anything else (a ``record_id`` too) is
+    ``invalid_format``, and nothing is downloaded."""
     downloads = _count_downloads(monkeypatch)
     row = _row(4)
     fake_station.rows = [row]
     entry = await _set_up(hass, seed_warm_cache)
     client = await hass_ws_client(hass)
 
-    reply = await _ws(
-        client,
-        station_recordings.WS_FETCH,
-        entity_id=_camera(hass),
-        record_id=row["record_id"],
-        save=False,
-    )
+    ref = (await _refs(client, _camera(hass)))[row["record_id"]]
 
-    assert reply["error"]["code"] == "invalid_format"
+    for fields in ({"ref": ref, "save": False}, {"record_id": row["record_id"]}):
+        reply = await _ws(client, station_recordings.WS_FETCH, entity_id=_camera(hass), **fields)
+        assert reply["error"]["code"] == "invalid_format", fields
     assert downloads == []
     assert _videos(hass) == []
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("other", ["station", "start", "camera", "none"])
+async def test_a_stored_file_of_another_recording_under_the_same_id_is_not_offered(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    hass_storage: dict[str, Any],
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    other: str,
+) -> None:
+    """A file stored for the same record id of another station, or of this station's
+    earlier recording, or noted for another camera, is not this row's: the listing
+    offers no file and a fetch downloads the row, also once the listing has expired and
+    the ref is looked up. ``none``: the row's own record, offered and played without a
+    download; another camera's still under the same id does not name it."""
+    downloads = _count_downloads(monkeypatch)
+    row = _row(4)
+    fake_station.rows = [row]
+    started = HistoryRecord.from_row(row).started_at
+    assert started is not None
+    earlier = started - timedelta(minutes=1)
+    name = f"{dt_util.as_local(earlier).strftime('%Y-%m-%d_%H-%M-%S')}_{CAMERA_NAME}_event.mp4"
+    folder = history.history_dir(hass) / CAMERA_NAME
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / name).write_bytes(b"another recording")
+    station_sn = "T8030P2000099999" if other == "station" else SYNTHETIC.station_sn
+    noted_start = earlier if other == "start" else started
+    seed_warm_cache()
+    entry = add_entry(hass)
+    key = recordings.store_key(entry.entry_id)
+    hass_storage[key] = {
+        "version": 1,
+        "minor_version": 2,
+        "key": key,
+        "data": {
+            "records": {
+                recordings.record_key(station_sn, row["record_id"]): {
+                    "file": name,
+                    "folder": CAMERA_NAME,
+                    "station": station_sn,
+                    "device": "T8113P2000099999" if other == "camera" else SYNTHETIC.camera_sn,
+                    "started": noted_start.isoformat(),
+                }
+            }
+        },
+    }
+    assert await setup_entry(hass, entry)
+    client = await hass_ws_client(hass)
+    entity_id = _camera(hass)
+
+    entry.runtime_data.history.async_save(
+        "T8113P2000099999", JPEG, dt_util.utcnow(), "person", record_id=row["record_id"]
+    )
+
+    listed = (await _list(client, entity_id))["recordings"][0]
+    _expire_listings(monkeypatch)
+    reply = await _fetch(client, entity_id, listed["ref"])
+
+    assert reply["success"], reply
+    assert listed["kind"] is None
+    if other == "none":
+        assert listed["media_content_id"].endswith(name)
+        assert reply["result"]["media_content_id"].endswith(name)
+        assert downloads == []
+    else:
+        assert listed["media_content_id"] is None
+        assert not reply["result"]["media_content_id"].endswith(name)
+        assert downloads == [row["record_id"]]
+    assert (folder / name).read_bytes() == b"another recording"
     await _unload(hass, entry)
 
 
@@ -682,8 +870,9 @@ async def test_a_fetched_recording_takes_its_detections_still_name(
     await hass.async_block_till_done()
     (still,) = sorted(history.history_dir(hass).rglob("*.jpg"))
     client = await hass_ws_client(hass)
+    ref = (await _refs(client, _camera(hass)))[row["record_id"]]
 
-    reply = await _fetch(client, _camera(hass), row["record_id"])
+    reply = await _fetch(client, _camera(hass), ref)
 
     assert reply["success"], reply
     (video,) = _videos(hass)
@@ -717,8 +906,9 @@ async def test_the_sync_never_downloads_a_fetched_recording_again(
     }
     assert await setup_entry(hass, entry)
     client = await hass_ws_client(hass)
+    ref = (await _refs(client, _camera(hass)))[row["record_id"]]
 
-    reply = await _fetch(client, _camera(hass), row["record_id"])
+    reply = await _fetch(client, _camera(hass), ref)
     assert reply["success"], reply
     sync = entry.runtime_data.recordings
     assert sync is not None
@@ -793,7 +983,7 @@ async def test_a_stored_name_that_leaves_the_history_folder_is_never_served(
 
     with caplog.at_level(logging.DEBUG, logger=recordings.__name__):
         listed = await _list(client, _camera(hass))
-        reply = await _fetch(client, _camera(hass), row["record_id"])
+        reply = await _fetch(client, _camera(hass), listed["recordings"][0]["ref"])
 
     assert listed["recordings"][0]["media_content_id"] is None
     assert reply["success"], reply
@@ -821,10 +1011,9 @@ async def test_two_fetches_of_one_recording_share_its_download(
     first = await hass_ws_client(hass)
     second = await hass_ws_client(hass)
     entity_id = _camera(hass)
+    ref = (await _refs(first, entity_id))[row["record_id"]]
 
-    replies = await asyncio.gather(
-        _fetch(first, entity_id, row["record_id"]), _fetch(second, entity_id, row["record_id"])
-    )
+    replies = await asyncio.gather(_fetch(first, entity_id, ref), _fetch(second, entity_id, ref))
 
     assert all(reply["success"] for reply in replies), replies
     assert replies[0]["result"]["media_content_id"] == replies[1]["result"]["media_content_id"]
@@ -841,33 +1030,190 @@ async def test_fetch_errors_name_what_failed(
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``not_found``, ``not_settled``, ``busy``, ``unavailable`` and ``failed``; none
-    leaves a file behind."""
+    """``not_found`` (a ref the library did not issue, a row the station no longer
+    lists), ``not_settled``, ``busy``, ``unavailable`` and ``failed``; none leaves a file
+    behind."""
     running = _row(1, ago=timedelta(seconds=5))
     settled = _row(2)
     incomplete = _row(3, frame_num=40)
-    other = _row(4, device_sn=OTHER_SN)
-    fake_station.rows = [running, settled, incomplete, other]
+    gone = _row(5)
+    fake_station.rows = [running, settled, incomplete, gone]
     entry = await _set_up(hass, seed_warm_cache)
     client = await hass_ws_client(hass)
     entity_id = _camera(hass)
+    refs = await _refs(client, entity_id)
 
-    async def code(record_id: int) -> str:
-        reply = await _fetch(client, entity_id, record_id)
+    async def code(ref: str) -> str:
+        reply = await _fetch(client, entity_id, ref)
         assert not reply["success"], reply
         result: str = reply["error"]["code"]
         return result
 
-    assert await code(other["record_id"]) == "not_found"
-    assert await code(settled["record_id"] + 50) == "not_found"
-    assert await code(running["record_id"]) == "not_settled"
-    assert await code(incomplete["record_id"]) == "failed"
+    assert await code("v1.r.garbled") == "not_found"
+    assert await code(refs[running["record_id"]]) == "not_settled"
+    assert await code(refs[incomplete["record_id"]]) == "failed"
     _fail_downloads(monkeypatch, LiveStreamLimitError("spent", limit=1))
-    assert await code(settled["record_id"]) == "busy"
+    assert await code(refs[settled["record_id"]]) == "busy"
     _fail_downloads(monkeypatch, DeviceTimeoutError("no keyframe"))
-    assert await code(settled["record_id"]) == "unavailable"
+    assert await code(refs[settled["record_id"]]) == "unavailable"
+    fake_station.rows.remove(gone)
+    _expire_listings(monkeypatch)
+    assert await code(refs[gone["record_id"]]) == "not_found"
     assert _videos(hass) == []
     assert _manager(entry).stats.fetch_failed == 3
+    await _unload(hass, entry)
+
+
+async def test_a_station_that_refuses_the_account_answers_account_rejected_on_every_request(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    hass_client_no_auth: ClientSessionGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """-104 on the listing, the lookup by ref, the download and the still: the sharing
+    hint naming the station (a 403 for the still), never "did not answer"."""
+    fake_station.images["/zx/rec1.jpg"] = JPEG
+    row = _row(1, thumb_path="/zx/rec1.jpg")
+    fake_station.rows = [row]
+    entry = await _set_up(hass, seed_warm_cache)
+    coordinator = entry.runtime_data.coordinators[SYNTHETIC.station_sn]
+    client = await hass_ws_client(hass)
+    entity_id = _camera(hass)
+    listed = (await _list(client, entity_id))["recordings"][0]
+    hint = f"{errors.station_display_name(coordinator)} does not accept this eufy account"
+
+    async def refused(*args: Any, **kwargs: Any) -> Any:
+        raise AccountRejectedError(1103, -104)
+
+    def code(reply: dict[str, Any]) -> tuple[str, bool]:
+        return reply["error"]["code"], reply["error"]["message"].startswith(hint)
+
+    monkeypatch.setattr(Station, "async_list_recordings_page", refused)
+    page = await _ws(client, station_recordings.WS_LIST, entity_id=entity_id, limit=5)
+    assert code(page) == ("account_rejected", True)
+
+    monkeypatch.setattr(Station, "async_fetch_still", refused)
+    assert (await (await hass_client_no_auth()).get(listed["thumb_url"])).status == 403
+
+    _fail_downloads(monkeypatch, AccountRejectedError(1024, -104))
+    assert code(await _fetch(client, entity_id, listed["ref"])) == ("account_rejected", True)
+
+    _expire_listings(monkeypatch)
+    monkeypatch.setattr(Station, "async_history_record_by_ref", refused)
+    assert code(await _fetch(client, entity_id, listed["ref"])) == ("account_rejected", True)
+    assert _videos(hass) == []
+    await _unload(hass, entry)
+
+
+async def test_the_refs_remembered_for_stored_recordings_are_bounded_oldest_out(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With room for two refs, a listing of three keeps its two newest; a recording
+    found by a lookup by ref is remembered too, so it plays later while the station is
+    silent."""
+    monkeypatch.setattr(station_recordings, "REF_IDS_ITEMS", 2)
+    rows = [_row(3, ago=timedelta(minutes=5)), _row(2), _row(1, ago=timedelta(minutes=15))]
+    fake_station.rows = list(rows)
+    entry = await _set_up(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    entity_id = _camera(hass)
+    refs = await _refs(client, entity_id)
+    oldest, newest = refs[rows[2]["record_id"]], refs[rows[0]["record_id"]]
+    manager = _manager(entry)
+
+    assert manager.diagnostics()["cached_refs"] == 2
+    # Both stored by fetches from the fresh listing, then the listing expires and the
+    # station goes silent: the newest plays from the history, the evicted oldest cannot.
+    assert (await _fetch(client, entity_id, newest))["success"]
+    assert (await _fetch(client, entity_id, oldest))["success"]
+    _expire_listings(monkeypatch)
+    real = Station.async_history_record_by_ref
+
+    async def silent(self: Station, ref: str, **kwargs: Any) -> HistoryRecord:
+        raise DeviceTimeoutError("no answer")
+
+    monkeypatch.setattr(Station, "async_history_record_by_ref", silent)
+    assert (await _fetch(client, entity_id, newest))["success"]
+    assert (await _fetch(client, entity_id, oldest))["error"]["code"] == "unavailable"
+
+    # A lookup by ref remembers the row it found: silent again, it still plays.
+    monkeypatch.setattr(Station, "async_history_record_by_ref", real)
+    assert (await _fetch(client, entity_id, oldest))["success"]
+    monkeypatch.setattr(Station, "async_history_record_by_ref", silent)
+    assert (await _fetch(client, entity_id, oldest))["success"]
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("fake_station", [HOMEBASE_2_SN], indirect=True)
+@pytest.mark.usefixtures("short_storage")
+async def test_a_homebase_2_recording_pages_and_plays_after_its_listing_expired(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Record ids without a day (a HomeBase 2): Show more follows the library's cursor
+    across days without repeating a row, and a recording listed earlier is found again
+    by its ref with one query once the listing has expired."""
+    now = datetime.now().astimezone().replace(microsecond=0)
+    midnight = now.replace(hour=0, minute=0, second=0)
+    today = midnight + (now - midnight) / 2  # earlier today, whatever the hour
+    day_before = midnight - timedelta(hours=12)
+
+    def hb2_row(start: datetime, record_id: int) -> dict[str, Any]:
+        return {
+            "record_id": record_id,
+            "device_sn": SYNTHETIC.camera_sn,
+            "start_time": start.strftime(_ROW_TIME),
+            "end_time": (start + timedelta(seconds=10)).strftime(_ROW_TIME),
+            # A HomeBase 2 names a recording by its start on its own card.
+            "storage_path": f"/media/mmcblk0p1/Camera00/{start.strftime('%Y%m%d%H%M%S')}.dat",
+            "frame_num": 6,
+        }
+
+    fake_station.rows = [
+        hb2_row(today.replace(microsecond=0), 9),
+        hb2_row(today.replace(microsecond=0) - timedelta(seconds=1), 7),
+        hb2_row(day_before - timedelta(minutes=1), 5),
+        hb2_row(day_before - timedelta(minutes=2), 4),
+    ]
+    entry = await _set_up(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    entity_id = _camera(hass)
+
+    first = await _list(client, entity_id, days=2, limit=3)
+    second = await _list(client, entity_id, days=2, limit=3, before=first["next"])
+
+    pages = [[r["record_id"] for r in p["recordings"]] for p in (first, second)]
+    assert pages == [[9, 7, 5], [4]]
+    assert (first["more"], second["more"], second["next"]) == (True, False, None)
+
+    ref = first["recordings"][2]["ref"]
+    _expire_listings(monkeypatch)
+    lookups = _count_lookups(monkeypatch)
+    fake_station.history_queries.clear()
+    reply = await _fetch(client, entity_id, ref)
+
+    assert reply["success"], reply
+    assert lookups == [ref]
+    assert [path for *_head, path in fake_station.native_recording_requests] == [
+        fake_station.rows[2]["storage_path"]
+    ]
+    assert [q["start_date"] for q in fake_station.history_queries][:1] == [
+        (midnight - timedelta(days=1)).strftime("%Y%m%d")
+    ]
+    (video,) = _videos(hass)
+    assert video.name.endswith(f"_{CAMERA_NAME}_event.mp4")
     await _unload(hass, entry)
 
 
@@ -894,12 +1240,9 @@ async def test_a_fetch_stopped_by_an_unload_is_answered(
     fake_station.rows = [row]
     entry = await _set_up(hass, seed_warm_cache)
     client = await hass_ws_client(hass)
+    ref = (await _refs(client, _camera(hass)))[row["record_id"]]
     await client.send_json_auto_id(
-        {
-            "type": station_recordings.WS_FETCH,
-            "entity_id": _camera(hass),
-            "record_id": row["record_id"],
-        }
+        {"type": station_recordings.WS_FETCH, "entity_id": _camera(hass), "ref": ref}
     )
     await asyncio.wait_for(started.wait(), 5)
 
@@ -922,7 +1265,7 @@ async def test_the_thumbnail_view_serves_the_still_by_its_signed_path_and_caches
     seed_warm_cache: Callable[..., None],
 ) -> None:
     """``image/jpeg`` off the station's disk once; the path unsigned is 401; an
-    obfuscated still is 404."""
+    obfuscated still and a ref the library did not issue are 404."""
     fake_station.images["/zx/rec1.jpg"] = JPEG
     fake_station.images["/zx/rec2.jpg"] = OBFUSCATED
     fake_station.rows = [
@@ -946,6 +1289,12 @@ async def test_the_thumbnail_view_serves_the_still_by_its_signed_path_and_caches
     unsigned = jpeg_url.split("?", 1)[0]
     assert (await http.get(unsigned)).status == 401
     assert (await http.get(by_id[fake_station.rows[1]["record_id"]])).status == 404
+    garbled = async_sign_path(
+        hass,
+        station_recordings.THUMB_URL.format(entity_id=_camera(hass), ref="v1.r.garbled"),
+        timedelta(minutes=5),
+    )
+    assert (await http.get(garbled)).status == 404
     await _unload(hass, entry)
 
 
@@ -1052,8 +1401,8 @@ async def test_diagnostics_count_the_requests(
     fake_station.rows = [row]
     entry = await _set_up(hass, seed_warm_cache)
     client = await hass_ws_client(hass)
-    await _list(client, _camera(hass))
-    assert (await _fetch(client, _camera(hass), row["record_id"]))["success"]
+    ref = (await _refs(client, _camera(hass)))[row["record_id"]]
+    assert (await _fetch(client, _camera(hass), ref))["success"]
 
     data = await get_diagnostics_for_config_entry(hass, hass_client, entry)
 
@@ -1061,4 +1410,5 @@ async def test_diagnostics_count_the_requests(
     assert (counts["list_calls"], counts["list_queries"]) == (1, 1)
     assert (counts["fetch_calls"], counts["fetch_downloads"], counts["fetch_failed"]) == (1, 1, 0)
     assert str(row["record_id"]) not in str(data)
+    assert ref not in str(data)
     await _unload(hass, entry)

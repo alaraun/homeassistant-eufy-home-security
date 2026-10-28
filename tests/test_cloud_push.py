@@ -18,8 +18,10 @@ import pytest
 from conftest import (
     PUSHED_THUMB_PATH,
     PUSHED_THUMBNAIL,
+    SENSOR_SN,
     SYNTHETIC,
     add_entry,
+    add_motion_sensor,
     set_guard_mode,
     set_up_warm,
     setup_entry,
@@ -32,8 +34,9 @@ from eufy_home_security import (
     LoginLimitedError,
     PushChanged,
 )
+from eufy_home_security.devices import Evidence, Support
 from eufy_home_security.p2p import session as session_module
-from eufy_home_security.testing import FakeStation
+from eufy_home_security.testing import FakeCloud, FakeStation
 from homeassistant.components.alarm_control_panel import DOMAIN as ALARM_DOMAIN
 from homeassistant.components.repairs import repairs_flow_manager
 from homeassistant.config_entries import ConfigEntryState
@@ -417,6 +420,71 @@ async def test_a_homebase_2_with_push_off_raises_a_fixable_push_needed_issue(
 
     await _unload(hass, entry)
     assert _push_needed(hass, entry) is None, "the issue outlived the unload"
+
+
+@pytest.mark.parametrize("fake_station", [HOMEBASE_2_SN], indirect=True)
+@pytest.mark.usefixtures("short_storage")
+async def test_a_homebase_2_without_a_detection_device_raises_no_push_needed_issue(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    push: PushHarness,
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Push off, a station that does not send detections locally, but no device of it
+    has detection entities (only a sensor): nothing would miss a detection, no issue."""
+    fake_cloud.devices[:] = [d for d in fake_cloud.devices if d["device_sn"] != SYNTHETIC.camera_sn]
+    add_motion_sensor(fake_station, fake_cloud)
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    assert SENSOR_SN in {
+        d.device_sn for d in entry.runtime_data.coordinators[HOMEBASE_2_SN].station.devices
+    }
+    assert _push_needed(hass, entry) is None
+    await _unload(hass, entry)
+
+
+@dataclass
+class _GradedStation:
+    """A station stand-in: its own grade and one grade per device's detections."""
+
+    serial: str
+    local_events: Evidence
+    grades: dict[str, Evidence]
+
+    @property
+    def devices(self) -> list[Any]:
+        return [type("Device", (), {"device_sn": serial})() for serial in self.grades]
+
+    def local_detections_for(self, device_sn: str) -> Evidence:
+        return self.grades[device_sn]
+
+
+@pytest.mark.parametrize(
+    ("camera", "named"),
+    [(Support.VERIFIED, False), (Support.UNKNOWN, True)],
+    ids=["camera_verified", "camera_unknown"],
+)
+async def test_the_push_needed_issue_follows_each_detection_devices_grade(
+    hass: HomeAssistant, camera: Support, named: bool
+) -> None:
+    """The station's own grade does not decide: a device with detection entities whose
+    detections the station is not verified to send locally names the station; a sensor
+    (no detection entities) never does."""
+    entry = MockConfigEntry(domain=DOMAIN, title="Home")
+    entry.add_to_hass(hass)
+    station = _GradedStation(
+        SYNTHETIC.station_sn,
+        local_events=Evidence(Support.VERIFIED, "station"),
+        grades={
+            SYNTHETIC.camera_sn: Evidence(camera, "camera"),
+            SENSOR_SN: Evidence(Support.UNKNOWN, "sensor"),
+        },
+    )
+
+    errors.sync_push_needed_issue(hass, entry, [station], cloud_push=False)  # type: ignore[list-item]
+
+    assert (_push_needed(hass, entry) is not None) is named
 
 
 @pytest.mark.parametrize("fake_station", [HOMEBASE_2_SN], indirect=True)

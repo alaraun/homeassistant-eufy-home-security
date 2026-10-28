@@ -25,6 +25,7 @@ from conftest import (
     wait_until,
 )
 from eufy_home_security import (
+    AccountRejectedError,
     AlarmStopSource,
     CameraWakeError,
     CommandError,
@@ -324,7 +325,14 @@ _NOT_APPLIED = "guard_mode_not_applied"
 _REJECTED = "guard_mode_rejected"
 _COMMAND_UNSUPPORTED = "guard_mode_command_unsupported"
 # The keys that name the station whose answer they report.
-_STATION_NAMED = {_NOT_APPLIED, _REJECTED, _COMMAND_UNSUPPORTED, "guard_mode_not_supported"}
+_ACCOUNT_REJECTED = "account_rejected"
+_STATION_NAMED = {
+    _NOT_APPLIED,
+    _REJECTED,
+    _COMMAND_UNSUPPORTED,
+    "guard_mode_not_supported",
+    _ACCOUNT_REJECTED,
+}
 _UNREACHABLE = "station_unreachable"
 _ON_DEMAND_UNREACHABLE = "on_demand_unreachable"
 _KEY_REJECTED = "station_key_rejected"
@@ -339,6 +347,8 @@ _OTHER_ACCOUNT_ID = "fedcba9876543210fedcba9876543210fedcba98"
     [
         (CommandNotAppliedError(1224), _NOT_APPLIED),
         (CommandRejectedError(1224, 6, "station applied OFF"), _REJECTED),
+        # -104: the station does not accept the account the command was sent under.
+        (AccountRejectedError(1224, -104), _ACCOUNT_REJECTED),
         # A -108 or -103 receipt: a rejection and an UnsupportedError at once.
         (CommandUnsupportedError(1224, -108), _COMMAND_UNSUPPORTED),
         (CommandUnsupportedError(1224, -103), _COMMAND_UNSUPPORTED),
@@ -375,6 +385,8 @@ def _expected_key(cause: BaseException | None) -> str:
     """The key for the library error a write actually raised, decided here, not by errors.py."""
     if isinstance(cause, CommandNotAppliedError):
         return _NOT_APPLIED
+    if isinstance(cause, AccountRejectedError):
+        return _ACCOUNT_REJECTED
     if isinstance(cause, CommandUnsupportedError):
         return _COMMAND_UNSUPPORTED
     if isinstance(cause, CommandError):
@@ -429,6 +441,8 @@ async def test_an_arm_the_station_did_not_apply_raises_and_keeps_the_last_mode(
         # A -108 receipt: a rejection and an UnsupportedError at once.
         (CommandUnsupportedError(1224, -108), _COMMAND_UNSUPPORTED),
         (CommandRejectedError(1224, 6, "station applied OFF"), _REJECTED),
+        # -104: the station does not accept the account the command was sent under.
+        (AccountRejectedError(1224, -104), _ACCOUNT_REJECTED),
         (StationUnreachableError("no reply to discovery"), _UNREACHABLE),
     ],
     ids=lambda value: type(value).__name__ if isinstance(value, Exception) else value,

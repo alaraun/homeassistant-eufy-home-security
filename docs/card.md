@@ -148,7 +148,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   - Station asks the HomeBase a week of days per page, back as far as **Event history** reaches (30 days at
     most); `Show more` goes on from where the page stopped.
   - Station rows have **Play** and **Save**: both copy the recording from the HomeBase into the history folder
-    (5–10 s each, one at a time); Play then plays it. A standalone camera has no Station sub-tab.
+    (5–10 s each, one at a time); Play then plays it. Both keep working on a row while the list stays open,
+    also on a HomeBase 2. A standalone camera has no Station sub-tab.
   - Files come from the integration's history in HA's media folder (`Media › eufy_home_security › <camera name>`).
     A missing folder (history off, or nothing saved yet) reads as empty.
 - **Settings:** the camera device's settings (its `select`, `number` and `switch` entities), so a new camera

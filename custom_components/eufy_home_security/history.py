@@ -200,8 +200,8 @@ class EventHistory:
         self._pending: dict[Path, bytes] = {}
         self._writers: dict[Path, asyncio.Task[None]] = {}
         self._failed: set[str] = set()
-        # Per detection record id, the stamp and kind its still was written under.
-        self._still_names: dict[int, tuple[datetime, str]] = {}
+        # Per camera and detection record id, the stamp and kind its still was written under.
+        self._still_names: dict[tuple[str, int], tuple[datetime, str]] = {}
 
     @property
     def enabled(self) -> bool:
@@ -259,15 +259,17 @@ class EventHistory:
     ) -> None:
         """Queue ``image`` as the camera's still of ``kind`` at ``moment``.
 
-        ``record_id`` (a detection's history row) is noted with the still's stamp and
-        kind, so that recording's video gets the same name (:meth:`still_name`).
+        ``record_id`` (a detection's history row) is noted for the camera with the
+        still's stamp and kind, so that recording's video gets the same name
+        (:meth:`still_name`).
         """
         if not self.enabled:
             return
         local = dt_util.as_local(moment)
         if record_id is not None:
-            self._still_names.pop(record_id, None)
-            self._still_names[record_id] = (local, kind)
+            noted = (device_sn, record_id)
+            self._still_names.pop(noted, None)
+            self._still_names[noted] = (local, kind)
             while len(self._still_names) > _NOTES_MAX:
                 del self._still_names[next(iter(self._still_names))]
         path = history_path(self._root, self.camera_folder(device_sn), local, kind)
@@ -278,9 +280,10 @@ class EventHistory:
                 self._hass, self._async_write(path, device_sn), name=f"{DOMAIN} history write"
             )
 
-    def still_name(self, record_id: int) -> tuple[datetime, str] | None:
-        """The local stamp and kind of the still written for ``record_id``; None if none."""
-        return self._still_names.get(record_id)
+    def still_name(self, device_sn: str, record_id: int) -> tuple[datetime, str] | None:
+        """The local stamp and kind of the camera's still written for ``record_id``; None
+        if none."""
+        return self._still_names.get((device_sn, record_id))
 
     async def async_save_clip(
         self,

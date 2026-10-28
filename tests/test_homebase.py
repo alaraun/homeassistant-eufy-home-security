@@ -5,6 +5,7 @@ FakeCloud and FakeStation."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime, time
@@ -32,7 +33,11 @@ from eufy_home_security import (
     MODE_ACTION_ALARM_AFFECTING,
     MODE_DELAY_CHOICES,
     SETTING_SECTIONS,
+    AccountRejectedError,
     AlarmChanged,
+    ArmingActivation,
+    ArmingMemberResult,
+    ArmingOutcome,
     CloudApiError,
     EufySecurity,
     EufySecurityError,
@@ -814,6 +819,31 @@ async def test_a_table_the_station_does_not_apply_is_not_applied_named_without_s
 
 
 @pytest.mark.usefixtures("away_table")
+async def test_a_table_refused_for_the_account_answers_account_rejected_with_the_hint(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A -104 receipt: ``account_rejected``, the sharing hint naming the station by its HA
+    name, no serial."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    revision = (await _payload(client, hass))["revision"]
+    fake_station.mode_table_receipt_code = -104
+
+    reply = await _set_table(client, hass, revision)
+
+    assert reply["error"]["code"] == "account_rejected"
+    station_name = dr.async_get(hass).async_get(_device_id(hass, SYNTHETIC.station_sn)).name  # type: ignore[union-attr]
+    assert f"{station_name} does not accept this eufy account" in reply["error"]["message"]
+    assert "shared with this account" in reply["error"]["message"]
+    _no_serial(reply)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.usefixtures("away_table")
 async def test_a_table_two_devices_did_not_take_names_both_by_their_ha_names(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
@@ -937,6 +967,48 @@ async def test_a_motion_sensor_reacts_while_its_bit_is_clear_and_a_write_takes_l
     after = reply["result"]["mode_tables"]["away"]["devices"][sensor_id]["flags"]
     assert after["motion_sensor_respond"] is False
     assert after["notification"] is False
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+_DOORBELL_SN: Final = "T8210P0000000001"
+
+
+@pytest.mark.usefixtures("away_table")
+async def test_a_doorbell_behind_the_homebase_has_its_types_actions_and_takes_a_write(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A paired doorbell lists the actions of its cloud type (a T8210: record, HomeBase
+    alarm, notification, monitoring centre), and a table naming it is written."""
+    fake_cloud.devices.append(
+        camera_device(_DOORBELL_SN, station_sn=fake_station.serial, channel=1, name="Porch")
+    )
+    # A doorbell's table uses a camera's parameters and bits: record + notification.
+    for key, raw in ((_CAMERA_ACTION_AWAY, 9), ("alarm_delay_away", 0), ("leaving_delay_away", 0)):
+        seed_setting(fake_station, key, raw, channel=1, model="T8160")
+    entry = await set_up_warm(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    doorbell_id = _device_id(hass, _DOORBELL_SN)
+    before = await _payload(client, hass)
+    porch = next(d for d in before["devices"] if d["name"] == "Porch")
+    assert porch["kind"] == "doorbell"
+    listed = porch.get("flags") or [f["id"] for f in before["flags"]["doorbell"]]
+    assert set(listed) == {"record", "station_alarm", "notification", "report_monitor_center"}
+    flags = before["mode_tables"]["away"]["devices"][doorbell_id]["flags"]
+    assert (flags["record"], flags["notification"]) == (True, True)
+
+    reply = await _set_table(
+        client, hass, before["revision"], actions={doorbell_id: {"notification": False}}
+    )
+
+    assert reply["success"], reply
+    after = reply["result"]["mode_tables"]["away"]["devices"][doorbell_id]["flags"]
+    assert (after["record"], after["notification"]) == (True, False)
+    assert _DOORBELL_SN not in json.dumps(reply)
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
@@ -1516,14 +1588,14 @@ async def test_an_error_names_its_device_by_the_ha_name(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-async def test_a_rejected_restart_is_home_assistant_error_without_serial(
+async def test_a_restart_under_another_account_is_account_rejected_without_serial(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """The station's own rejection (another account's command): the library's message,
+    """The station's refusal of another account's command (-104): ``account_rejected``,
     the station named by its HA name."""
     entry = await set_up_warm(hass, seed_warm_cache)
     client = await hass_ws_client(hass)
@@ -1532,7 +1604,7 @@ async def test_a_rejected_restart_is_home_assistant_error_without_serial(
 
     reply = await _ws(client, homebase.WS_RESTART, device_id=station_id)
 
-    assert reply["error"]["code"] == "home_assistant_error"
+    assert reply["error"]["code"] == "account_rejected"
     _no_serial(reply)
     assert await hass.config_entries.async_unload(entry.entry_id)
 
@@ -1811,6 +1883,60 @@ async def test_a_member_this_account_does_not_serve_fails_and_is_named_without_i
     text = json.dumps(result)
     assert unknown_sn not in text and redact_serial(unknown_sn) not in text
     await advance_to_poll(hass, 2)  # let a written mode's dump-settle timer fire
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_a_member_station_that_refuses_the_account_gets_the_sharing_hint(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A member station answering -104: ``failed`` with the sharing hint naming that
+    member (not the station the request targets) by its HA name, never the library's
+    text or its serial."""
+    other_sn = "T8030P2000099999"
+    _house(fake_cloud, _group(mode=1, title="Home"))
+    entry = await set_up_warm(hass, seed_warm_cache)
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, other_sn)}, name="Cabin"
+    )
+
+    async def refused(mode: GuardMode) -> GuardMode:
+        raise AccountRejectedError(1224, -104)
+
+    monkeypatch.setattr(station, "async_set_guard_mode", refused)
+    eufy = entry.runtime_data.eufy
+    real = eufy.async_activate_arming_group
+
+    async def with_cabin(group_id: str) -> ArmingActivation:
+        activation = await real(group_id)
+        cabin = ArmingMemberResult(
+            device_sn=other_sn,
+            mode=GuardMode.AWAY,
+            outcome=ArmingOutcome.FAILED,
+            error=AccountRejectedError(1224, -104),
+        )
+        return dataclasses.replace(activation, results=(*activation.results, cabin))
+
+    monkeypatch.setattr(eufy, "async_activate_arming_group", with_cabin)
+    client = await hass_ws_client(hass)
+    station_id = _device_id(hass, SYNTHETIC.station_sn)
+
+    result = await _ok(client, homebase.WS_GROUPS_ACTIVATE, device_id=station_id, group_id=_GROUP)
+
+    own, other = result["results"]
+    name = dr.async_get(hass).async_get(station_id).name  # type: ignore[union-attr]
+    hint = "does not accept this eufy account: check in the eufy app that it is shared with this account"
+    assert (own["outcome"], own["error"]) == ("failed", f"{name} {hint}")
+    assert (other["name"], other["outcome"], other["error"]) == ("Cabin", "failed", f"Cabin {hint}")
+    assert "-104" not in json.dumps(result)
+    assert other_sn not in json.dumps(result)
+    _no_serial(result)
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 

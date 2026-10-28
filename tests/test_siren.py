@@ -26,6 +26,7 @@ from conftest import (
     wait_until,
 )
 from eufy_home_security import (
+    AccountRejectedError,
     CameraWakeError,
     CipherUnusableError,
     CommandNotAppliedError,
@@ -397,6 +398,33 @@ async def test_a_camera_siren_sounds_the_default_alarm_and_follows_the_device(
     assert states == [STATE_ON, STATE_OFF]
     assert len(_alarm_payloads(fake_station, _SET_DEVS_TONE_FILE)) == 1
 
+    await _unload(hass, entry)
+
+
+async def test_a_camera_siren_the_station_refuses_for_the_account_names_the_station(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A -104 on the start: ``siren_account_rejected`` naming the siren and the station
+    as the user sees it."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    coordinator = entry.runtime_data.coordinators[SYNTHETIC.station_sn]
+    entity_id = _camera_siren(hass)
+
+    async def refused(*args: Any, **kwargs: Any) -> None:
+        raise AccountRejectedError(_SET_DEVS_TONE_FILE, -104)
+
+    monkeypatch.setattr(coordinator.station, "async_trigger_device_alarm", refused)
+    with pytest.raises(HomeAssistantError) as raised:
+        await _turn_on(hass, entity_id)
+
+    assert raised.value.translation_key == "siren_account_rejected"
+    placeholders = raised.value.translation_placeholders or {}
+    assert placeholders["station"] == errors.station_display_name(coordinator)
+    assert placeholders["station"]
     await _unload(hass, entry)
 
 
@@ -1086,6 +1114,8 @@ async def test_a_homebase_siren_failure_raises_a_translated_error(
     [
         (CommandNotAppliedError(_SET_DEVS_TONE_FILE), False, "siren_not_confirmed"),
         (CommandRejectedError(_SET_DEVS_TONE_FILE, 6, "refused"), False, "siren_rejected"),
+        # -104: the station does not accept the account the command was sent under.
+        (AccountRejectedError(_SET_DEVS_TONE_FILE, -104), False, "siren_account_rejected"),
         # A -108 receipt: a rejection and an UnsupportedError at once.
         (CommandUnsupportedError(_SET_DEVS_TONE_FILE, -108), False, "siren_rejected"),
         (CameraWakeError(_SET_DEVS_TONE_FILE, -204), False, "on_demand_unreachable"),
@@ -1104,12 +1134,13 @@ def test_siren_failures_map_to_translated_errors(
     error: EufySecurityError, on_demand: bool, key: str
 ) -> None:
     """Each library error a siren command can meet names the siren, never library text."""
-    translated = errors.siren_failed(error, "Siren", on_demand=on_demand)
+    translated = errors.siren_failed(error, "Siren", station_name="Base", on_demand=on_demand)
 
     assert isinstance(translated, HomeAssistantError)
     assert translated.translation_domain == DOMAIN
     assert translated.translation_key == key
-    assert translated.translation_placeholders == {"target": "Siren"}
+    named = {"station": "Base"} if key == "siren_account_rejected" else {}
+    assert translated.translation_placeholders == {"target": "Siren", **named}
 
 
 # ── a standalone camera ───────────────────────────────────────────────────────
