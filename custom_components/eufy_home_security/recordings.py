@@ -20,9 +20,10 @@ finished and stored by ``history.EventHistory.async_save_clip``:
 - **What.** A pass lists the station's recordings since the newest one stored (with a
   margin, so one left unsettled or failed is listed again), keeps the settled rows
   not stored yet, and downloads them oldest first, one at a time. It lists one
-  host-local day per request (the library's days), oldest first, and stores a day's
-  rows before asking the next, so each request stays within ``LIST_TIMEOUT_SECONDS``
-  on a slow station and a pass that stops resumes at the day it stopped on.
+  host-local day per request (the library's days), oldest first, the whole day (rows
+  before the pass's start dropped here), and stores a day's rows before asking the
+  next, so each request stays within ``LIST_TIMEOUT_SECONDS`` on a slow station and a
+  pass that stops resumes at the last day it finished or the day it stopped on.
 - **Names.** A recording whose detection's still was written takes that still's stamp
   and kind (the history notes them per camera and ``record_id``), so a browser pairs
   the two by name; any other is named by the recording's start, kind ``event``.
@@ -90,7 +91,6 @@ _STORE_MINOR_VERSION: Final = 2
 _EVENT_KIND: Final = "event"
 # Rows that started up to this long before the newest stored one are listed again.
 _SINCE_MARGIN: Final = timedelta(minutes=30)
-_DAY: Final = timedelta(days=1)
 # The soonest a follow-up pass for a running recording is scheduled.
 _MIN_FOLLOW_UP_SECONDS: Final = 5.0
 # The camera setting that holds its recording length in seconds.
@@ -545,20 +545,25 @@ class RecordingManager:
         sync.stats.last_pass = dt_util.utcnow().isoformat(timespec="seconds")
         since = self._since(sync)
         running: list[HistoryRecord] = []
-        for day in _host_days(since):
-            start = max(since, _host_day_start(day))
+        days = _host_days(since)
+        for day in days:
+            back = (days[-1] - day).days + 1
             try:
-                # Bounded as a request's listing is; a hung day ends the pass, the next
-                # pass starts at it again.
+                # One whole day (the station's own day, which a host zone behind the
+                # station's starts before host midnight), bounded as a request's listing
+                # is; a hung day ends the pass, the next pass starts at it again.
                 async with asyncio.timeout(LIST_TIMEOUT_SECONDS):
-                    rows = await station.async_list_recordings(
-                        days=max(self._history.days, 1), since=start, until=day
-                    )
+                    rows = await station.async_list_recordings(days=back, until=day)
             except (EufySecurityError, TimeoutError) as err:
                 sync.stats.last_error = type(err).__name__
                 _LOGGER.debug(
-                    "Recording sync of %s: listing failed (%s)", serial, errors.failure_reason(err)
+                    "Recording sync of %s: listing %s failed (%s)",
+                    serial,
+                    day.isoformat(),
+                    errors.failure_reason(err),
                 )
+                if running:
+                    self._async_follow_up(station.serial, running)
                 return
             now = dt_util.utcnow()
             wanted: list[HistoryRecord] = []
@@ -567,6 +572,7 @@ class RecordingManager:
                 if (
                     not row.record_id
                     or row.started_at is None
+                    or row.started_at < since
                     or self._stored.noted(station.serial, row.record_id, row.started_at) is not None
                 ):
                     continue
@@ -576,8 +582,9 @@ class RecordingManager:
                     held.append(row)
             wanted.sort(key=lambda row: row.started_at or now)
             _LOGGER.debug(
-                "Recording sync of %s: a day listed %d, %d to store, %d still recording",
+                "Recording sync of %s: %s listed %d, %d to store, %d still recording",
                 serial,
+                day.isoformat(),
                 len(rows),
                 len(wanted),
                 len(held),
@@ -587,10 +594,11 @@ class RecordingManager:
                     return
                 await self._async_store(sync, row)
             running.extend(held)
-            # The next pass starts after this day, unless a recording here still runs.
+            # A stop after this day lists it again, not the days before it, unless a
+            # recording listed so far still runs.
             if not running:
                 sync.watermark = max(
-                    sync.watermark or start, min(_host_day_start(day + _DAY), now - _SINCE_MARGIN)
+                    sync.watermark or since, min(_host_day_start(day), now - _SINCE_MARGIN)
                 )
         sync.watermark = min(
             [

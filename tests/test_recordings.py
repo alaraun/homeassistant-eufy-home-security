@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
-from datetime import date, datetime, timedelta
+import time
+from collections.abc import Callable, Iterator
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 
@@ -617,7 +618,7 @@ async def test_a_listing_that_never_answers_ends_the_pass_and_the_next_pass_list
     stats = _manager(entry).stats(SYNTHETIC.station_sn)
     assert stats is not None
     assert (stats["passes"], stats["last_error"]) == (1, "TimeoutError")
-    failed = [r for r in caplog.records if "listing failed" in r.getMessage()]
+    failed = [r for r in caplog.records if "failed (TimeoutError)" in r.getMessage()]
     assert len(failed) == 1
     assert _videos(hass) == []
 
@@ -628,13 +629,14 @@ async def test_a_listing_that_never_answers_ends_the_pass_and_the_next_pass_list
     await _unload(hass, entry)
 
 
-def _record_listings(monkeypatch: pytest.MonkeyPatch) -> list[tuple[date, datetime]]:
-    """Record each sync listing's ``until`` day and ``since``."""
-    calls: list[tuple[date, datetime]] = []
+def _record_listings(monkeypatch: pytest.MonkeyPatch) -> list[tuple[date, int]]:
+    """Record each sync listing's ``until`` day and ``days``; it never passes ``since``."""
+    calls: list[tuple[date, int]] = []
     real = Station.async_list_recordings
 
     async def listing(self: Station, *args: Any, **kwargs: Any) -> list[HistoryRecord]:
-        calls.append((kwargs["until"], kwargs["since"]))
+        assert "since" not in kwargs
+        calls.append((kwargs["until"], kwargs["days"]))
         return await real(self, *args, **kwargs)
 
     monkeypatch.setattr(Station, "async_list_recordings", listing)
@@ -655,22 +657,23 @@ async def test_a_backlog_is_listed_one_day_at_a_time_oldest_first(
     hass_storage: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Each listing asks one host-local day, oldest first, and that day's recordings are
-    stored before the next day is asked, so no request covers the whole backlog."""
+    """Each listing asks one whole host-local day, oldest first, and that day's
+    recordings are stored before the next day is asked, so no request covers the whole
+    backlog; a row of the first day before the pass's start is not copied."""
     downloads = _count_downloads(monkeypatch)
     calls = _record_listings(monkeypatch)
     noon = datetime.now().astimezone().replace(hour=12, minute=0, second=0, microsecond=0)
     since = noon - timedelta(days=3)
     rows = [_row(n + 1, started=noon - timedelta(days=n) + timedelta(hours=1)) for n in (3, 2, 1)]
     rows.append(_row(9, started=datetime.now().astimezone() - timedelta(minutes=10)))
-    fake_station.rows = list(reversed(rows))
+    before_start = _row(8, started=since - timedelta(hours=1))
+    fake_station.rows = [*reversed(rows), before_start]
     entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage, since=since)
 
     await _first_pass(hass, entry)
 
-    assert [until for until, _since in calls] == _host_days(since)
-    for until, asked in calls:
-        assert asked == max(since, datetime(until.year, until.month, until.day).astimezone())
+    days = _host_days(since)
+    assert calls == [(day, (days[-1] - day).days + 1) for day in days]
     by_start = sorted(rows, key=_started)
     assert downloads == [row["record_id"] for row in by_start]
     await _unload(hass, entry)
@@ -684,8 +687,8 @@ async def test_a_day_that_never_answers_ends_the_pass_and_the_next_pass_starts_a
     hass_storage: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Days before the hung one are stored; the next pass lists from the hung day on,
-    not from the first day again."""
+    """Days before the hung one are stored; the next pass lists from the last finished
+    day on (not the days before it), and copies nothing twice."""
     monkeypatch.setattr(recordings, "LIST_TIMEOUT_SECONDS", 0.05)
     downloads = _count_downloads(monkeypatch)
     calls = _record_listings(monkeypatch)
@@ -713,13 +716,13 @@ async def test_a_day_that_never_answers_ends_the_pass_and_the_next_pass_starts_a
     assert stats["last_error"] == "TimeoutError"
     assert downloads == [rows[0]["record_id"]]
     # The hung day never reaches the recorder below the hang.
-    assert [until for until, _since in calls] == _host_days(since)[:1]
+    assert [until for until, _days in calls] == _host_days(since)[:1]
 
     hang = False
     calls.clear()
     await _pass(hass, entry, RECORDING_SYNC_INTERVAL_SECONDS + 1)
 
-    assert calls[0][0] == hung
+    assert [until for until, _days in calls[:2]] == [_host_days(since)[0], hung]
     assert downloads == [row["record_id"] for row in sorted(rows, key=_started)]
     await _unload(hass, entry)
 
@@ -732,33 +735,117 @@ async def test_a_recording_still_running_on_an_earlier_day_keeps_the_next_pass_t
     hass_storage: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A pass that stops after a day holding a running recording starts at that day
-    again, not after it."""
+    """A recording running on the first day keeps the next pass at that day, although a
+    later day (with nothing) finished before the pass stopped."""
     monkeypatch.setattr(recordings, "LIST_TIMEOUT_SECONDS", 0.05)
     calls = _record_listings(monkeypatch)
     noon = datetime.now().astimezone().replace(hour=12, minute=0, second=0, microsecond=0)
-    since = noon - timedelta(days=1)
+    since = noon - timedelta(days=2)
     long_running = _row(1, started=since + timedelta(hours=1), length_s=3 * 86_400)
     fake_station.rows = [long_running]
-    today = _host_days(since)[-1]
+    days = _host_days(since)
     recorded = Station.async_list_recordings
     hang = True
 
     async def listing(self: Station, *args: Any, **kwargs: Any) -> list[HistoryRecord]:
-        if hang and kwargs["until"] == today:
+        if hang and kwargs["until"] == days[-1]:
             await asyncio.Event().wait()
         return await recorded(self, *args, **kwargs)
 
     monkeypatch.setattr(Station, "async_list_recordings", listing)
     entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage, since=since)
     await _first_pass(hass, entry)
-    assert [until for until, _since in calls] == _host_days(since)[:1]
+    assert [until for until, _days in calls] == days[:2]
 
     hang = False
     calls.clear()
     await _pass(hass, entry, RECORDING_SYNC_INTERVAL_SECONDS + 1)
 
-    assert calls[0][0] == _host_days(since)[0]
+    assert calls[0][0] == days[0]
+    await _unload(hass, entry)
+
+
+async def test_a_failed_day_after_a_running_recording_still_follows_it_up(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recording on the first day ends in a minute, today's listing fails: a pass is
+    still scheduled for when it has settled, not only the 15-minute catch-up."""
+    noon = datetime.now().astimezone().replace(hour=12, minute=0, second=0, microsecond=0)
+    since = noon - timedelta(days=1)
+    started = since + timedelta(hours=1)
+    ends_soon = int((datetime.now().astimezone() - started).total_seconds()) + 60
+    fake_station.rows = [_row(1, started=started, length_s=ends_soon)]
+    today = _host_days(since)[-1]
+    real = Station.async_list_recordings
+
+    async def listing(self: Station, *args: Any, **kwargs: Any) -> list[HistoryRecord]:
+        if kwargs["until"] == today:
+            raise DeviceTimeoutError("no answer")
+        return await real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Station, "async_list_recordings", listing)
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage, since=since)
+
+    await _first_pass(hass, entry)
+
+    sync = _manager(entry)._syncs[SYNTHETIC.station_sn]
+    assert sync.soon_at is not None
+    assert sync.soon_at - time.monotonic() < RECORDING_SYNC_INTERVAL_SECONDS
+    await _unload(hass, entry)
+
+
+@pytest.fixture
+def host_utc(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """The host's local zone is UTC for the test."""
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def _station_row(counter: int, local: datetime, offset: str) -> dict[str, Any]:
+    """A row in the station's local time ``local`` (naive) with its ``time_zone``."""
+    return {
+        "record_id": int(local.strftime("%Y%m%d")) * _DAY_FACTOR + counter,
+        "device_sn": SYNTHETIC.camera_sn,
+        "start_time": local.strftime(_ROW_TIME),
+        "end_time": (local + timedelta(seconds=10)).strftime(_ROW_TIME),
+        "time_zone": offset,
+        "storage_path": f"/zx/hdd_data0/Camera00/{counter}.zxvideo",
+        "frame_num": 6,
+    }
+
+
+@pytest.mark.usefixtures("host_utc")
+async def test_a_recording_early_in_a_station_day_ahead_of_the_host_is_copied(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A station two hours ahead of the host: its day starts before host midnight, and a
+    recording at 00:30 station time on an earlier day of the backlog is still copied."""
+    downloads = _count_downloads(monkeypatch)
+    midnight = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    since = (datetime.now(UTC) - timedelta(days=3)).replace(
+        hour=12, minute=0, second=0, microsecond=0
+    )
+    early = _station_row(1, midnight - timedelta(days=2) + timedelta(minutes=30), "+0200")
+    later = _station_row(2, midnight - timedelta(days=1) + timedelta(hours=13), "+0200")
+    fake_station.rows = [later, early]
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage, since=since)
+
+    await _first_pass(hass, entry)
+
+    assert downloads == [early["record_id"], later["record_id"]]
     await _unload(hass, entry)
 
 
