@@ -191,6 +191,9 @@ from then on is copied into the event history as an MP4:
 - Copied once: a restart or a deleted file does not copy it again. A copy that fails
   is tried again on later passes, three times in all; then one warning is logged and
   the recording stays on the HomeBase only.
+- The HomeBase is asked for one day of recordings at a time, oldest first. A day it
+  does not list within a minute is asked again on the next pass; the days before it
+  stay copied.
 - The video is the camera's own (HEVC, or H.264 where the camera sends it) and AAC in an
   MP4, never re-encoded. It plays in
   browsers that play the live view (see [network.md](network.md#browsers)).
