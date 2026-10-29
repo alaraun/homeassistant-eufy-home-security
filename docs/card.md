@@ -102,8 +102,9 @@ Without `auto_live` nothing on the card opens a stream on its own. The picture i
 the card never wakes a camera for it. Live view opens only on a press and ends:
 
 - after `live_seconds`, unless continuous (∞) is on;
-- on Stop, when the card leaves the page, or when the browser tab is hidden (a continuous view keeps running on a
-  wall display);
+- on Stop, when the card leaves the page, or when the browser tab or app is hidden (a continuous view keeps running
+  on a wall display; Home Assistant's Android app hides the page for a moment when it enters or leaves the
+  browser's full screen, which does not count);
 - when the integration ends it: a streaming-quality write, or on a standalone camera a still or preset capture;
 - when no picture arrives within 60 s (`No picture from the camera`).
 
