@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.11](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.10...v0.4.11) (2026-10-29)
+
+
+### Bug Fixes
+
+* **card:** live view keeps playing when the Android app enters or leaves full screen ([issue 133](https://github.com/alaraun/homeassistant-eufy-home-security/issues/133)) ([16fbf61](https://github.com/alaraun/homeassistant-eufy-home-security/commit/16fbf6121c1bf12c920a1e1984879f5ea85e1530))
+
 ## [0.4.10](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.9...v0.4.10) (2026-10-29)
 
 
