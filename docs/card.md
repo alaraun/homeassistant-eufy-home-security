@@ -77,9 +77,10 @@ settings_groups:                 # optional: Settings tabs to show, in this orde
   live view goes on with the chosen camera; the controls stay up while the list is open.
 - `show_header`, `show_history`, `show_settings`: with all three off the card is the picture alone, with the
   play button, the live controls and the chips over it (for a popup or a wall display). Without the header its
-  menu (`Record a clip` while idle, `New still`, `Refresh event image`) is not offered; with several cameras the
-  camera list moves to a name chip on the picture; ✕ / Set for staged settings sit at the right end of the
-  History / Settings tabs. Without Settings the card does not ask the integration for the settings layout.
+  menu (`Record a clip` while idle, `New still`, `Refresh event image`) is not offered; the camera's name is a
+  chip on the picture (with several cameras it opens the camera list); ✕ / Set for staged settings sit at the
+  right end of the History / Settings tabs. Without Settings the card does not ask the integration for the
+  settings layout.
 - `picture`: `landscape` is the fixed 16:9 frame, filled edge to edge. `portrait` shows the whole picture in a
   frame at most 80 % of the screen high, with bars at the sides when the card is wider: a camera whose picture is
   taller than wide gets its own shape (no narrower than 9:16); until the card has seen a picture, and for a
@@ -112,7 +113,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   `Unavailable`, …). The button opens a menu: live view (timed or continuous), stop, `Record a clip`, `New still`
   and `Refresh event image`. A doorbell reads `Ringing` (a bell on the button) for a minute after a press, then
   `Ring 5 min ago` while the ring is its newest event.
-- **Picture:** a 16:9 frame, or the camera's portrait shape (see `picture`). Top left says what the still is (`Event · 2 h ago`, `Snapshot`, `No still yet`)
+- **Picture:** a 16:9 frame, or the camera's portrait shape (see `picture`). Top left (after the name chip when the
+  header is hidden) says what the still is (`Event · 2 h ago`, `Snapshot`, `No still yet`)
   or `● LIVE 1:42` while live; next to it the battery chip (charging and solar charging shown on its icon).
   - Idle: a play button (timed live view) and ∞ (continuous). A camera without live video shows
     `No live view for this model` instead, and its menu has no live view or `Record a clip`.
@@ -120,9 +122,10 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     page go full screen, the picture fills the screen; where it does not (the Home Assistant app on an iPhone or
     iPad, a dashboard added to the Home Screen), it fills the app's window instead, with its own exit button at the
     top right that stays after live view ends and while the other controls fade. The full-screen button or Esc goes
-    back too.
-  - On a pan/tilt camera whose picture in the card is narrower than about 390 px, the bar leaves out ∞ and full
-    screen to keep room for the pan/tilt pad; the header menu has both (`Keep live`, `Full screen`).
+    back too. In full screen the camera's name is a chip on the picture.
+  - On a pan/tilt camera whose picture in the card is narrower than about 390 px, the bar leaves out ∞ to keep
+    room for the pan/tilt pad; the header menu has it (`Keep live`). Without the header, and in full screen on such
+    a narrow picture, a running timed view cannot be made continuous; the idle picture's ∞ starts a continuous one.
   - Pan/tilt cameras: a pan/tilt pad with a home button (the default preset), usable once the live picture shows.
     Zoom cameras: a zoom pill (−, the value, +, and a reset to 1×), usable in every state.
   - Presets: the bar's preset button opens a row of the preset slots' pictures; a tap turns the camera there.
@@ -139,7 +142,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
       preset (T8173), or one whose button is disabled, offers neither.
   - While the live picture plays, its controls, the battery chip and the time fade 4 s after the last touch or click
     (every width, full screen too) and a red dot at the top left stays; a tap or click on the picture brings them
-    back, another hides them. Keyboard focus shows them too; a recording's `● REC` chip stays.
+    back, another hides them. The open preset row keeps them up; such a tap or click closes the row and hides them,
+    except while a preset is being saved. Keyboard focus shows them too; a recording's `● REC` chip stays.
 - **Record:** the live bar's record button, or `Record a clip` in the menu while idle, records a clip of the
   integration's Recording length into the history (Captures). While any client records, a `● REC 12 s` chip shows,
   and the same button (red, a stop square) or `Stop recording` in the menu ends the clip; the part recorded so far

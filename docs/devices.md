@@ -59,11 +59,12 @@ model list (declared from eufy's own model data):
 | Camera, doorbell, video smart lock (T8530, T8531, T8532, T853A, T85M0, T85M1, T85M2, T85V0: the eufy app shows them as cameras) | camera with stills, detection sensors and event, **Capture live image** and **Refresh event image** buttons; a doorbell and a video smart lock also a ring event (a video smart lock's press is declared from the eufy app, not tested). Live video where the library sends the live open the eufy app uses for that model on its station; pan/tilt, presets and zoom as [below](#pan-tilt-presets-and-zoom) (declared from the eufy app, not tested); a **Siren** where the eufy app offers the model an alarm ([usage.md](usage.md#sirens)) |
 | HomeBase, keypad, other lock, sensor, other | none of a camera; a HomeBase gets its **Siren** where the library sounds its model |
 
-No live video yet: cameras behind a HomeBase 4, NVR or other recorder station, dual-lens
-cameras, cameras the eufy app streams only over WebRTC (decided per camera, station and firmware as the
+No live video yet: cameras behind a HomeBase 4, NVR or other recorder station, cameras the
+eufy app streams only over WebRTC (decided per camera, station and firmware as the
 app does; e.g. some standalone T8170 from firmware 3.4.0.0, and a C30 behind a HomeBase 3 on the firmware the
 app streams it over WebRTC), and a camera the library opens
 only as a standalone camera (such as the T8410) when it is paired to a HomeBase. The card then shows `No live view for this model`.
+A camera with several lenses opens its live view as the eufy app does (not tested).
 
 ### Pan, tilt, presets and zoom
 

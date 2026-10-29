@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.28-2';
+const CARD_VERSION = '2026.10.29-4';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -2398,12 +2398,16 @@ class EufyCameraCard extends HTMLElement {
       const t = srcKind === 'live' ? 'Snapshot' : `Event${isNaN(stillMs) ? '' : ` · ${this._ago(stillMs)}`}`;
       tl = chip('tl', '', `<ha-icon icon="${srcKind === 'live' ? 'mdi:camera-iris' : 'mdi:motion-sensor'}"></ha-icon><span>${escapeHtml(t)}</span>`, `Still: ${t}`);
     }
-    // Recording a clip: its own chip with the seconds so far; it stays while the live controls are faded
-    // On the picture when the header is hidden or the picture is in full screen (the header is not shown there);
-    // in full screen after the status chip, so the live dot stays at the far left when the controls fade
-    const camChip = multi && (!showHdr || this._isFull()) ? `${camBtn('chip camchip')}<ha-icon icon="mdi:cctv"></ha-icon><span>${escapeHtml(name)}</span><ha-icon icon="${camOpen ? 'mdi:menu-up' : 'mdi:menu-down'}"></ha-icon></button>` : '';
+    // The camera's name on the picture when the header is hidden or the picture is in full screen (the header is not
+    // shown there): the camera list for several cameras, the name alone for one; in full screen after the status
+    // chip, so the live dot stays at the far left when the controls fade
+    const nameOn = !showHdr || this._isFull();
+    const camChip = !nameOn ? ''
+      : multi ? `${camBtn('chip camchip')}<ha-icon icon="mdi:cctv"></ha-icon><span>${escapeHtml(name)}</span><ha-icon icon="${camOpen ? 'mdi:menu-up' : 'mdi:menu-down'}"></ha-icon></button>`
+        : `<span class="chip camchip one"><ha-icon icon="mdi:cctv"></ha-icon><span>${escapeHtml(name)}</span></span>`;
     // The window full screen's own exit: always drawn, never faded, whatever the live view or the width shows
     const winExit = this._winFull ? '<button type="button" class="wfx" data-winexit data-focus="win-exit" aria-label="Exit full screen"><ha-icon icon="mdi:fullscreen-exit"></ha-icon></button>' : '';
+    // Recording a clip: its own chip with the seconds so far; it stays while the live controls are faded
     const recChip = recording && !vItem ? chip('', 'rec recc', `<i class="dot"></i><span class="rw">REC</span><span class="tv" data-rect>${this._recSeconds()} s</span>`, 'Recording a clip') : '';
     const centre = vItem ? (vPic && vPic.src ? '' : '<div class="ctr wake" role="status"><i class="spin"></i></div>') : !avail
       ? '<div class="ctr off"><ha-icon icon="mdi:cctv-off"></ha-icon><span>Unavailable</span></div>'
@@ -2440,7 +2444,7 @@ class EufyCameraCard extends HTMLElement {
             ${L.video ? `<button type="button" class="lb" data-live="mute" data-focus="live-mute" aria-pressed="${!L.muted}" aria-label="${L.muted ? 'Unmute' : 'Mute'}"><ha-icon icon="${L.muted ? 'mdi:volume-off' : 'mdi:volume-high'}"></ha-icon></button>` : ''}
             ${canPre ? `<button type="button" class="lb${this._preOpen ? ' on' : ''}" data-live="presets" data-focus="live-presets" aria-expanded="${!!this._preOpen}" aria-label="Presets"><ha-icon icon="mdi:crosshairs-gps"></ha-icon></button>` : ''}
             ${lacts ? `<i class="lsep" aria-hidden="true"></i>${lacts}` : ''}
-            <button type="button" class="lb opt2" data-live="full" data-focus="live-full" aria-label="${this._isFull() ? 'Exit full screen' : 'Full screen'}"><ha-icon icon="${this._isFull() ? 'mdi:fullscreen-exit' : 'mdi:fullscreen'}"></ha-icon></button>
+            <button type="button" class="lb" data-live="full" data-focus="live-full" aria-label="${this._isFull() ? 'Exit full screen' : 'Full screen'}"><ha-icon icon="${this._isFull() ? 'mdi:fullscreen-exit' : 'mdi:fullscreen'}"></ha-icon></button>
           </div>` : '';
     // Presets over the live picture, above the bar: the camera turns there at once (the move lane)
     // The last tile saves the current view into the lowest free slot; a held tile (or its context-menu key) asks
@@ -2779,6 +2783,7 @@ class EufyCameraCard extends HTMLElement {
     if (changed && hLeft && hLeft[1]) { const hs = this._lowerEl.querySelector('.hstrip'); if (hs && hs.dataset.tab === hLeft[0]) hs.scrollLeft = hLeft[1]; }
     this._lazyThumbs();
     this._fitTabs();
+    this._placePresets();
     // The live countdown first: its text sets the LIVE chip's width, and the camera chip (the list's anchor) follows it
     this._tick();
     this._placeDd(changed ? ddTop : 0);
@@ -2787,6 +2792,16 @@ class EufyCameraCard extends HTMLElement {
 
   // Settings tab strip on one line: fit 0 every name, 1 the open tab's name only, 2 icons only with the open tab's
   // name on a line below. The least that fits the longest name, so switching tabs never changes the strip.
+  // The preset row sits above the live bar: its CSS offset, raised when the bar wrapped to more rows
+  _placePresets() {
+    const lp = this._overEl && this._overEl.querySelector('.lpre'), bar = this._overEl && this._overEl.querySelector('.lbar');
+    if (!lp) return;
+    lp.style.bottom = '';
+    if (!bar || !this._pic) return;
+    const need = this._pic.getBoundingClientRect().bottom - bar.getBoundingClientRect().top + 8;
+    if (need > parseFloat(getComputedStyle(lp).bottom)) lp.style.bottom = `${Math.ceil(need)}px`;
+  }
+
   _fitTabs() {
     const s = this._lowerEl && this._lowerEl.querySelector('.stabs[role=tablist]');
     const tabs = s ? [...s.querySelectorAll('.stab')] : [];
@@ -2861,7 +2876,13 @@ class EufyCameraCard extends HTMLElement {
     }, true);
     // A touch, click or key in the picture shows the live controls again; a tap on the bare picture hides them.
     // The tap that brings them back presses nothing: the control under it was invisible when the finger came down.
-    this._pic.addEventListener('pointerdown', () => { this._wasQuiet = this._isQuiet(); this._awake(true); });
+    // A press on a control: a button, a field or the video, or inside the bars, chips and messages over the picture
+    const onCtl = ev => ev.composedPath().some(n => n.tagName && (/^(BUTTON|INPUT|VIDEO)$/.test(n.tagName)
+      || (n.classList && ['lbar', 'ptzw', 'lpre', 'crow', 'toast'].some(c => n.classList.contains(c)))));
+    // Its start and end count too: a mouse press slid between a control and the bare picture is no bare tap (the click
+    // then lands on their common ancestor)
+    this._pic.addEventListener('pointerdown', (ev) => { this._wasQuiet = this._isQuiet(); this._downCtl = onCtl(ev); this._awake(true); });
+    this._pic.addEventListener('pointerup', (ev) => { this._upCtl = onCtl(ev); });
     // Keyboard focus only: a tapped button keeps focus on a phone and would hold the controls on screen
     this._pic.addEventListener('focusin', (ev) => { const t = ev.composedPath()[0]; if (t && t.matches && t.matches(':focus-visible')) this._awake(true); });
     // A mouse moving over the picture keeps shown controls up (the timer restarts); faded ones need a click
@@ -2871,12 +2892,16 @@ class EufyCameraCard extends HTMLElement {
       if (!this._isQuiet()) this._awake(true);
     });
     this._pic.addEventListener('click', (ev) => {
-      const ctl = ev.composedPath().some(n => n.tagName && (/^(BUTTON|INPUT|VIDEO)$/.test(n.tagName)
-        || (n.classList && ['lbar', 'ptzw', 'lpre', 'crow', 'toast'].some(c => n.classList.contains(c)))));
+      const ctl = onCtl(ev), edgeCtl = !!this._downCtl || !!this._upCtl;
       const was = this._wasQuiet;
       this._wasQuiet = false;
       if (was && ctl && !ev.composedPath().some(n => n.classList && n.classList.contains('crow'))) { ev.stopPropagation(); ev.preventDefault(); return; }
-      if (!ctl && !was) this._hush();
+      if (!ctl && !edgeCtl && !was) {
+        // The open preset row closes with the controls (its replace question answered no); a running save and the
+        // open camera list (this tap closes the list) keep it
+        if (this._preOpen && !this._psave && this._dd !== CAM_DD) { this._preOpen = false; this.render(); }
+        this._hush();
+      }
     }, true);
     const rangeOf = ev => ev.composedPath().find(n => n.classList && n.classList.contains('ctl-range'));
     this.content.addEventListener('input', (ev) => {
@@ -2892,6 +2917,7 @@ class EufyCameraCard extends HTMLElement {
         const was = this._width !== undefined && this._width < COMPACT_W;
         this._width = w;
         if (was !== (w < COMPACT_W)) this.render();
+        else this._placePresets();
       });
       this._ro.observe(this.content);
     }
@@ -3073,7 +3099,9 @@ const CSS_TEXT = `
   .crow { position: absolute; left: 10px; top: 10px; right: 10px; display: flex; gap: 6px; min-width: 0; pointer-events: none; }
   .crow > .chip { position: static; flex: none; max-width: 100%; pointer-events: auto; }
   .crow > .chip.tl { flex: 0 1 auto; min-width: 0; }
-  .crow > .chip.camchip { flex: 0 1 auto; min-width: 0; max-width: 50%; padding-right: 4px; }
+  .crow > .chip.camchip { flex: 0 1000 auto; min-width: 56px; max-width: 50%; padding-right: 4px; }
+  .crow > .chip.camchip.one { min-width: 28px; padding-right: 6px; }
+  .pic.winfull .crow { right: 52px; }
   .chip.hi ha-icon { color: var(--cc-bat-hi); } .chip.mid ha-icon { color: var(--cc-bat-mid); } .chip.lo ha-icon { color: var(--cc-bat-lo); }
   .chip.rec { gap: 6px; padding: 0 10px 0 9px; font-weight: 600; letter-spacing: 0.02em; }
   .chip.rec .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cc-live); box-shadow: 0 0 6px var(--cc-live); animation: pulse 2s ease-in-out infinite; }
@@ -3207,8 +3235,8 @@ const CSS_TEXT = `
     .lbar, .ptzw { bottom: 8px; } .lbar { left: 8px; } .ptzw { right: 8px; gap: 6px; }
     .zr { width: 26px; } .lpre { left: 8px; bottom: 46px; max-width: calc(100% - 140px); } .lp { width: 64px; }
   }
-  /* A picture too narrow for the whole bar (with Record) beside the pan/tilt controls: continuous and full screen
-     stay in the header menu (Keep live / Full screen) */
+  /* A picture too narrow for the whole bar (with Record) beside the pan/tilt controls: continuous stays in the
+     header menu (Keep live) */
   @container (max-width: 389px) {
     .has-ptz .lbar .lb.opt2 { display: none; }
   }
