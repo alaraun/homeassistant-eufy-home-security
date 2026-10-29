@@ -5,6 +5,19 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.9](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.8...v0.4.9) (2026-10-29)
+
+
+### Features
+
+* **card:** the camera name on the picture without the header; full screen stays on a narrow pan/tilt bar; a tap on the picture closes the preset row ([#142](https://github.com/alaraun/homeassistant-eufy-home-security/issues/142)) ([bc7a81d](https://github.com/alaraun/homeassistant-eufy-home-security/commit/bc7a81de8f1f45d0677caf668e1a917e0a52efe5))
+
+
+### Bug Fixes
+
+* **card:** full screen fills the app window where the browser offers the page none ([#141](https://github.com/alaraun/homeassistant-eufy-home-security/issues/141)) ([0953e6d](https://github.com/alaraun/homeassistant-eufy-home-security/commit/0953e6dfbba8dabe48fc3ebeecbf6c48409e0cfe))
+* the event-videos sync lists one day per request, oldest first ([#139](https://github.com/alaraun/homeassistant-eufy-home-security/issues/139)) ([b105e2b](https://github.com/alaraun/homeassistant-eufy-home-security/commit/b105e2becd8acf0f0ca83511bb97d1e851671835))
+
 ## [0.4.8](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.7...v0.4.8) (2026-10-28)
 
 
