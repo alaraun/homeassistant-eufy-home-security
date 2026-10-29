@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.29-3';
+const CARD_VERSION = '2026.10.29-4';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -2876,7 +2876,13 @@ class EufyCameraCard extends HTMLElement {
     }, true);
     // A touch, click or key in the picture shows the live controls again; a tap on the bare picture hides them.
     // The tap that brings them back presses nothing: the control under it was invisible when the finger came down.
-    this._pic.addEventListener('pointerdown', () => { this._wasQuiet = this._isQuiet(); this._awake(true); });
+    // A press on a control: a button, a field or the video, or inside the bars, chips and messages over the picture
+    const onCtl = ev => ev.composedPath().some(n => n.tagName && (/^(BUTTON|INPUT|VIDEO)$/.test(n.tagName)
+      || (n.classList && ['lbar', 'ptzw', 'lpre', 'crow', 'toast'].some(c => n.classList.contains(c)))));
+    // Its start and end count too: a mouse press slid between a control and the bare picture is no bare tap (the click
+    // then lands on their common ancestor)
+    this._pic.addEventListener('pointerdown', (ev) => { this._wasQuiet = this._isQuiet(); this._downCtl = onCtl(ev); this._awake(true); });
+    this._pic.addEventListener('pointerup', (ev) => { this._upCtl = onCtl(ev); });
     // Keyboard focus only: a tapped button keeps focus on a phone and would hold the controls on screen
     this._pic.addEventListener('focusin', (ev) => { const t = ev.composedPath()[0]; if (t && t.matches && t.matches(':focus-visible')) this._awake(true); });
     // A mouse moving over the picture keeps shown controls up (the timer restarts); faded ones need a click
@@ -2886,14 +2892,14 @@ class EufyCameraCard extends HTMLElement {
       if (!this._isQuiet()) this._awake(true);
     });
     this._pic.addEventListener('click', (ev) => {
-      const ctl = ev.composedPath().some(n => n.tagName && (/^(BUTTON|INPUT|VIDEO)$/.test(n.tagName)
-        || (n.classList && ['lbar', 'ptzw', 'lpre', 'crow', 'toast'].some(c => n.classList.contains(c)))));
+      const ctl = onCtl(ev), edgeCtl = !!this._downCtl || !!this._upCtl;
       const was = this._wasQuiet;
       this._wasQuiet = false;
       if (was && ctl && !ev.composedPath().some(n => n.classList && n.classList.contains('crow'))) { ev.stopPropagation(); ev.preventDefault(); return; }
-      if (!ctl && !was) {
-        // The open preset row closes with the controls (its replace question answered no); a running save keeps it
-        if (this._preOpen && !this._psave) { this._preOpen = false; this.render(); }
+      if (!ctl && !edgeCtl && !was) {
+        // The open preset row closes with the controls (its replace question answered no); a running save and the
+        // open camera list (this tap closes the list) keep it
+        if (this._preOpen && !this._psave && this._dd !== CAM_DD) { this._preOpen = false; this.render(); }
         this._hush();
       }
     }, true);
