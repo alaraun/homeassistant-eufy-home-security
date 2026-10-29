@@ -113,21 +113,19 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   `Unavailable`, …). The button opens a menu: live view (timed or continuous), stop, `Record a clip`, `New still`
   and `Refresh event image`. A doorbell reads `Ringing` (a bell on the button) for a minute after a press, then
   `Ring 5 min ago` while the ring is its newest event.
-- **Picture:** a 16:9 frame, or the camera's portrait shape (see `picture`). Top left (after the name chip when the
-  header is hidden) says what the still is (`Event · 2 h ago`, `Snapshot`, `No still yet`)
-  or `● LIVE 1:42` while live; next to it the battery chip (charging and solar charging shown on its icon).
+- **Picture:** a 16:9 frame, or the camera's portrait shape (see `picture`). Top left says what the still is
+  (`Event · 2 h ago`, `Snapshot`, `No still yet`) or `● LIVE 1:42` while live, in the card and in full screen; next
+  to it the camera's name chip when the header is hidden or in full screen, then the battery chip (charging and
+  solar charging shown on its icon). Top right: the full-screen button.
   - Idle: a play button (timed live view) and ∞ (continuous). A camera without live video shows
     `No live view for this model` instead, and its menu has no live view or `Record a clip`.
-  - Live: a bar with Stop, ∞, Record, sound (starts muted), presets and full screen. Where the browser lets the
-    page go full screen, the picture fills the screen; where it does not (the Home Assistant app on an iPhone or
-    iPad, a dashboard added to the Home Screen), it fills the app's window instead. Either way an exit button at the
-    top right stays after live view ends and while the other controls fade; the full-screen button or Esc goes back
-    too. In full screen the camera's name is a chip on the picture.
-  - On a pan/tilt camera whose picture in the card is narrower than about 390 px, the bar leaves out ∞ to keep
-    room for the pan/tilt pad; the header menu has it (`Keep live`). Without the header, and in full screen on such
-    a narrow picture, a running timed view cannot be made continuous; the idle picture's ∞ starts a continuous one.
-  - Pan/tilt cameras: a pan/tilt pad with a home button (the default preset), usable once the live picture shows.
-    Zoom cameras: a zoom pill (−, the value, +, and a reset to 1×), usable in every state.
+  - Live: a bar with Stop, ∞, Record, sound (starts muted) and presets.
+  - Full screen: the button at the top right of the picture, idle or live (also in the header menu). Where the
+    browser lets the page go full screen, the picture fills the screen; where it does not (the Home Assistant app
+    on an iPhone or iPad, a dashboard added to the Home Screen), it fills the app's window instead. In full screen
+    the same button exits; it stays after live view ends and while the other controls fade. Esc goes back too.
+  - Pan/tilt cameras: a pan/tilt pad with a home button (the default preset); zoom cameras: a zoom pill (−, the
+    value, +, and a reset to 1×). Both show only while the live picture plays.
   - Presets: the bar's preset button opens a row of the preset slots' pictures; a tap turns the camera there.
     - `Save view`, the row's last tile, stores the current view in the lowest free slot and makes the live
       picture at the press its picture (taken in the browser, at most 1920 px wide). The new tile joins the row
@@ -141,7 +139,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     - `Save view` and `Replace` need the camera's **Save current view** button: a camera that cannot store a
       preset (T8173), or one whose button is disabled, offers neither.
   - While the live picture plays, its controls, the battery chip and the time fade 4 s after the last touch or click
-    (every width, full screen too) and a red dot at the top left stays; a tap or click on the picture brings them
+    (every width, full screen too; the full-screen button fades in the card, not in full screen) and a red dot at the
+    top left stays; a tap or click on the picture brings them
     back, another hides them. The open preset row keeps them up; such a tap or click closes the row and hides them,
     except while a preset is being saved. Keyboard focus shows them too; a recording's `● REC` chip stays.
 - **Record:** the live bar's record button, or `Record a clip` in the menu while idle, records a clip of the
@@ -214,7 +213,7 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
 
 ## Limits
 
-- Pan/tilt and go-to-preset need a running live view; an idle camera stores zoom and preset for the next view.
+- Pan/tilt, zoom and go-to-preset are on the picture only during live view.
 - Cameras behind one HomeBase stream side by side only up to the integration's "Sessions per HomeBase" budget;
   past it the view ends with `No picture from the camera` after about 20 s.
 - Live view uses HA's WebRTC player where the browser receives the camera's codec over WebRTC: H.264 cameras in
