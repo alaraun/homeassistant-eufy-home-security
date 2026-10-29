@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.29-4';
+const CARD_VERSION = '2026.10.29-5';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -1478,7 +1478,7 @@ class EufyCameraCard extends HTMLElement {
       return;
     }
     if (this._dd && !path.find(n => n.classList && n.classList.contains('ddl'))) this._setDd(null);
-    if (has('winexit')) { this._setWinFull(false); this._focus('live-full'); return; }
+    if (has('winexit')) { this._fullscreen(); this._focus(this._live ? 'live-full' : 'play'); return; }
     const la = has('lact');
     if (la) { this._liveButton(la.dataset.lact); this._focus(`lact-${la.dataset.lact}`); return; }
     const lv = has('live');
@@ -2405,8 +2405,9 @@ class EufyCameraCard extends HTMLElement {
     const camChip = !nameOn ? ''
       : multi ? `${camBtn('chip camchip')}<ha-icon icon="mdi:cctv"></ha-icon><span>${escapeHtml(name)}</span><ha-icon icon="${camOpen ? 'mdi:menu-up' : 'mdi:menu-down'}"></ha-icon></button>`
         : `<span class="chip camchip one"><ha-icon icon="mdi:cctv"></ha-icon><span>${escapeHtml(name)}</span></span>`;
-    // The window full screen's own exit: always drawn, never faded, whatever the live view or the width shows
-    const winExit = this._winFull ? '<button type="button" class="wfx" data-winexit data-focus="win-exit" aria-label="Exit full screen"><ha-icon icon="mdi:fullscreen-exit"></ha-icon></button>' : '';
+    // Full screen's own exit (browser or window): always drawn, never faded, whatever the live view or the width
+    // shows; the live bar's button goes with the live view, and a tablet or phone has no Esc
+    const winExit = this._isFull() ? '<button type="button" class="wfx" data-winexit data-focus="win-exit" aria-label="Exit full screen"><ha-icon icon="mdi:fullscreen-exit"></ha-icon></button>' : '';
     // Recording a clip: its own chip with the seconds so far; it stays while the live controls are faded
     const recChip = recording && !vItem ? chip('', 'rec recc', `<i class="dot"></i><span class="rw">REC</span><span class="tv" data-rect>${this._recSeconds()} s</span>`, 'Recording a clip') : '';
     const centre = vItem ? (vPic && vPic.src ? '' : '<div class="ctr wake" role="status"><i class="spin"></i></div>') : !avail
@@ -3101,7 +3102,7 @@ const CSS_TEXT = `
   .crow > .chip.tl { flex: 0 1 auto; min-width: 0; }
   .crow > .chip.camchip { flex: 0 1000 auto; min-width: 56px; max-width: 50%; padding-right: 4px; }
   .crow > .chip.camchip.one { min-width: 28px; padding-right: 6px; }
-  .pic.winfull .crow { right: 52px; }
+  .pic.winfull .crow, .pic:fullscreen .crow { right: 52px; }
   .chip.hi ha-icon { color: var(--cc-bat-hi); } .chip.mid ha-icon { color: var(--cc-bat-mid); } .chip.lo ha-icon { color: var(--cc-bat-lo); }
   .chip.rec { gap: 6px; padding: 0 10px 0 9px; font-weight: 600; letter-spacing: 0.02em; }
   .chip.rec .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cc-live); box-shadow: 0 0 6px var(--cc-live); animation: pulse 2s ease-in-out infinite; }
