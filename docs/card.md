@@ -142,7 +142,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
       preset (T8173), or one whose button is disabled, offers neither.
   - While the live picture plays, its controls, the battery chip and the time fade 4 s after the last touch or click
     (every width, full screen too) and a red dot at the top left stays; a tap or click on the picture brings them
-    back, another hides them. Keyboard focus shows them too; a recording's `● REC` chip stays.
+    back, another hides them. The open preset row keeps them up until such a tap or click, which closes it too
+    (not while a preset is being saved). Keyboard focus shows them too; a recording's `● REC` chip stays.
 - **Record:** the live bar's record button, or `Record a clip` in the menu while idle, records a clip of the
   integration's Recording length into the history (Captures). While any client records, a `● REC 12 s` chip shows,
   and the same button (red, a stop square) or `Stop recording` in the menu ends the clip; the part recorded so far

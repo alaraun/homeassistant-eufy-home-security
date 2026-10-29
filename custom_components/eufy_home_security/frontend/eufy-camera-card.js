@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.29-2';
+const CARD_VERSION = '2026.10.29-3';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -2891,7 +2891,11 @@ class EufyCameraCard extends HTMLElement {
       const was = this._wasQuiet;
       this._wasQuiet = false;
       if (was && ctl && !ev.composedPath().some(n => n.classList && n.classList.contains('crow'))) { ev.stopPropagation(); ev.preventDefault(); return; }
-      if (!ctl && !was) this._hush();
+      if (!ctl && !was) {
+        // The open preset row closes with the controls (its replace question answered no); a running save keeps it
+        if (this._preOpen && !this._psave) { this._preOpen = false; this.render(); }
+        this._hush();
+      }
     }, true);
     const rangeOf = ev => ev.composedPath().find(n => n.classList && n.classList.contains('ctl-range'));
     this.content.addEventListener('input', (ev) => {
