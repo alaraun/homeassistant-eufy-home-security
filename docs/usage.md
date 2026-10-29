@@ -29,9 +29,10 @@ reloads the integration.
 - Arm Home, arm Away and disarm go to the HomeBase over the LAN; the panel shows the
   new mode once the HomeBase confirms it.
 - The panel shows Schedule and the Custom modes but does not set them.
-- The HomeBase's **Security mode** select sets every mode the HomeBase has except Off,
-  Custom modes included under their names (in an automation:
-  `select.select_option`). It shows the mode in force.
+- The **Security mode** select of a HomeBase or standalone camera sets every mode it has
+  except Off and Geofencing, Schedule and the Custom modes included, under their names
+  (in an automation: `select.select_option`). It shows the selected mode (Schedule while
+  a schedule runs); the panel shows the mode in force.
 - A mode changed in the eufy app shows within 45 s.
 
 ## Sirens

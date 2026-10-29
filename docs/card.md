@@ -113,7 +113,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   `Unavailable`, …). The button opens a menu: live view (timed or continuous), stop, `Record a clip`, `New still`
   and `Refresh event image`. A doorbell reads `Ringing` (a bell on the button) for a minute after a press, then
   `Ring 5 min ago` while the ring is its newest event.
-- **Picture:** a 16:9 frame, or the camera's portrait shape (see `picture`). Top left says what the still is (`Event · 2 h ago`, `Snapshot`, `No still yet`)
+- **Picture:** a 16:9 frame, or the camera's portrait shape (see `picture`). Top left (after the name chip when the
+  header is hidden) says what the still is (`Event · 2 h ago`, `Snapshot`, `No still yet`)
   or `● LIVE 1:42` while live; next to it the battery chip (charging and solar charging shown on its icon).
   - Idle: a play button (timed live view) and ∞ (continuous). A camera without live video shows
     `No live view for this model` instead, and its menu has no live view or `Record a clip`.
@@ -123,7 +124,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     top right that stays after live view ends and while the other controls fade. The full-screen button or Esc goes
     back too. In full screen the camera's name is a chip on the picture.
   - On a pan/tilt camera whose picture in the card is narrower than about 390 px, the bar leaves out ∞ to keep
-    room for the pan/tilt pad; the header menu has it (`Keep live`).
+    room for the pan/tilt pad; the header menu has it (`Keep live`). Without the header, and in full screen on such
+    a narrow picture, a running timed view cannot be made continuous; the idle picture's ∞ starts a continuous one.
   - Pan/tilt cameras: a pan/tilt pad with a home button (the default preset), usable once the live picture shows.
     Zoom cameras: a zoom pill (−, the value, +, and a reset to 1×), usable in every state.
   - Presets: the bar's preset button opens a row of the preset slots' pictures; a tap turns the camera there.
