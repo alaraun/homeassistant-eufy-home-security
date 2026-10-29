@@ -28,7 +28,10 @@ reloads the integration.
 
 - Arm Home, arm Away and disarm go to the HomeBase over the LAN; the panel shows the
   new mode once the HomeBase confirms it.
-- Schedule and the Custom modes are shown, never set.
+- The panel shows Schedule and the Custom modes but does not set them.
+- The HomeBase's **Security mode** select sets every mode the HomeBase has except Off,
+  Custom modes included under their names (in an automation:
+  `select.select_option`). It shows the mode in force.
 - A mode changed in the eufy app shows within 45 s.
 
 ## Sirens
@@ -114,7 +117,9 @@ wake costs battery), and the choice works like this:
 | **Refresh event image** | HomeBase camera: the newest event the HomeBase recorded for that camera in the last 7 days (the HomeBase is not searched further back), per the Event image choice; with no event in that window the image stays. Standalone camera: its newest event thumbnail | HomeBase camera: no. Standalone camera: yes |
 | **Capture live image** | what the camera sees now | yes |
 
-A detection after a button press replaces the button's image.
+A detection after a button press replaces the button's image. For a still at a fixed
+interval, an automation with a time pattern trigger can press **Capture live image**;
+each press wakes a battery camera.
 
 **Attributes:** `image_source`, `triggered_at` (the event's time) and
 `image_updated` (changes with every new image, so a card can refetch).

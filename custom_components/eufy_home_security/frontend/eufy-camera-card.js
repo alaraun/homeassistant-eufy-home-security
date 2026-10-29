@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.28-2';
+const CARD_VERSION = '2026.10.29-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -2399,9 +2399,13 @@ class EufyCameraCard extends HTMLElement {
       tl = chip('tl', '', `<ha-icon icon="${srcKind === 'live' ? 'mdi:camera-iris' : 'mdi:motion-sensor'}"></ha-icon><span>${escapeHtml(t)}</span>`, `Still: ${t}`);
     }
     // Recording a clip: its own chip with the seconds so far; it stays while the live controls are faded
-    // On the picture when the header is hidden or the picture is in full screen (the header is not shown there);
-    // in full screen after the status chip, so the live dot stays at the far left when the controls fade
-    const camChip = multi && (!showHdr || this._isFull()) ? `${camBtn('chip camchip')}<ha-icon icon="mdi:cctv"></ha-icon><span>${escapeHtml(name)}</span><ha-icon icon="${camOpen ? 'mdi:menu-up' : 'mdi:menu-down'}"></ha-icon></button>` : '';
+    // The camera's name on the picture when the header is hidden or the picture is in full screen (the header is not
+    // shown there): the camera list for several cameras, the name alone for one; in full screen after the status
+    // chip, so the live dot stays at the far left when the controls fade
+    const nameOn = !showHdr || this._isFull();
+    const camChip = !nameOn ? ''
+      : multi ? `${camBtn('chip camchip')}<ha-icon icon="mdi:cctv"></ha-icon><span>${escapeHtml(name)}</span><ha-icon icon="${camOpen ? 'mdi:menu-up' : 'mdi:menu-down'}"></ha-icon></button>`
+        : chip('', 'camchip one', `<ha-icon icon="mdi:cctv"></ha-icon><span>${escapeHtml(name)}</span>`, name);
     // The window full screen's own exit: always drawn, never faded, whatever the live view or the width shows
     const winExit = this._winFull ? '<button type="button" class="wfx" data-winexit data-focus="win-exit" aria-label="Exit full screen"><ha-icon icon="mdi:fullscreen-exit"></ha-icon></button>' : '';
     const recChip = recording && !vItem ? chip('', 'rec recc', `<i class="dot"></i><span class="rw">REC</span><span class="tv" data-rect>${this._recSeconds()} s</span>`, 'Recording a clip') : '';
@@ -2440,7 +2444,7 @@ class EufyCameraCard extends HTMLElement {
             ${L.video ? `<button type="button" class="lb" data-live="mute" data-focus="live-mute" aria-pressed="${!L.muted}" aria-label="${L.muted ? 'Unmute' : 'Mute'}"><ha-icon icon="${L.muted ? 'mdi:volume-off' : 'mdi:volume-high'}"></ha-icon></button>` : ''}
             ${canPre ? `<button type="button" class="lb${this._preOpen ? ' on' : ''}" data-live="presets" data-focus="live-presets" aria-expanded="${!!this._preOpen}" aria-label="Presets"><ha-icon icon="mdi:crosshairs-gps"></ha-icon></button>` : ''}
             ${lacts ? `<i class="lsep" aria-hidden="true"></i>${lacts}` : ''}
-            <button type="button" class="lb opt2" data-live="full" data-focus="live-full" aria-label="${this._isFull() ? 'Exit full screen' : 'Full screen'}"><ha-icon icon="${this._isFull() ? 'mdi:fullscreen-exit' : 'mdi:fullscreen'}"></ha-icon></button>
+            <button type="button" class="lb" data-live="full" data-focus="live-full" aria-label="${this._isFull() ? 'Exit full screen' : 'Full screen'}"><ha-icon icon="${this._isFull() ? 'mdi:fullscreen-exit' : 'mdi:fullscreen'}"></ha-icon></button>
           </div>` : '';
     // Presets over the live picture, above the bar: the camera turns there at once (the move lane)
     // The last tile saves the current view into the lowest free slot; a held tile (or its context-menu key) asks
@@ -3074,6 +3078,7 @@ const CSS_TEXT = `
   .crow > .chip { position: static; flex: none; max-width: 100%; pointer-events: auto; }
   .crow > .chip.tl { flex: 0 1 auto; min-width: 0; }
   .crow > .chip.camchip { flex: 0 1 auto; min-width: 0; max-width: 50%; padding-right: 4px; }
+  .crow > .chip.camchip.one { padding-right: 9px; }
   .chip.hi ha-icon { color: var(--cc-bat-hi); } .chip.mid ha-icon { color: var(--cc-bat-mid); } .chip.lo ha-icon { color: var(--cc-bat-lo); }
   .chip.rec { gap: 6px; padding: 0 10px 0 9px; font-weight: 600; letter-spacing: 0.02em; }
   .chip.rec .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cc-live); box-shadow: 0 0 6px var(--cc-live); animation: pulse 2s ease-in-out infinite; }
@@ -3207,8 +3212,8 @@ const CSS_TEXT = `
     .lbar, .ptzw { bottom: 8px; } .lbar { left: 8px; } .ptzw { right: 8px; gap: 6px; }
     .zr { width: 26px; } .lpre { left: 8px; bottom: 46px; max-width: calc(100% - 140px); } .lp { width: 64px; }
   }
-  /* A picture too narrow for the whole bar (with Record) beside the pan/tilt controls: continuous and full screen
-     stay in the header menu (Keep live / Full screen) */
+  /* A picture too narrow for the whole bar (with Record) beside the pan/tilt controls: continuous stays in the
+     header menu (Keep live) */
   @container (max-width: 389px) {
     .has-ptz .lbar .lb.opt2 { display: none; }
   }
