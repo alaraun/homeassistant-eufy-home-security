@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.29-7';
+const CARD_VERSION = '2026.10.29-8';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -30,6 +30,9 @@ const COMPACT_W = 400;
 // While the live picture plays, the controls over it fade this long after the last touch, click or mouse move on
 // the picture (every width, full screen too); a tap or click on the picture brings them back
 const CTL_HIDE_MS = 4000;
+// Home Assistant's Android app hides the page for a moment while it moves it into or out of the browser's full
+// screen: a hide in it or this soon after it changes ends a timed live view only once it lasts this long
+const FS_HIDE_MS = 1500;
 // Save view: the integration's command that keeps a frame as a preset's picture (preset_upload.py), and the frame:
 // the live video drawn at most PRESET_PIC_W wide (aspect kept) as a JPEG, at the first quality whose size stays
 // within PRESET_PIC_MAX (the integration's limit, under the websocket's message size)
@@ -569,6 +572,9 @@ class EufyCameraCard extends HTMLElement {
     clearTimeout(this._quietT);
     clearTimeout(this._ringT);
     clearTimeout(this._lactT);
+    clearTimeout(this._visT);
+    this._visT = null;
+    this._hidAt = null;
     this._lact = null;
     clearInterval(this._recT);
     this._recT = null;
@@ -1186,13 +1192,29 @@ class EufyCameraCard extends HTMLElement {
     this.content.querySelectorAll('[data-wake]').forEach((n) => { if (n.textContent !== ws) n.textContent = ws; });
   }
 
-  // A hidden tab ends a timed live view; a continuous one keeps running (a wall display).
-  // An auto-live card starts again when the tab is shown again.
+  // A hidden tab ends a timed live view; a continuous one keeps running (a wall display). An auto-live card starts
+  // again when the tab is shown again. Around the browser's full screen the hide counts only from FS_HIDE_MS on, checked
+  // by a timer and again when the page is shown (an app in the background may hold the page's timers).
   _visibility() {
+    clearTimeout(this._visT);
+    this._visT = null;
     if (document.visibilityState === 'hidden') {
-      if (this._live && !this._live.continuous) this._stop('');
-      if (!this._live) this._autoDone = false;
-    } else this._autoTry();
+      if (document.fullscreenElement || Date.now() - (this._fsAt || 0) < FS_HIDE_MS) {
+        this._hidAt = Date.now();
+        this._visT = setTimeout(() => { this._visT = null; if (document.visibilityState === 'hidden') this._hidden(); }, FS_HIDE_MS);
+      } else this._hidden();
+      return;
+    }
+    const at = this._hidAt;
+    this._hidAt = null;
+    if (at && Date.now() - at >= FS_HIDE_MS) this._hidden();
+    this._autoTry();
+  }
+
+  _hidden() {
+    this._hidAt = null;
+    if (this._live && !this._live.continuous) this._stop('');
+    if (!this._live) this._autoDone = false;
   }
 
   // `streams` from HA's players: { hasVideo, hasAudio }; the first hasVideo ends the start state
@@ -1726,6 +1748,7 @@ class EufyCameraCard extends HTMLElement {
     if (this._isFull()) { document.exitFullscreen().catch(() => {}); return; }
     if (!pic) return;
     if (document.fullscreenEnabled === false || !pic.requestFullscreen) { this._setWinFull(true); return; }
+    this._fsAt = Date.now();
     pic.requestFullscreen().catch(() => this._setWinFull(true));
   }
 
@@ -2843,7 +2866,7 @@ class EufyCameraCard extends HTMLElement {
       if (Math.abs(ev.deltaY) < 4) return;
       this._zoom(ev.deltaY < 0 ? 'in' : 'out');
     }, { passive: false });
-    document.addEventListener('fullscreenchange', () => this._onFullChange());
+    document.addEventListener('fullscreenchange', () => { this._fsAt = Date.now(); this._onFullChange(); });
     this._vslot.addEventListener('streams', ev => this._onStreams(ev));
     // A press held HOLD_MS on a preset tile asks to replace that preset; the click that ends the hold goes nowhere
     const tileOf = ev => ev.composedPath().find(n => n.classList && n.classList.contains('lp') && n.dataset.goto !== undefined);
