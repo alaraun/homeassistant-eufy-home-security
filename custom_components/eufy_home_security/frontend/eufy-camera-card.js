@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.29-5';
+const CARD_VERSION = '2026.10.29-7';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -1478,7 +1478,6 @@ class EufyCameraCard extends HTMLElement {
       return;
     }
     if (this._dd && !path.find(n => n.classList && n.classList.contains('ddl'))) this._setDd(null);
-    if (has('winexit')) { this._fullscreen(); this._focus(this._live ? 'live-full' : 'play'); return; }
     const la = has('lact');
     if (la) { this._liveButton(la.dataset.lact); this._focus(`lact-${la.dataset.lact}`); return; }
     const lv = has('live');
@@ -1492,7 +1491,7 @@ class EufyCameraCard extends HTMLElement {
       }
       if (v === 'stop') this._stop('');
       else if (v === 'mute') { if (this._live) { this._live.muted = !this._live.muted; this._applyMute(); this.render(); } }
-      else if (v === 'full') this._fullscreen();
+      else if (v === 'full') { if (this._menuOpen) this._setMenu(false); this._fullscreen(); this._focus('live-full'); return; }
       else if (v === 'presets') { this._preOpen = !this._preOpen; this.render(); this._focus(this._preOpen ? `lp-${this._firstPreset()}` : 'live-presets'); return; }
       else if (v === 'pin') this._start(!(this._live && this._live.continuous));
       else this._start(v === 'continuous');
@@ -2399,15 +2398,16 @@ class EufyCameraCard extends HTMLElement {
       tl = chip('tl', '', `<ha-icon icon="${srcKind === 'live' ? 'mdi:camera-iris' : 'mdi:motion-sensor'}"></ha-icon><span>${escapeHtml(t)}</span>`, `Still: ${t}`);
     }
     // The camera's name on the picture when the header is hidden or the picture is in full screen (the header is not
-    // shown there): the camera list for several cameras, the name alone for one; in full screen after the status
-    // chip, so the live dot stays at the far left when the controls fade
+    // shown there): the camera list for several cameras, the name alone for one; after the status chip, so the live
+    // dot keeps the top left
     const nameOn = !showHdr || this._isFull();
     const camChip = !nameOn ? ''
       : multi ? `${camBtn('chip camchip')}<ha-icon icon="mdi:cctv"></ha-icon><span>${escapeHtml(name)}</span><ha-icon icon="${camOpen ? 'mdi:menu-up' : 'mdi:menu-down'}"></ha-icon></button>`
         : `<span class="chip camchip one"><ha-icon icon="mdi:cctv"></ha-icon><span>${escapeHtml(name)}</span></span>`;
-    // Full screen's own exit (browser or window): always drawn, never faded, whatever the live view or the width
-    // shows; the live bar's button goes with the live view, and a tablet or phone has no Esc
-    const winExit = this._isFull() ? '<button type="button" class="wfx" data-winexit data-focus="win-exit" aria-label="Exit full screen"><ha-icon icon="mdi:fullscreen-exit"></ha-icon></button>' : '';
+    // Full screen and its exit: one button at the top right, in the card and in either full screen. In full screen it
+    // never fades (the live bar goes with the live view, and a tablet or phone has no Esc).
+    const full = this._isFull();
+    const fullBtn = vItem && !full ? '' : `<button type="button" class="wfx" data-live="full" data-focus="live-full" aria-label="${full ? 'Exit full screen' : 'Full screen'}"><ha-icon icon="${full ? 'mdi:fullscreen-exit' : 'mdi:fullscreen'}"></ha-icon></button>`;
     // Recording a clip: its own chip with the seconds so far; it stays while the live controls are faded
     const recChip = recording && !vItem ? chip('', 'rec recc', `<i class="dot"></i><span class="rw">REC</span><span class="tv" data-rect>${this._recSeconds()} s</span>`, 'Recording a clip') : '';
     const centre = vItem ? (vPic && vPic.src ? '' : '<div class="ctr wake" role="status"><i class="spin"></i></div>') : !avail
@@ -2440,12 +2440,11 @@ class EufyCameraCard extends HTMLElement {
     }).join('');
     const bar = L ? `<div class="lbar" role="group" aria-label="Live view">
             <button type="button" class="lb" data-live="stop" data-focus="live-stop" aria-label="Stop live view"><ha-icon icon="mdi:stop"></ha-icon></button>
-            <button type="button" class="lb opt2${L.continuous ? ' on' : ''}" data-live="pin" data-focus="live-pin" aria-pressed="${L.continuous}" aria-label="Continuous live view"><ha-icon icon="mdi:all-inclusive"></ha-icon></button>
+            <button type="button" class="lb${L.continuous ? ' on' : ''}" data-live="pin" data-focus="live-pin" aria-pressed="${L.continuous}" aria-label="Continuous live view"><ha-icon icon="mdi:all-inclusive"></ha-icon></button>
             <button type="button" class="lb rec${recording ? ' on' : ''}" data-live="rec" data-focus="live-rec" aria-label="${recording ? 'Stop recording' : 'Record a clip'}"${recStop ? ' disabled' : ''}><ha-icon icon="${recording ? 'mdi:stop' : 'mdi:record-rec'}"></ha-icon></button>
             ${L.video ? `<button type="button" class="lb" data-live="mute" data-focus="live-mute" aria-pressed="${!L.muted}" aria-label="${L.muted ? 'Unmute' : 'Mute'}"><ha-icon icon="${L.muted ? 'mdi:volume-off' : 'mdi:volume-high'}"></ha-icon></button>` : ''}
             ${canPre ? `<button type="button" class="lb${this._preOpen ? ' on' : ''}" data-live="presets" data-focus="live-presets" aria-expanded="${!!this._preOpen}" aria-label="Presets"><ha-icon icon="mdi:crosshairs-gps"></ha-icon></button>` : ''}
             ${lacts ? `<i class="lsep" aria-hidden="true"></i>${lacts}` : ''}
-            <button type="button" class="lb" data-live="full" data-focus="live-full" aria-label="${this._isFull() ? 'Exit full screen' : 'Full screen'}"><ha-icon icon="${this._isFull() ? 'mdi:fullscreen-exit' : 'mdi:fullscreen'}"></ha-icon></button>
           </div>` : '';
     // Presets over the live picture, above the bar: the camera turns there at once (the move lane)
     // The last tile saves the current view into the lowest free slot; a held tile (or its context-menu key) asks
@@ -2477,11 +2476,10 @@ class EufyCameraCard extends HTMLElement {
               <span class="pn">P${i + 1}${i === defIdx ? ' <ha-icon icon="mdi:home-outline"></ha-icon>' : ''}</span>
             </button>`;
     }).join('')}${E.saveView ? saveTile() : ''}</div>`);
-    const dis = !avail;
-    // Pan/tilt and go-to only while the live picture shows: without it a move has no visible effect (the still
-    // stays) and the camera turns back to its default preset once idle. Zoom stays: it is kept for the next view.
+    // Pan/tilt, go-to and zoom are drawn only while the live picture shows: without it a move has no visible effect
+    // (the still stays) and the camera turns back to its default preset once idle. A running save holds the pad.
     const aim = avail && !!L && L.video && !sv;
-    const noAim = aim ? '' : (sv ? ' (saving the view)' : ' (start live view first)');
+    const noAim = aim ? '' : ' (saving the view)';
     const mv = (key) => {
       const s = this._moveState(key);
       return { cls: s.run ? ' busy' : '', q: s.n ? `<i class="qn" aria-hidden="true">${s.n}</i>` : '', lbl: s.n ? `, ${s.n} more waiting` : '' };
@@ -2492,14 +2490,14 @@ class EufyCameraCard extends HTMLElement {
             ${!isNaN(defIdx) ? `<button type="button" class="pb hbtn${mv(`goto-${defIdx}`).cls}" data-goto="${defIdx}" data-focus="pt-home" aria-label="Go to the default preset${noAim}"${!aim ? ' disabled' : ''}><ha-icon icon="mdi:home-outline"></ha-icon></button>` : '<i class="hub"></i>'}
           </div>` : '';
     // Zoom: magnifier + / − in whole steps, the value between them, and "↺ 1×" under them while zoomed. The value
-    // shows the target at once; the camera follows within ~1 s. Works without live view (kept for the next one).
+    // shows the target at once; the camera follows within ~1 s. Drawn with the pad, while the live picture shows.
     const zShown = this._zoomTarget !== undefined ? this._zoomTarget : zoom;
     const zBusy = Object.keys(this._busy).some(k => k.startsWith('zoom'));
     const zpill = E.zoom ? `<div class="zp${zShown > zMin ? ' zoomed' : ''}" role="group" aria-label="Zoom ${fmtZoom(zShown)}">
-            <button type="button" class="zb${this._busy['zoom-in'] ? ' busy' : ''}" data-zoom="in" data-focus="zoom-in" aria-label="Zoom in"${dis || zShown >= zMax ? ' disabled' : ''}><ha-icon icon="mdi:magnify-plus-outline"></ha-icon></button>
+            <button type="button" class="zb${this._busy['zoom-in'] ? ' busy' : ''}" data-zoom="in" data-focus="zoom-in" aria-label="Zoom in"${zShown >= zMax ? ' disabled' : ''}><ha-icon icon="mdi:magnify-plus-outline"></ha-icon></button>
             <span class="zv${zBusy ? ' pend' : ''}" aria-live="polite">${escapeHtml(fmtZoom(zShown))}</span>
-            <button type="button" class="zb${this._busy['zoom-out'] ? ' busy' : ''}" data-zoom="out" data-focus="zoom-out" aria-label="Zoom out"${dis || zShown <= zMin ? ' disabled' : ''}><ha-icon icon="mdi:magnify-minus-outline"></ha-icon></button>
-            ${zShown > zMin ? `<button type="button" class="zr${this._busy['zoom-reset'] ? ' busy' : ''}" data-zoom="reset" data-focus="zoom-reset" aria-label="Reset zoom to ${fmtZoom(zMin)}"${dis ? ' disabled' : ''}><ha-icon icon="mdi:restore"></ha-icon><span>${escapeHtml(fmtZoom(zMin))}</span></button>` : ''}
+            <button type="button" class="zb${this._busy['zoom-out'] ? ' busy' : ''}" data-zoom="out" data-focus="zoom-out" aria-label="Zoom out"${zShown <= zMin ? ' disabled' : ''}><ha-icon icon="mdi:magnify-minus-outline"></ha-icon></button>
+            ${zShown > zMin ? `<button type="button" class="zr${this._busy['zoom-reset'] ? ' busy' : ''}" data-zoom="reset" data-focus="zoom-reset" aria-label="Reset zoom to ${fmtZoom(zMin)}"><ha-icon icon="mdi:restore"></ha-icon><span>${escapeHtml(fmtZoom(zMin))}</span></button>` : ''}
           </div>` : '';
     // The message takes the chip line for TOAST_MS: one line, the chips step aside
     const toast = this._toastText ? `<div class="toast${this._toastOk ? ' ok' : ''}" role="status" aria-label="${escapeHtml(this._toastText)}"><ha-icon icon="${this._toastIcon || (this._toastOk ? 'mdi:check-circle-outline' : 'mdi:alert-circle-outline')}"></ha-icon><span>${escapeHtml(this._toastText)}</span></div>` : '';
@@ -2509,8 +2507,8 @@ class EufyCameraCard extends HTMLElement {
     ? `<video class="stillimg hvid" src="${escapeHtml(vPic.src)}"${vPoster ? ` poster="${escapeHtml(vPoster)}"` : ''} controls autoplay muted playsinline preload="metadata" aria-label="${escapeHtml(`${this._histLabel(vItem).kind} video, ${this._histLabel(vItem).when}`)}"></video>`
     : `<img class="stillimg" src="${escapeHtml(vPic.src)}" alt="" draggable="false">`) : ''}</div>` : ''}
         <div class="ovl${L ? ' live' : ''}${aimOK ? ' aim' : ''}${vItem && vItem.video ? ' hvo' : ''}">
-          ${toast ? '' : (vItem ? tl : `<div class="crow">${this._isFull() ? tl + camChip : camChip + tl}${recChip}${tr}</div>`)}${centre}${vItem ? '' : bar + lpre}${winExit}
-          ${!vItem && (pad || zpill) ? `<div class="ptzw">${zpill}${pad}</div>` : ''}
+          ${toast ? '' : (vItem ? tl : `<div class="crow">${tl}${camChip}${recChip}${tr}</div>`)}${fullBtn}${centre}${vItem ? '' : bar + lpre}
+          ${!vItem && aimOK && (pad || zpill) ? `<div class="ptzw">${zpill}${pad}</div>` : ''}
           ${toast}
         </div>`;
 
@@ -2840,7 +2838,7 @@ class EufyCameraCard extends HTMLElement {
     this.content.addEventListener('keydown', ev => this._onKey(ev));
     // In full screen the wheel zooms (the page cannot scroll there anyway); in the card it scrolls the page
     this.content.addEventListener('wheel', (ev) => {
-      if (!this._isFull() || !this._live || !this._entities().zoom) return;
+      if (!this._isFull() || !this._live || !this._live.video || !this._entities().zoom) return;
       ev.preventDefault();
       if (Math.abs(ev.deltaY) < 4) return;
       this._zoom(ev.deltaY < 0 ? 'in' : 'out');
@@ -3097,12 +3095,11 @@ const CSS_TEXT = `
   .wfx:hover { background: var(--cc-glass-hi); }
   .wfx:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
   /* Status and battery side by side at the top left: the cameras burn their clock into the top right */
-  .crow { position: absolute; left: 10px; top: 10px; right: 10px; display: flex; gap: 6px; min-width: 0; pointer-events: none; }
+  .crow { position: absolute; left: 10px; top: 10px; right: 52px; display: flex; gap: 6px; min-width: 0; pointer-events: none; }
   .crow > .chip { position: static; flex: none; max-width: 100%; pointer-events: auto; }
   .crow > .chip.tl { flex: 0 1 auto; min-width: 0; }
-  .crow > .chip.camchip { flex: 0 1000 auto; min-width: 56px; max-width: 50%; padding-right: 4px; }
+  .crow > .chip.camchip { flex: 0 1000 auto; min-width: 48px; max-width: 50%; padding-right: 4px; }
   .crow > .chip.camchip.one { min-width: 28px; padding-right: 6px; }
-  .pic.winfull .crow, .pic:fullscreen .crow { right: 52px; }
   .chip.hi ha-icon { color: var(--cc-bat-hi); } .chip.mid ha-icon { color: var(--cc-bat-mid); } .chip.lo ha-icon { color: var(--cc-bat-lo); }
   .chip.rec { gap: 6px; padding: 0 10px 0 9px; font-weight: 600; letter-spacing: 0.02em; }
   .chip.rec .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cc-live); box-shadow: 0 0 6px var(--cc-live); animation: pulse 2s ease-in-out infinite; }
@@ -3217,8 +3214,9 @@ const CSS_TEXT = `
   .lpb:hover { box-shadow: inset 0 0 0 2px rgba(255,255,255,0.6); }
   .lpb:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
   /* Full screen on a large display: the overlay controls grow with the picture */
-  @container (min-width: 900px) { .crow, .lbar, .ptzw, .lpre, .toast { zoom: 1.35; } }
-  .toast { position: absolute; left: 10px; top: 10px; display: flex; align-items: center; gap: 5px; max-width: calc(100% - 20px); height: 26px;
+  @container (min-width: 900px) { .crow, .lbar, .ptzw, .lpre, .toast, .wfx { zoom: 1.35; } }
+  @container (max-width: 339px) { .crow > .chip.tr > span { display: none; } }
+  .toast { position: absolute; left: 10px; top: 10px; display: flex; align-items: center; gap: 5px; max-width: calc(100% - 62px); height: 26px;
     padding: 0 10px 0 7px; border-radius: 13px; box-sizing: border-box; background: color-mix(in srgb, var(--cc-error) 85%, #000); color: #fff;
     font-size: var(--fs-xs); font-weight: 500; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.35); --mdc-icon-size: 16px; }
   .toast ha-icon { display: flex; flex: none; width: 16px; height: 16px; line-height: 0; }
@@ -3236,26 +3234,18 @@ const CSS_TEXT = `
     .lbar, .ptzw { bottom: 8px; } .lbar { left: 8px; } .ptzw { right: 8px; gap: 6px; }
     .zr { width: 26px; } .lpre { left: 8px; bottom: 46px; max-width: calc(100% - 140px); } .lp { width: 64px; }
   }
-  /* A picture too narrow for the whole bar (with Record) beside the pan/tilt controls: continuous stays in the
-     header menu (Keep live) */
-  @container (max-width: 389px) {
-    .has-ptz .lbar .lb.opt2 { display: none; }
-  }
-  /* Narrow pictures (phones): the pan/tilt pad only while the live picture shows (greyed otherwise) */
-  @container (max-width: 459px) {
-    .ovl:not(.aim) .ptz { display: none; }
-  }
   /* Live picture, every width and full screen: CTL_HIDE_MS after the last touch or click (class quiet) the controls,
      the battery chip and the scrim fade and the LIVE chip shrinks to its red dot; the REC chip and messages stay.
      Keyboard focus inside or a mouse resting on a shown control keeps them. */
-  .lbar, .ptzw, .lpre, .crow > .chip, .ovl::before { transition: opacity 0.25s; }
-  .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover)) :is(.lbar, .ptzw, .lpre, .crow > .chip:not(.rec)),
-  .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover)) .ovl::before { opacity: 0; pointer-events: none; }
-  .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover)) .chip.live { padding: 0 9px; background: none; backdrop-filter: none; }
-  .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover)) .chip.live > span { display: none; }
-  .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover)) .chip.live .dot { box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35), 0 0 6px var(--cc-live); }
+  .lbar, .ptzw, .lpre, .crow > .chip, .wfx, .ovl::before { transition: opacity 0.25s; }
+  .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover, .wfx:hover)) :is(.lbar, .ptzw, .lpre, .crow > .chip:not(.rec)),
+  .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover, .wfx:hover)) .ovl::before,
+  .quiet:not(.winfull, :fullscreen):not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover, .wfx:hover)) .wfx { opacity: 0; pointer-events: none; }
+  .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover, .wfx:hover)) .chip.live { padding: 0 9px; background: none; backdrop-filter: none; }
+  .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover, .wfx:hover)) .chip.live > span { display: none; }
+  .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover, .wfx:hover)) .chip.live .dot { box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35), 0 0 6px var(--cc-live); }
   /* alone on the picture the dot pulses less deep, so it stays clearly red */
-  @media (prefers-reduced-motion: no-preference) { .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover)) .chip.live .dot { animation-name: dot-pulse; } }
+  @media (prefers-reduced-motion: no-preference) { .quiet:not(:has(:focus-visible, .lbar:hover, .ptzw:hover, .lpre:hover, button.chip:hover, .wfx:hover)) .chip.live .dot { animation-name: dot-pulse; } }
   @keyframes dot-pulse { 50% { opacity: 0.7; } }
 
   /* Section tabs, the first level: a segmented control with equal widths and fixed labels, so a tab stays under
