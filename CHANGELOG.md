@@ -5,6 +5,19 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.10](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.9...v0.4.10) (2026-10-29)
+
+
+### Features
+
+* **card:** the full-screen button sits at the top right of the picture in every state, and the status (LIVE) chip comes first at the top left, in the card and in full screen ([20902ba](https://github.com/alaraun/homeassistant-eufy-home-security/commit/20902ba3fa6e62de61e5e88ce49ce861bf371eea))
+* **card:** the pan/tilt pad and zoom show only during live view; continuous (∞) stays on the live bar at every width ([20902ba](https://github.com/alaraun/homeassistant-eufy-home-security/commit/20902ba3fa6e62de61e5e88ce49ce861bf371eea))
+
+
+### Bug Fixes
+
+* **card:** full screen keeps its exit button after live view ends, in the browser's full screen too ([issue 133](https://github.com/alaraun/homeassistant-eufy-home-security/issues/133)) ([aacca51](https://github.com/alaraun/homeassistant-eufy-home-security/commit/aacca51c11ccab5af366c97a3bff03f76c521790))
+
 ## [0.4.9](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.8...v0.4.9) (2026-10-29)
 
 
