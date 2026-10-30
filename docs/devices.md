@@ -18,6 +18,16 @@ generated from eufy's own model data. What the file says decides the entity:
 | only read it | diagnostic sensor or binary sensor, disabled by default |
 | neither | none |
 
+Some settings come in several versions; which one the eufy app uses depends on the
+device (its firmware, a value it reports, the station it is paired to). The
+detection types are one: with or without Human Recognition, for example. Only the
+version the eufy app uses for the device is enabled; while the library cannot tell, the
+first one. It is checked at every start: when a firmware update or a camera setting
+changes it, the controls move over at the next start and Home Assistant reloads the
+integration once. A version you enabled or disabled yourself stays as you set it from
+then on. With "Enable newly added entities" turned off, only versions the integration
+turned off itself are turned on again.
+
 A model without a settings file in the library gets no setting entities. A newer
 library release adds models and controls; update the integration to get them.
 A device paired to a HomeBase gets no time zone, clock format, switching

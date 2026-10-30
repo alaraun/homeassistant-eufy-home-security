@@ -16,7 +16,7 @@ from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import EntityCategory, Platform
 from homeassistant.helpers import entity_registry as er
 
-from eufy_home_security import MODES_SECTION, Station, entity_unique_id
+from eufy_home_security import MODES_SECTION, Station, UnsupportedError, entity_unique_id
 from eufy_home_security.devices import (
     MODE_ACTION_FLAGS,
     Scope,
@@ -88,6 +88,9 @@ class SettingEntitySpec:
     """The member of a ``FLAGS`` setting this switch turns on and off."""
     variant: bool = False
     """The library names another setting the app uses in this one's place (``variant_of``)."""
+    in_use: bool | None = None
+    """For a member of a variant group: whether the eufy app uses it for this device
+    (``Station.setting_in_use``); None outside a group or when the library cannot tell."""
 
     @property
     def key(self) -> str:
@@ -110,11 +113,18 @@ class SettingEntitySpec:
     def enabled_by_default(self) -> bool:
         """Controls are enabled; read-only values are off.
 
-        Read-only values, settings the app replaces with another (``Setting.variant_of``)
-        and settings the app puts behind a warning (``Setting.advanced``) stay one click
-        away in the registry instead of crowding every device page.
+        Of a variant group (``Setting.variant_of``) only the member the app uses for the
+        device is on; while the library cannot tell, the primary. Read-only values, the
+        other members and settings the app puts behind a warning (``Setting.advanced``)
+        stay one click away in the registry instead of crowding every device page.
         """
-        return self.is_control and not self.variant and not self.setting.advanced
+        in_use = self.in_use if self.in_use is not None else not self.variant
+        return self.is_control and in_use and not self.setting.advanced
+
+    @property
+    def group(self) -> str:
+        """The key of the setting's variant group: its primary's key."""
+        return self.setting.variant_of or self.setting.key
 
 
 _CONTROL_PLATFORMS: frozenset[Platform] = frozenset(
@@ -173,10 +183,17 @@ def setting_specs(station: Station) -> list[SettingEntitySpec]:
     targets: list[str | None] = [None]
     targets.extend(sub.device_sn for sub in station.sub_devices if sub.device_sn)
     for device_sn in targets:
-        for setting in station.settings_for(device_sn):
+        settings = station.settings_for(device_sn)
+        primaries = {s.variant_of for s in settings if s.variant_of is not None}
+        for setting in settings:
             platform = setting_platform(setting)
             if platform is None:
                 continue
+            in_use = (
+                _in_use(station, setting.key, device_sn)
+                if setting.variant_of is not None or setting.key in primaries
+                else None
+            )
             if setting.writable and setting.control is SettingControl.TOGGLES:
                 specs.extend(
                     SettingEntitySpec(
@@ -185,6 +202,7 @@ def setting_specs(station: Station) -> list[SettingEntitySpec]:
                         device_sn=device_sn,
                         flag=member,
                         variant=setting.variant_of is not None,
+                        in_use=in_use,
                     )
                     for member in setting.flags
                 )
@@ -195,6 +213,16 @@ def setting_specs(station: Station) -> list[SettingEntitySpec]:
                         setting=setting,
                         device_sn=device_sn,
                         variant=setting.variant_of is not None,
+                        in_use=in_use,
                     )
                 )
     return specs
+
+
+def _in_use(station: Station, key: str, device_sn: str | None) -> bool | None:
+    """Whether the app uses variant-group member ``key`` for the device; None when the
+    library cannot tell or refuses the question."""
+    try:
+        return station.setting_in_use(key, device_sn)
+    except UnsupportedError:
+        return None
