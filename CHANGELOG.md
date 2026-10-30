@@ -5,6 +5,16 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.12](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.11...v0.4.12) (2026-10-30)
+
+
+### Bug Fixes
+
+* a camera with several lenses whose HomeBase reports its lens list opens with every lens stacked in one 8:9 picture, as the eufy app does, and the card shows it whole (library 0.4.9) ([issue 132](https://github.com/alaraun/homeassistant-eufy-home-security/issues/132)) ([034417b](https://github.com/alaraun/homeassistant-eufy-home-security/commit/034417be3e9acd83bd18bd8cb1379257703043b1))
+* a standalone camera's full-resolution detection image no longer waits for the next frame when the stream goes quiet (library 0.4.9) ([034417b](https://github.com/alaraun/homeassistant-eufy-home-security/commit/034417be3e9acd83bd18bd8cb1379257703043b1))
+* a T8600 behind a station other than an NVR or a T7000 offers the alarm choices the eufy app shows there, no Light-only (library 0.4.9) ([034417b](https://github.com/alaraun/homeassistant-eufy-home-security/commit/034417be3e9acd83bd18bd8cb1379257703043b1))
+* only the version of a setting the eufy app uses for a device is enabled, such as the detection types with Human Recognition; controls the user set stay as set (library 0.4.9) ([issue 145](https://github.com/alaraun/homeassistant-eufy-home-security/issues/145)) ([034417b](https://github.com/alaraun/homeassistant-eufy-home-security/commit/034417be3e9acd83bd18bd8cb1379257703043b1))
+
 ## [0.4.11](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.10...v0.4.11) (2026-10-29)
 
 
