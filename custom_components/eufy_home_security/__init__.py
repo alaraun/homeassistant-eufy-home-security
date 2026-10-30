@@ -72,6 +72,7 @@ from .events import EventRouter
 from .presets import PresetManager
 from .runtime import EufyConfigEntry
 from .settings import (
+    SettingEntitySpec,
     is_per_mode_entity,
     is_setting_row,
     offered_only_without_parent,
@@ -517,7 +518,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     _async_forget_battery_entities(hass, entry, coordinators.values())
     _async_forget_siren_entities(hass, entry, coordinators.values())
     _async_forget_save_view_entities(hass, entry, coordinators.values())
+    _async_follow_variants_in_use(hass, entry, coordinators.values())
+    known = {
+        row.entity_id
+        for row in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
+    }
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _async_mark_new_variant_rows(hass, entry, coordinators.values(), known)
     for serial, storage_coordinator in storage.items():
         if coordinators[serial].station.connected:
             # The first storage read, as a task so a slow or failed one never holds
@@ -624,6 +631,122 @@ def _async_forget_moved_setting_entities(
                 registered = registry.async_get(entity_id)
                 if registered is not None and registered.config_entry_id == entry.entry_id:
                     registry.async_remove(entity_id)
+
+
+# Registry option (under this domain) on a variant-group row: who set it last. "on" and
+# "off": this integration, as the member in use and as another member; "user": the user.
+# A row without it predates the option.
+VARIANT_DEFAULT_OPTION: Final = "variant_default"
+VARIANT_ON: Final = "on"
+VARIANT_OFF: Final = "off"
+VARIANT_USER: Final = "user"
+
+
+def _variant_rows(
+    hass: HomeAssistant,
+    entry: EufyConfigEntry,
+    coordinators: Iterable[StationCoordinator],
+    *,
+    disabled_devices: bool = False,
+) -> list[tuple[SettingEntitySpec, er.RegistryEntry]]:
+    """This entry's control rows of each variant group whose member in use the library
+    names (``Station.setting_in_use``), with their spec. Advanced members are left out, and
+    rows of a disabled device unless ``disabled_devices``."""
+    registry = er.async_get(hass)
+    devices = dr.async_get(hass)
+    rows: list[tuple[SettingEntitySpec, er.RegistryEntry]] = []
+    for coordinator in coordinators:
+        station = coordinator.station
+        specs = [s for s in setting_specs(station) if s.is_control and not s.setting.advanced]
+        decided = {(s.device_sn, s.group) for s in specs if s.in_use is True}
+        for spec in specs:
+            if spec.in_use is None or (spec.device_sn, spec.group) not in decided:
+                continue
+            unique_id = entity_unique_id(spec.device_sn or station.serial, spec.key)
+            entity_id = registry.async_get_entity_id(spec.platform, DOMAIN, unique_id)
+            registered = registry.async_get(entity_id) if entity_id is not None else None
+            if registered is None or registered.config_entry_id != entry.entry_id:
+                continue
+            device = devices.async_get(registered.device_id) if registered.device_id else None
+            if disabled_devices or device is None or device.disabled_by is None:
+                rows.append((spec, registered))
+    return rows
+
+
+def _async_follow_variants_in_use(
+    hass: HomeAssistant, entry: EufyConfigEntry, coordinators: Iterable[StationCoordinator]
+) -> None:
+    """Keep a variant group's control on for the member the app uses, the others off.
+
+    Only rows this integration owns move: the member in use's rows it disabled are enabled;
+    another member's row it has on (marked "on", or an unmarked primary: on by default before
+    the library could tell) is disabled. A row the user disabled, or enabled after this
+    integration turned it off, is the user's from then on. Rows of a disabled device are not
+    touched. Under the entry's "disable new entities" preference only rows marked by this
+    integration move. Groups the library cannot decide stay. Enabling a row makes Home Assistant
+    reload the entry once. Logs nothing.
+    """
+    registry = er.async_get(hass)
+    integration = er.RegistryEntryDisabler.INTEGRATION
+    pref = entry.pref_disable_new_entities
+    for spec, registered in _variant_rows(hass, entry, coordinators):
+        mark = variant_mark(registered)
+        if registered.disabled_by is er.RegistryEntryDisabler.USER or (
+            registered.disabled_by is None and mark == VARIANT_OFF
+        ):
+            _async_mark_variant(registry, registered, VARIANT_USER)
+        elif spec.in_use:
+            if registered.disabled_by is integration and (not pref or mark == VARIANT_OFF):
+                registry.async_update_entity(registered.entity_id, disabled_by=None)
+                _async_mark_variant(registry, registered, VARIANT_ON)
+        elif registered.disabled_by is None and (
+            mark == VARIANT_ON or (mark is None and not pref and spec.setting.variant_of is None)
+        ):
+            registry.async_update_entity(registered.entity_id, disabled_by=integration)
+            _async_mark_variant(registry, registered, VARIANT_OFF)
+
+
+def _async_mark_new_variant_rows(
+    hass: HomeAssistant,
+    entry: EufyConfigEntry,
+    coordinators: Iterable[StationCoordinator],
+    known: set[str],
+) -> None:
+    """Mark the variant-group rows this setup created as this integration's, by how they
+    were created: "on" when on, or disabled only with its device (Home Assistant creates a
+    row on a disabled device that way when it would be on); "off" when disabled by the
+    integration (not under the entry's "disable new entities" preference, which turns
+    every new row off). A row Home Assistant restored with its mark (a device removed and
+    added again) keeps it.
+
+    ``known`` holds the entry's registry entity ids from before the platforms were set up.
+    """
+    registry = er.async_get(hass)
+    for _spec, registered in _variant_rows(hass, entry, coordinators, disabled_devices=True):
+        if registered.entity_id in known or variant_mark(registered) is not None:
+            continue
+        if registered.disabled_by in (None, er.RegistryEntryDisabler.DEVICE):
+            _async_mark_variant(registry, registered, VARIANT_ON)
+        elif (
+            not entry.pref_disable_new_entities
+            and registered.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+        ):
+            _async_mark_variant(registry, registered, VARIANT_OFF)
+
+
+def variant_mark(registered: er.RegistryEntry) -> str | None:
+    """The row's :data:`VARIANT_DEFAULT_OPTION`; None when it has none."""
+    own: Mapping[str, Any] = registered.options.get(DOMAIN) or {}
+    mark = own.get(VARIANT_DEFAULT_OPTION)
+    return mark if mark in (VARIANT_ON, VARIANT_OFF, VARIANT_USER) else None
+
+
+def _async_mark_variant(
+    registry: er.EntityRegistry, registered: er.RegistryEntry, mark: str
+) -> None:
+    """Set the row's :data:`VARIANT_DEFAULT_OPTION`, keeping its other options."""
+    options = {**(registered.options.get(DOMAIN) or {}), VARIANT_DEFAULT_OPTION: mark}
+    registry.async_update_entity_options(registered.entity_id, DOMAIN, options)
 
 
 def _async_forget_dropped_setting_entities(

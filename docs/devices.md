@@ -18,6 +18,16 @@ generated from eufy's own model data. What the file says decides the entity:
 | only read it | diagnostic sensor or binary sensor, disabled by default |
 | neither | none |
 
+Some settings come in several versions; which one the eufy app uses depends on the
+device (its firmware, a value it reports, the station it is paired to). The
+detection types are one: with or without Human Recognition, for example. Only the
+version the eufy app uses for the device is enabled; while the library cannot tell, the
+first one. It is checked at every start: when a firmware update or a camera setting
+changes it, the controls move over at the next start and Home Assistant reloads the
+integration once. A version you enabled or disabled yourself stays as you set it from
+then on. With "Enable newly added entities" turned off, only versions the integration
+turned off itself are turned on again.
+
 A model without a settings file in the library gets no setting entities. A newer
 library release adds models and controls; update the integration to get them.
 A device paired to a HomeBase gets no time zone, clock format, switching
@@ -64,7 +74,11 @@ eufy app streams only over WebRTC (decided per camera, station and firmware as t
 app does; e.g. some standalone T8170 from firmware 3.4.0.0, and a C30 behind a HomeBase 3 on the firmware the
 app streams it over WebRTC), and a camera the library opens
 only as a standalone camera (such as the T8410) when it is paired to a HomeBase. The card then shows `No live view for this model`.
-A camera with several lenses opens its live view as the eufy app does (not tested).
+A camera with several lenses opens its live view as the eufy app does: with its lenses
+stacked in one picture where the app does so, 8:9 (taller than wide). The card's default
+`picture: auto` shows that picture whole; `picture: landscape` crops it to 16:9. Verified with
+a T8170 set to the Dual view mode; a camera that stacks its lenses by default (such as the
+eufyCam S4) is not tested.
 
 ### Pan, tilt, presets and zoom
 
