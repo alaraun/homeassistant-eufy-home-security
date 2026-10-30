@@ -421,3 +421,54 @@ async def test_a_restored_row_keeps_the_users_mark(
     restored = registry.async_get(row.entity_id)
     assert restored is not None and (restored.disabled_by, variant_mark(restored)) == (None, "user")
     await _stop(hass, entry)
+
+
+async def test_a_row_created_while_its_device_is_disabled_is_marked(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A row of the member in use that Home Assistant creates disabled with its device is
+    this integration's: after the device is enabled, a change of answer moves it."""
+    entry = await _start(hass, fake_station, seed_warm_cache, ai=True)
+    devices = dr.async_get(hass)
+    device = devices.async_get_device_by_identifier((DOMAIN, SYNTHETIC.camera_sn), entry.entry_id)
+    assert device is not None
+    devices.async_update_device(device.id, disabled_by=dr.DeviceEntryDisabler.USER)
+    await _settle(hass, entry)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    registry = er.async_get(hass)
+    for row in _rows(hass, entry, V1):
+        registry.async_remove(row.entity_id)
+        registry.deleted_entities.pop((row.domain, row.platform, row.unique_id), None)
+    assert await setup_entry(hass, entry)
+    await _settle(hass, entry)
+    assert _all(hass, entry, V1, (er.RegistryEntryDisabler.DEVICE, "on"))
+    devices.async_update_device(device.id, disabled_by=None)
+    await _settle(hass, entry)
+    await _restart(hass, entry)
+    _ai(fake_station, False)
+    await _restart(hass, entry)
+    assert _all(hass, entry, PRIMARY, (None, "on"))
+    assert _all(hass, entry, V1, (OFF, "off"))
+    await _stop(hass, entry)
+
+
+async def test_a_row_home_assistant_disabled_stays(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A row disabled by Home Assistant itself is neither moved nor taken as the user's."""
+    entry = await _start(hass, fake_station, seed_warm_cache, ai=True)
+    registry = er.async_get(hass)
+    for row in _rows(hass, entry, V1):
+        registry.async_update_entity(row.entity_id, disabled_by=er.RegistryEntryDisabler.HASS)
+    await _settle(hass, entry)
+    _ai(fake_station, False)
+    await _restart(hass, entry)
+    assert _all(hass, entry, V1, (er.RegistryEntryDisabler.HASS, "on"))
+    await _stop(hass, entry)
