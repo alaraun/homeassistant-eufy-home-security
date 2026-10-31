@@ -57,6 +57,7 @@ from custom_components.eufy_home_security.const import (
     CAMERA_KEY,
     CAPTURE_LIVE_IMAGE_KEY,
     CONF_CAMERA_IMAGE,
+    CONF_REFRESH_KEYFRAME,
     CONNECTION_LOSS_GRACE_SECONDS,
     DOMAIN,
     REFRESH_IMAGE_KEY,
@@ -541,6 +542,37 @@ async def test_a_refresh_in_hd_shows_the_newest_recordings_trigger_frame_and_its
     for value in state.attributes.values():
         assert "/zx/" not in str(value)
         assert str(record_id) not in str(value)
+    await _unload(hass, entry)
+
+
+async def test_hd_refresh_passes_configured_keyframe_to_library(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Only an HD refresh opts into a later recording keyframe, never live video."""
+    _seed_recordings(fake_station)
+    fake_station.recording_frames = 16
+    entry = await set_up_warm(hass, seed_warm_cache, options={CONF_REFRESH_KEYFRAME: 3})
+    original = Station.async_camera_image
+    requested: list[int] = []
+
+    async def checked(self: Station, device_sn: str, source: Any = None, **kwargs: Any) -> Any:
+        if "keyframe_number" in kwargs:
+            requested.append(kwargs["keyframe_number"])
+        return await original(self, device_sn, source, **kwargs)
+
+    monkeypatch.setattr(Station, "async_camera_image", checked)
+    manager = _manager(entry)
+    await _press(hass, _button_id(hass, REFRESH_IMAGE_KEY))
+    await wait_until(lambda: manager.source_for(SYNTHETIC.camera_sn) == "trigger_frame")
+    await wait_until(lambda: not manager.busy)
+    assert requested == [3]
+    assert fake_station.media_frames_sent >= 9  # the third keyframe of a 4-frame GOP
+    assert _commands(fake_station, 1025) == 1
+    assert _commands(fake_station, 1003) == 0
     await _unload(hass, entry)
 
 

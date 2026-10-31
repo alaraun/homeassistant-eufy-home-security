@@ -90,10 +90,12 @@
             "description": "What a camera shows for a detection.",
             "data": {
               "camera_image": "Event image",
+              "refresh_keyframe": "Refresh event image keyframe",
               "live_snapshot": "Live snapshot for cameras without a detection image"
             },
             "data_description": {
               "camera_image": "Thumbnail, then HD (default): the event's 640×360 thumbnail in about {thumbnail_seconds} s, then the first frame of its recording in about {hd_seconds} s plus decoding. Thumbnail only: never reads the recording. HD only: the recording's frame alone, so an event without a recording shows no image. Refresh event image follows this choice. None of them wakes a camera; Capture live image always does. After a change, cameras show no image until their next detection or button press.",
+              "refresh_keyframe": "1–5; 1 by default. For Refresh event image with HD selected, use this numbered keyframe from the HomeBase recording instead of always the first. A short recording uses its last available keyframe. The interval between keyframes varies. Does not affect automatic detection images, thumbnails or live captures, and never wakes the camera.",
               "live_snapshot": "Off by default. A camera with no detection image yet shows one live picture instead, at most every 5 minutes. Wakes a battery camera, which costs battery."
             }
           },

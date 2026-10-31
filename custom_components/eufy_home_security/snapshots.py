@@ -449,6 +449,7 @@ class SnapshotManager:
         live_snapshot: bool,
         camera_image: CameraImageMode,
         yield_media: Callable[[str], Awaitable[None]],
+        refresh_keyframe: int = 1,
         cache: StillCache | None = None,
         history: EventHistory | None = None,
         push_image: Callable[[SecurityEvent, PushPictureSource], Awaitable[PushImage]]
@@ -471,6 +472,7 @@ class SnapshotManager:
         self._history = history
         self._live_snapshot = live_snapshot
         self._camera_image = camera_image
+        self._refresh_keyframe = refresh_keyframe
         self._yield_media = yield_media
         self._cameras: dict[str, _CameraStill] = {}
         self._workers: dict[str, _StationWorker] = {}
@@ -1495,7 +1497,12 @@ class SnapshotManager:
         )
         try:
             async with asyncio.timeout(cap):
-                image = await station.async_camera_image(device_sn, source)
+                if source is ImageSource.TRIGGER_FRAME and self._refresh_keyframe != 1:
+                    image = await station.async_camera_image(
+                        device_sn, source, keyframe_number=self._refresh_keyframe
+                    )
+                else:
+                    image = await station.async_camera_image(device_sn, source)
         except RecordNotFoundError:
             _LOGGER.debug(
                 "Refresh of %s: no %s in the station's history, keeping the image, in %.1f s",
