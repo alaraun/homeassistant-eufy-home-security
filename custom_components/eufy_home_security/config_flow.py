@@ -59,6 +59,7 @@ from .const import (
     CONF_EXTRA_COUNTRIES,
     CONF_LIVE_SNAPSHOT,
     CONF_RECORD_LENGTH,
+    CONF_REFRESH_KEYFRAME,
     CONF_SCAN_REGIONS,
     CONF_SESSION_PROBE,
     CONF_STATION_SESSIONS,
@@ -68,6 +69,7 @@ from .const import (
     DEFAULT_DETECTION_HOLD_SECONDS,
     DEFAULT_EVENT_HISTORY_DAYS,
     DEFAULT_RECORD_LENGTH_SECONDS,
+    DEFAULT_REFRESH_KEYFRAME,
     DOMAIN,
     ERROR_CANNOT_CONNECT,
     ERROR_INVALID_EMAIL,
@@ -77,6 +79,7 @@ from .const import (
     MAX_DETECTION_HOLD_SECONDS,
     MAX_EVENT_HISTORY_DAYS,
     MAX_RECORD_LENGTH_SECONDS,
+    MAX_REFRESH_KEYFRAME,
     MIN_ALARM_TIMEOUT_MINUTES,
     MIN_DETECTION_HOLD_SECONDS,
     MIN_RECORD_LENGTH_SECONDS,
@@ -139,7 +142,7 @@ def _whole(unit: UnitOfTime, low: int, high: int) -> NumberSelector:
     )
 
 
-# The entry's thirteen options, flat, in form order. Read once at setup, so a change
+# The entry's fourteen options, flat, in form order. Read once at setup, so a change
 # applies on the reload, except the recording length and the sessions per HomeBase.
 # Ranges and defaults of the sessions are the library's; an empty country means Home
 # Assistant's; each extra country is one more sign-in (a change of either country
@@ -157,6 +160,11 @@ OPTIONS_SCHEMA = vol.Schema(
                 options=[mode.value for mode in CameraImageMode],
                 translation_key=CONF_CAMERA_IMAGE,
                 mode=SelectSelectorMode.LIST,
+            )
+        ),
+        vol.Required(CONF_REFRESH_KEYFRAME, default=DEFAULT_REFRESH_KEYFRAME): NumberSelector(
+            NumberSelectorConfig(
+                min=1, max=MAX_REFRESH_KEYFRAME, step=1, mode=NumberSelectorMode.BOX
             )
         ),
         vol.Required(CONF_LIVE_SNAPSHOT, default=False): BooleanSelector(),
@@ -191,7 +199,11 @@ OPTIONS_SCHEMA = vol.Schema(
 OPTIONS_SECTIONS: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
         OPTIONS_SECTION_DETECTIONS: (CONF_DETECTION_HOLD, CONF_ALARM_TIMEOUT),
-        OPTIONS_SECTION_CAMERA_IMAGES: (CONF_CAMERA_IMAGE, CONF_LIVE_SNAPSHOT),
+        OPTIONS_SECTION_CAMERA_IMAGES: (
+            CONF_CAMERA_IMAGE,
+            CONF_REFRESH_KEYFRAME,
+            CONF_LIVE_SNAPSHOT,
+        ),
         OPTIONS_SECTION_LIVE_VIEW: (CONF_STATION_SESSIONS, CONF_RECORD_LENGTH),
         OPTIONS_SECTION_HISTORY: (CONF_EVENT_HISTORY_DAYS, CONF_EVENT_VIDEOS),
         OPTIONS_SECTION_EUFY_ACCOUNT: (CONF_COUNTRY, CONF_SESSION_PROBE, CONF_CLOUD_PUSH),
@@ -766,7 +778,7 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
-    """The entry's thirteen options, in six collapsible sections, stored flat.
+    """The entry's fourteen options, in six collapsible sections, stored flat.
 
     Three things worth knowing about this class:
 
@@ -785,10 +797,10 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
     """
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Show the options in their sections, and save exactly the thirteen they offer
-        flat: five bools, five ints, a choice, a country and a country list.
+        """Show the options in their sections, and save exactly the fourteen they offer
+        flat: five bools, six ints, a choice, a country and a country list.
 
-        The saved mapping is rebuilt from those thirteen keys rather than passing
+        The saved mapping is rebuilt from those fourteen keys rather than passing
         ``user_input`` through, so a submission carrying more than the schema asked
         for cannot persist anything else into the entry's options. The selectors
         have already refused a duration outside its range.
@@ -807,6 +819,7 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
                 CONF_DETECTION_HOLD: int(flat[CONF_DETECTION_HOLD] + 0.5),
                 CONF_ALARM_TIMEOUT: int(flat[CONF_ALARM_TIMEOUT] + 0.5),
                 CONF_CAMERA_IMAGE: CameraImageMode(flat[CONF_CAMERA_IMAGE]).value,
+                CONF_REFRESH_KEYFRAME: int(flat[CONF_REFRESH_KEYFRAME] + 0.5),
                 CONF_LIVE_SNAPSHOT: bool(flat[CONF_LIVE_SNAPSHOT]),
                 CONF_STATION_SESSIONS: int(flat[CONF_STATION_SESSIONS] + 0.5),
                 CONF_RECORD_LENGTH: int(flat[CONF_RECORD_LENGTH] + 0.5),

@@ -10,6 +10,7 @@ sit in six collapsible sections.
 | Detections and alarm | Detection hold (seconds) | 10 | 5–300. How long a detection sensor stays on; the HomeBase never reports a detection's end |
 | | Alarm safety-net timeout (minutes) | 10 | 1–60. Ends Triggered or Pending if the HomeBase never reports the alarm's end |
 | Camera images | Event image | Thumbnail, then HD | What a detection and **Refresh event image** show; see [Camera images](#camera-images) |
+| | Refresh event image keyframe | 1 | 1–5. For HD refresh, select the numbered recording keyframe; short recordings use their last available keyframe. Does not affect detection images |
 | | Live snapshot for cameras without a detection image | Off | A camera without a detection image takes one live still, at most every 5 min. Wakes battery cameras |
 | Live view and recording | Sessions per HomeBase | 6 | 2–9. Connections Home Assistant holds to each HomeBase; each live view beyond the first needs one |
 | | Recording length (seconds) | 30 | 5–300. Length of a **Record clip** action that names no duration |
@@ -117,6 +118,11 @@ wake costs battery), and the choice works like this:
 |---|---|---|
 | **Refresh event image** | HomeBase camera: the newest event the HomeBase recorded for that camera in the last 7 days (the HomeBase is not searched further back), per the Event image choice; with no event in that window the image stays. Standalone camera: its newest event thumbnail | HomeBase camera: no. Standalone camera: yes |
 | **Capture live image** | what the camera sees now | yes |
+
+The **Refresh event image keyframe** option selects the first, second, third, etc.
+keyframe of the stored recording for an HD refresh. Keyframe spacing depends on
+camera and recording, so a numbered keyframe is not a fixed second. Setting 1
+preserves the original behaviour. It does not change detection images.
 
 A detection after a button press replaces the button's image. For a still at a fixed
 interval, an automation with a time pattern trigger can press **Capture live image**;
