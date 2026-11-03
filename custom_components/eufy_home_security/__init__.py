@@ -750,29 +750,35 @@ def variant_reset_plan(
     it ends enabled: the member in use on, the others off, each marked as this
     integration's. Left out: rows the user set (marked "user", disabled by the user, or on
     while marked "off"), rows disabled by Home Assistant or with their device, rows of a
-    disabled device. An unmarked row counts as this integration's. Under the entry's
-    "disable new entities" preference only groups in which it disables a row are reset,
-    so a device keeps one working version of that setting and nothing else is turned on."""
+    disabled device. An unmarked row counts as this integration's. A group is reset only
+    when a control of its member in use ends enabled, so the device keeps a working version
+    of each setting; under the entry's "disable new entities" preference also only when the
+    reset disables one of its rows, so nothing else is turned on."""
     integration = er.RegistryEntryDisabler.INTEGRATION
     plan: list[tuple[tuple[str | None, str], er.RegistryEntry, bool]] = []
+    working: set[tuple[str | None, str]] = set()
     for spec, registered in _variant_rows(hass, entry, coordinators):
+        group = (registered.device_id, spec.group)
         mark = variant_mark(registered)
         enabled = registered.disabled_by is None
+        on = spec.in_use is True
         if (
             mark == VARIANT_USER
             or registered.disabled_by not in (None, integration)
             or (enabled and mark == VARIANT_OFF)
         ):
+            if on and enabled:
+                working.add(group)
             continue
-        on = spec.in_use is True
+        if on:
+            working.add(group)
         if enabled != on or mark != (VARIANT_ON if on else VARIANT_OFF):
-            plan.append(((registered.device_id, spec.group), registered, on))
+            plan.append((group, registered, on))
     if entry.pref_disable_new_entities:
-        moving = {
+        working &= {
             group for group, registered, on in plan if not on and registered.disabled_by is None
         }
-        plan = [change for change in plan if change[0] in moving]
-    return [(registered, on) for _group, registered, on in plan]
+    return [(registered, on) for group, registered, on in plan if group in working]
 
 
 def variant_reset_key(

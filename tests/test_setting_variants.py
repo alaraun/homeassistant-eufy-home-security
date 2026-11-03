@@ -824,19 +824,109 @@ async def test_a_disabled_entry_withdraws_the_reset_repair(
     assert _reset_issue(hass, entry) is None
 
 
-async def test_the_reset_leaves_a_row_home_assistant_disabled(
+@pytest.mark.parametrize(
+    ("pref", "disabler"), [(True, USER), (False, USER), (False, er.RegistryEntryDisabler.HASS)]
+)
+async def test_the_reset_leaves_a_setting_whose_version_in_use_stays_off(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    pref: bool,
+    disabler: er.RegistryEntryDisabler,
+) -> None:
+    """With the version in use disabled by the user or Home Assistant and another version
+    on, the group is left as it is, with or without "disable new entities": no issue,
+    nothing to reset, and the rows stay across a restart."""
+    if pref:
+        entry = await _start(hass, fake_station, seed_warm_cache, ai=True, pref=True)
+        _set(hass, entry, V1, None)
+        await _settle(hass, entry)
+        _set(hass, entry, V1, USER)
+        _set(hass, entry, V2, None)
+        await _settle(hass, entry)
+    else:
+        entry = await _all_on_from_before_the_marks(hass, fake_station, seed_warm_cache)
+        assert _reset_issue(hass, entry) is not None
+        _set(hass, entry, V1, disabler)
+    await _restart(hass, entry)
+    assert {row.disabled_by for row in _rows(hass, entry, V1)} == {disabler}
+    assert {row.disabled_by for row in _rows(hass, entry, V2)} == {None}
+    assert _reset_issue(hass, entry) is None
+    assert variant_reset_plan(hass, entry, entry.runtime_data.coordinators.values()) == []
+    before = _snapshot(hass, entry)
+    await _restart(hass, entry)
+    assert _snapshot(hass, entry) == before
+    assert _reset_issue(hass, entry) is None
+    await _stop(hass, entry)
+
+
+async def test_a_version_in_use_the_user_turned_on_lets_the_reset_disable_the_others(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """A row of the version in use that Home Assistant disabled is not enabled by the fix."""
+    """The version in use counts as working when it is on and the user's: the reset still
+    disables the other version that is on, and leaves the user's rows as they are."""
     entry = await _all_on_from_before_the_marks(hass, fake_station, seed_warm_cache)
-    _set(hass, entry, V1, er.RegistryEntryDisabler.HASS)
+    for row in _rows(hass, entry, V1):
+        _mark_user(hass, row)
     shown = await _confirm(hass, entry)
     assert (shown["disable"], shown["enable"]) == (str(len(_rows(hass, entry, V2))), "0")
-    assert _all(hass, entry, V1, (er.RegistryEntryDisabler.HASS, None))
+    assert _all(hass, entry, V1, (None, "user"))
     assert _all(hass, entry, V2, (OFF, "off"))
+    await _stop(hass, entry)
+
+
+@pytest.mark.parametrize("when", ["open", "confirm"])
+async def test_a_reset_with_nothing_left_to_change_closes_without_a_form(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    when: str,
+) -> None:
+    """The user sets every row the reset would disable before the fix opens, or while its
+    form is open: the fix aborts, changes no row (marks neither) and deletes the issue."""
+    entry = await _all_on_from_before_the_marks(hass, fake_station, seed_warm_cache)
+    assert _reset_issue(hass, entry) is not None
+    assert await async_setup_component(hass, "repairs", {})
+    manager = repairs_flow_manager(hass)
+    assert manager is not None
+    data = {"issue_id": f"variant_reset_{entry.entry_id}"}
+    if when == "confirm":
+        result = await manager.async_init(DOMAIN, data=data)
+        assert result["type"] is FlowResultType.FORM
+    for row in _rows(hass, entry, V2):
+        _mark_user(hass, row)
+    before = _snapshot(hass, entry)
+    if when == "open":
+        result = await manager.async_init(DOMAIN, data=data)
+    else:
+        result = await manager.async_configure(result["flow_id"], {})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "nothing_to_reset"
+    assert _snapshot(hass, entry) == before
+    assert _reset_issue(hass, entry) is None
+    await _stop(hass, entry)
+
+
+async def test_a_reset_left_with_only_enables_still_asks(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A plan that only enables the version in use is a change: the form shows it."""
+    entry = await _all_on_from_before_the_marks(hass, fake_station, seed_warm_cache)
+    _set(hass, entry, V2, USER)
+    _set(hass, entry, V1, OFF)
+    v1 = _rows(hass, entry, V1)
+    shown = await _confirm(hass, entry)
+    assert (shown["disable"], shown["enable"]) == ("0", str(len(v1)))
+    assert _all(hass, entry, V1, (None, "on"))
+    assert _all(hass, entry, V2, (USER, None))
     await _settle(hass, entry)
     await _stop(hass, entry)
 

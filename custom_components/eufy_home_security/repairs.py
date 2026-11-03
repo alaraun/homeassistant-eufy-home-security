@@ -258,7 +258,7 @@ class VariantResetFix(RepairsFlow):
     Home Assistant reload the entry; every setup raises the issue again only while a
     control is left to reset. The form shows the current plan, not the issue's counts, and
     a confirmation applies only that plan: when it changed in between, the form shows the
-    new one instead.
+    new one instead. A plan that changes no control's state aborts and deletes the issue.
     """
 
     def __init__(self, entry_id: str) -> None:
@@ -279,8 +279,11 @@ class VariantResetFix(RepairsFlow):
         plan = variant_reset_plan(self.hass, entry, entry.runtime_data.coordinators.values())
         key = variant_reset_key(plan)
         if user_input is None or key != self._shown:
-            self._shown = key
             summary = variant_reset_summary(self.hass, plan)
+            if not summary.disable and not summary.enable:
+                errors.delete_variant_reset_issue(self.hass, entry)
+                return self.async_abort(reason="nothing_to_reset")
+            self._shown = key
             return self.async_show_form(
                 step_id="confirm",
                 data_schema=vol.Schema({}),

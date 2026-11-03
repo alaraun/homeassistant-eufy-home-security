@@ -268,11 +268,12 @@
         "step": {
           "confirm": {
             "title": "Reset setting versions to the eufy app's defaults",
-            "description": "Some eufy settings come in several versions, and the eufy app uses one of them per device. On {devices} of the eufy account {account}, controls of versions the eufy app does not use are enabled. Confirm to disable {disable} setting entities of those versions and enable {enable} of the version the eufy app uses; if it enables any, Home Assistant reloads the eufy account. With Enable newly added entities turned off for this integration, the version in use is enabled only for a setting whose other version this disables, so the device keeps one working version of it. Entities you enabled or disabled yourself since the integration set them stay as they are. Each setting entity's in_use attribute names the version in use. To keep them as they are, ignore this repair."
+            "description": "Some eufy settings come in several versions, and the eufy app uses one of them per device. On {devices} of the eufy account {account}, controls of versions the eufy app does not use are enabled. Confirm to disable {disable} setting entities of those versions and enable {enable} of the version the eufy app uses; if it enables any, Home Assistant reloads the eufy account. A setting whose version in use stays disabled (you or Home Assistant disabled it) is left as it is, so the device keeps a working version of each setting. With Enable newly added entities turned off for this integration, the version in use is enabled only for a setting whose other version this disables. Entities you enabled or disabled yourself since the integration set them stay as they are. Each setting entity's in_use attribute names the version in use. To keep them as they are, ignore this repair."
           }
         },
         "abort": {
-          "entry_not_loaded": "The eufy account is not loaded in Home Assistant right now. Wait until it has finished loading, then open this repair again."
+          "entry_not_loaded": "The eufy account is not loaded in Home Assistant right now. Wait until it has finished loading, then open this repair again.",
+          "nothing_to_reset": "Nothing is left to reset: the setting versions of the eufy account are as the eufy app uses them, or as you set them yourself."
         }
       }
     },
