@@ -70,6 +70,14 @@ shows or what the user must be told:
   inside the consuming window. The library has already authenticated and ordered
   it, so it needs no check here. Outside the window it is dropped: it is not a push,
   so it has no fallback bus event.
+- ``AlarmDelayChanged`` goes to that station's panel on its alarm delay signal, as
+  ``AlarmChanged``. Its channel is the frame's (255, the station), never mapped to a
+  device.
+- ``ParamChanged`` from the station's parameter notify (``ValueSource.NOTIFY``)
+  about the station or a device it serves shows ``Station.state`` at once
+  (``StationCoordinator.async_apply_state``): the library has already merged the
+  value, so no read is made. The ``StationStateChanged`` that follows is then a
+  repeat. Any other source is left to that event and the poll.
 - ``DeviceAlarmChanged`` goes to that device's siren on its device alarm signal, inside
   the consuming window, as ``AlarmChanged``.
 - ``PresetsChanged`` goes to the preset manager (``PresetManager.async_apply_presets``),
@@ -86,7 +94,7 @@ shows or what the user must be told:
   client's close at unload is never seen here (the router unsubscribes first, and
   unload deletes the issue); its close while Home Assistant stops is ignored.
 
-Everything else, ``ParamChanged`` included, is ignored: the poll reconciles it.
+Everything else is ignored: the poll reconciles it.
 Nothing here logs in or calls the cloud.
 """
 
@@ -105,6 +113,7 @@ from homeassistant.helpers.event import async_call_later
 from eufy_home_security import (
     AccountMismatch,
     AlarmChanged,
+    AlarmDelayChanged,
     CipherUnusableError,
     CloudProblem,
     ConnectionChanged,
@@ -117,6 +126,7 @@ from eufy_home_security import (
     FrameCipher,
     GuardModeChanged,
     KeyRejectedError,
+    ParamChanged,
     PresetsChanged,
     PushChanged,
     SecurityEvent,
@@ -124,9 +134,11 @@ from eufy_home_security import (
     StationsChanged,
     StationStateChanged,
     StorageChanged,
+    ValueSource,
     ZoomChanged,
     redact_serial,
 )
+from eufy_home_security.models import STATION_CHANNEL
 
 from . import detections, errors, runtime
 from .const import CONNECTION_LOSS_GRACE_SECONDS, DOMAIN, EVENT_EUFY_HOME_SECURITY
@@ -354,6 +366,16 @@ class EventRouter:
                     detections.alarm_signal(self._entry.entry_id, event.station_sn),
                     event,
                 )
+        elif isinstance(event, AlarmDelayChanged):
+            if self._consuming and event.station_sn in self._coordinators:
+                async_dispatcher_send(
+                    self._hass,
+                    detections.alarm_delay_signal(self._entry.entry_id, event.station_sn),
+                    event,
+                )
+        elif isinstance(event, ParamChanged):
+            if event.source is ValueSource.NOTIFY:
+                self._apply_notified_state(event)
         elif isinstance(event, DeviceAlarmChanged):
             if self._consuming and event.station_sn in self._coordinators:
                 async_dispatcher_send(
@@ -377,6 +399,22 @@ class EventRouter:
             streams = runtime.streaming(self._entry)
             if self._consuming and streams is not None:
                 streams.async_apply_zoom_report(event.device_sn, event.zoom)
+
+    @callback
+    def _apply_notified_state(self, event: ParamChanged) -> None:
+        """Show the station's merged state for a notify about it or a device it serves."""
+        coordinator = self._coordinators.get(event.station_sn)
+        if coordinator is None:
+            return
+        state = coordinator.station.state
+        if state is None:
+            return
+        if event.channel != STATION_CHANNEL:
+            device = state.devices.get(event.channel)
+            # A slot without a serial has no entities (see the coordinator).
+            if device is None or device.serial is None:
+                return
+        coordinator.async_apply_state(state)
 
     @callback
     def _handle_push(self, event: PushChanged) -> None:

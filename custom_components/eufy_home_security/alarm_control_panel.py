@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, override
 
 from homeassistant.components.alarm_control_panel import AlarmControlPanelEntity
@@ -22,6 +22,7 @@ from homeassistant.util.hass_dict import HassKey
 
 from eufy_home_security import (
     AlarmChanged,
+    AlarmDelayChanged,
     AlarmPhase,
     EufySecurityError,
     GuardMode,
@@ -32,6 +33,8 @@ from eufy_home_security import (
 
 from . import detections, errors
 from .const import (
+    ATTR_DELAY_SECONDS,
+    ATTR_DELAY_UNTIL,
     ATTR_SELECTED_MODE,
     CONF_ALARM_TIMEOUT,
     DEFAULT_ALARM_TIMEOUT_MINUTES,
@@ -55,10 +58,10 @@ PARALLEL_UPDATES = 0
 # a restart tears the session down, so a stop or disarm pushed meanwhile is never seen.
 RESTORE_RUN_KEY: HassKey[str] = HassKey(f"{DOMAIN}_restore_run")
 
-# An ``AlarmChanged`` carries no event time, so the alarm it starts is stamped with the
-# host clock this many seconds back, the library's ``GUARD_REPORT_SLACK_SECONDS``: a
-# disarm push for this alarm (station clock, whole seconds) still orders after it,
-# while one from a minute earlier cannot end it.
+# An ``AlarmChanged`` or ``AlarmDelayChanged`` carries no event time, so the alarm it
+# starts is stamped with the host clock this many seconds back, the library's
+# ``GUARD_REPORT_SLACK_SECONDS``: a disarm push for this alarm (station clock, whole
+# seconds) still orders after it, while one from a minute earlier cannot end it.
 ALARM_CHANGED_SKEW_SECONDS = 30
 
 
@@ -100,6 +103,17 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
     host clock less ``ALARM_CHANGED_SKEW_SECONDS`` to order the pushes below against
     it. The alarm push's own ``SecurityEvent`` neither raises nor ends triggered, so
     an alarm seen on both channels transitions once.
+
+    **The alarm delay.** The library's ``AlarmDelayChanged``, on the station's alarm
+    delay signal, is the station's own entry delay frame (P2P, no push opt-in needed).
+    A start shows pending for its ``seconds``, counted from when the library saw the
+    frame (``at``); a start while triggered, or one with no time left, shows nothing.
+    Another start (a second trigger) restarts the countdown. An end shows the polled
+    mode again. The station sends no end when the delay runs out into the alarm, so
+    pending ends on its own after ``seconds``; the ``AlarmChanged`` start, a stop or a
+    disarm end it as for a delay push below. Its channel is the station's, never the
+    triggering device. While pending with a known delay, ``delay_seconds`` and
+    ``delay_until`` (UTC) say how long and until when, for this frame and the push alike.
 
     **Station pushes** arrive on the station signal. Only an authenticated push changes
     the panel: an ECB frame's static key is known to anyone on the LAN. The alarm
@@ -193,6 +207,9 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
         # timeout run out, kept for the restore data.
         self._phase_ends_at: float | None = None
         self._timeout_at: float | None = None
+        # The running entry delay's seconds and wall-clock end, for the attributes.
+        self._delay_seconds: int | None = None
+        self._delay_until: datetime | None = None
 
     @property
     @override
@@ -220,16 +237,23 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
     @property
     @override
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        """``selected_mode: schedule`` while a schedule drives the station, else nothing.
+        """``selected_mode`` while a schedule drives the station, the entry delay while
+        pending; else nothing.
 
-        Only then does the selected mode differ from the one the state shows. Kept
-        off otherwise, so an arm between two plain modes writes no extra state while
-        the panel shows arming.
+        Only under a schedule does the selected mode differ from the one the state
+        shows. Kept off otherwise, so an arm between two plain modes writes no extra
+        state while the panel shows arming.
         """
+        attributes: dict[str, Any] = {}
         data: StationState | None = self.coordinator.data
-        if data is None or data.guard_mode != GuardMode.SCHEDULE:
-            return None
-        return {ATTR_SELECTED_MODE: detections.mode_label(GuardMode.SCHEDULE)}
+        if data is not None and data.guard_mode == GuardMode.SCHEDULE:
+            attributes[ATTR_SELECTED_MODE] = detections.mode_label(GuardMode.SCHEDULE)
+        # Set only while pending: every other lifecycle start and its end clear them.
+        if self._delay_seconds is not None:
+            attributes[ATTR_DELAY_SECONDS] = self._delay_seconds
+        if self._delay_until is not None:
+            attributes[ATTR_DELAY_UNTIL] = self._delay_until.isoformat(timespec="seconds")
+        return attributes or None
 
     @override
     async def async_added_to_hass(self) -> None:
@@ -251,6 +275,15 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
                     self.coordinator.config_entry.entry_id, self.coordinator.station.serial
                 ),
                 self._async_on_alarm_changed,
+            )
+        )
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                detections.alarm_delay_signal(
+                    self.coordinator.config_entry.entry_id, self.coordinator.station.serial
+                ),
+                self._async_on_alarm_delay,
             )
         )
         self.async_on_remove(
@@ -277,6 +310,7 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
                 "mode_at_alarm": int(mode) if mode is not None else None,
                 "timeout_at": self._timeout_at,
                 "phase_ends_at": self._phase_ends_at,
+                "delay_seconds": self._delay_seconds,
             }
         )
 
@@ -341,6 +375,8 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
             self._cancel_phase = async_call_later(
                 self.hass, phase_left, self._async_entry_delay_ended
             )
+            self._delay_seconds = _int("delay_seconds")
+            self._delay_until = dt_util.utcnow() + timedelta(seconds=phase_left)
 
     @callback
     def _async_on_station_event(self, event: SecurityEvent) -> None:
@@ -374,6 +410,27 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
             self.async_write_ha_state()
         elif self._alarm_shown():
             self._async_end_lifecycle()
+
+    @callback
+    def _async_on_alarm_delay(self, event: AlarmDelayChanged) -> None:
+        """Show pending for the station's entry delay; end it on the delay's end."""
+        if not event.delaying:
+            if self._lifecycle is AlarmControlPanelState.PENDING:
+                self._async_end_lifecycle()
+            return
+        if self._lifecycle is AlarmControlPanelState.TRIGGERED or event.seconds is None:
+            return
+        seen_ms = event.at.timestamp() * 1000
+        remaining = detections.hold_remaining_seconds(
+            int(seen_ms), event.seconds, dt_util.utcnow().timestamp() * 1000
+        )
+        if remaining <= 0:
+            return
+        second = int(event.at.timestamp()) - ALARM_CHANGED_SKEW_SECONDS
+        self._async_begin_alarm(AlarmControlPanelState.PENDING, second)
+        self._async_start_entry_delay(event.seconds, remaining)
+        self._async_restart_alarm_timeout()
+        self.async_write_ha_state()
 
     @callback
     def _async_on_arming(self, event: SecurityEvent) -> None:
@@ -514,12 +571,20 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
         self._async_begin_alarm(AlarmControlPanelState.PENDING, second)
         if remaining is not None:
             # Without a delay, pending ends on a stop, a disarm or the timeout.
-            self._phase_ends_at = self.hass.loop.time() + remaining
-            self._cancel_phase = async_call_later(
-                self.hass, remaining, self._async_entry_delay_ended
-            )
+            self._async_start_entry_delay(event.alarm_delay, remaining)
         self._async_restart_alarm_timeout()
         self.async_write_ha_state()
+
+    @callback
+    def _async_start_entry_delay(self, seconds: int | None, remaining: float) -> None:
+        """Run the entry delay's ``remaining`` seconds of ``seconds``.
+
+        Called right after ``_async_begin_alarm``, which cancelled the previous phase timer.
+        """
+        self._phase_ends_at = self.hass.loop.time() + remaining
+        self._cancel_phase = async_call_later(self.hass, remaining, self._async_entry_delay_ended)
+        self._delay_seconds = seconds
+        self._delay_until = dt_util.utcnow() + timedelta(seconds=remaining)
 
     @callback
     def _async_entry_delay_ended(self, _now: datetime) -> None:
@@ -563,6 +628,8 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
             self._cancel_phase()
             self._cancel_phase = None
         self._phase_ends_at = None
+        self._delay_seconds = None
+        self._delay_until = None
         self._exit_delay_elapsed = False
         self._lifecycle = state
         if second is not None:
@@ -594,6 +661,8 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
         # the restore data is read; only an ended lifecycle forgets them.
         self._phase_ends_at = None
         self._timeout_at = None
+        self._delay_seconds = None
+        self._delay_until = None
         self._lifecycle = None
         # A replayed alarm older than the one that ended cannot raise it again.
         self._raise_floor(self._alarm_second)

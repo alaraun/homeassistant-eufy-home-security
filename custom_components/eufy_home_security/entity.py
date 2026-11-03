@@ -280,7 +280,9 @@ class EufySettingEntity(EufyDeviceEntity):
         return member_in_use(self.coordinator.station, self._spec.setting.key, self._spec.device_sn)
 
     def _value_source(self) -> str | None:
-        """The library's source of the shown value (``p2p``, ``cloud``, ``app_default``), else None.
+        """The library's source of the shown value, else None.
+
+        ``p2p``, ``notify``, ``cloud`` or ``app_default``, as the library names it.
 
         None while the value is unknown, and for a value shown from a write of a setting the
         dump never reports (``_written``).

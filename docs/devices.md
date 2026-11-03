@@ -75,8 +75,8 @@ are offered, but none is tested:
 | T8161 | eufyCam 3C, on a HomeBase | as the T8160: detections, stills, live video, settings |
 | T8410 | Indoor Cam 2K Pan & Tilt, standalone | live video, pan/tilt one step; no presets, no zoom |
 | T90M0 | Motion sensor | as the T8910: Motion and a motion-only Detection event |
-| T8900 | Entry Sensor, on a HomeBase | door (binary sensor, on = open), low battery |
-| T90E0 | Entry Sensor T90E0, on a HomeBase | door (binary sensor, on = open), tamper |
+| T8900 | Entry Sensor, on a HomeBase | door (binary sensor, on = open; follows each open and close), low battery |
+| T90E0 | Entry Sensor T90E0, on a HomeBase | door (binary sensor, on = open; follows each open and close), tamper |
 
 Report what works and what does not ([below](#reporting-a-new-device)).
 
