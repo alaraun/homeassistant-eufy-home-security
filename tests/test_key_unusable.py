@@ -66,7 +66,7 @@ async def test_an_rsa_station_without_a_served_key_connects_under_its_static_key
     no_rsa_key: None,
 ) -> None:
     """The station comes up with at most one key fetch; no key-unusable or key-rejected
-    issue."""
+    issue, one "fetched again" notice."""
     seed_warm_cache()
     entry = add_entry(hass)
 
@@ -78,6 +78,9 @@ async def test_an_rsa_station_without_a_served_key_connects_under_its_static_key
 
     assert _issues(hass, entry, "key_unusable") == {}
     assert _issues(hass, entry, "key_rejected") == {}
+    # Library 0.4.10 reports this fetch as refreshed credentials although the session
+    # uses no fetched key, so the notice is raised (a library question).
+    assert len(_issues(hass, entry, "credentials_refreshed")) == 1
     assert _cipher_calls(fake_cloud) <= 1
     await _unload(hass, entry)
 
