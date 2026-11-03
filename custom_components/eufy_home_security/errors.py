@@ -1530,16 +1530,22 @@ def sync_variant_reset_issue(
     disable: int,
     enable: int,
     devices: Sequence[str],
+    settled: bool,
 ) -> None:
     """Offer the reset of setting versions while it would disable ``disable`` controls of
-    versions the eufy app does not use (on ``devices``, by name); withdraw it at 0.
+    versions the eufy app does not use; ``enable`` controls of the version in use it turns
+    on, ``devices`` names where.
 
-    Fixable: the fix enables the version in use (``enable`` controls are off) and disables
-    the others. Not persistent; every setup raises or deletes it, and an ignore survives
-    a restart (Home Assistant keeps it with the issue id).
+    Fixable, not persistent: every setup raises or deletes it, and an ignore survives a
+    restart (Home Assistant keeps it with the issue id). At 0 it is deleted, except an
+    ignored one while not ``settled`` (a group the library cannot decide, or a disabled
+    device): that count covers only part of the rows.
     """
     issue_id = variant_reset_issue_id(entry.entry_id)
     if not disable:
+        issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+        if not settled and issue is not None and issue.dismissed_version is not None:
+            return
         ir.async_delete_issue(hass, DOMAIN, issue_id)
         return
     ir.async_create_issue(
@@ -1558,3 +1564,8 @@ def sync_variant_reset_issue(
             "devices": ", ".join(devices),
         },
     )
+
+
+def delete_variant_reset_issue(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:
+    """Delete the entry's setting-version reset issue, ignored or not."""
+    ir.async_delete_issue(hass, DOMAIN, variant_reset_issue_id(entry.entry_id))

@@ -29,7 +29,14 @@ from homeassistant.helpers import issue_registry as ir
 
 from eufy_home_security import EufySecurityError
 
-from . import async_reset_variant_rows, errors, runtime, variant_reset_summary
+from . import (
+    async_reset_variant_rows,
+    errors,
+    runtime,
+    variant_reset_key,
+    variant_reset_plan,
+    variant_reset_summary,
+)
 from .const import (
     CONF_CLOUD_PUSH,
     DOMAIN,
@@ -249,11 +256,14 @@ class VariantResetFix(RepairsFlow):
     On confirmation the version the app uses for each device is enabled and the others
     disabled (``async_reset_variant_rows``); controls the user set stay. Enabling one makes
     Home Assistant reload the entry; every setup raises the issue again only while a
-    control is left to reset. The counts shown are the current ones, not the issue's.
+    control is left to reset. The form shows the current plan, not the issue's counts, and
+    a confirmation applies only that plan: when it changed in between, the form shows the
+    new one instead.
     """
 
     def __init__(self, entry_id: str) -> None:
         self._entry_id = entry_id
+        self._shown: frozenset[object] | None = None
 
     async def async_step_init(self, user_input: dict[str, str] | None = None) -> RepairsFlowResult:
         """Open straight on the confirmation."""
@@ -262,13 +272,15 @@ class VariantResetFix(RepairsFlow):
     async def async_step_confirm(
         self, user_input: dict[str, str] | None = None
     ) -> RepairsFlowResult:
-        """Ask first, with what changes; on submit, apply the reset."""
+        """Ask first, with what changes; on submit, apply the reset shown."""
         entry = _loaded_entry(self.hass, self._entry_id)
         if entry is None:
             return self.async_abort(reason="entry_not_loaded")
-        coordinators = entry.runtime_data.coordinators.values()
-        if user_input is None:
-            summary = variant_reset_summary(self.hass, entry, coordinators)
+        plan = variant_reset_plan(self.hass, entry, entry.runtime_data.coordinators.values())
+        key = variant_reset_key(plan)
+        if user_input is None or key != self._shown:
+            self._shown = key
+            summary = variant_reset_summary(self.hass, plan)
             return self.async_show_form(
                 step_id="confirm",
                 data_schema=vol.Schema({}),
@@ -279,7 +291,7 @@ class VariantResetFix(RepairsFlow):
                     "devices": ", ".join(summary.devices),
                 },
             )
-        async_reset_variant_rows(self.hass, entry, coordinators)
+        async_reset_variant_rows(self.hass, plan)
         return self.async_create_entry(data={})
 
 

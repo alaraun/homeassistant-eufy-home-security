@@ -268,7 +268,7 @@
         "step": {
           "confirm": {
             "title": "Reset setting versions to the eufy app's defaults",
-            "description": "Some eufy settings come in several versions, and the eufy app uses one of them per device. On {devices} of the eufy account {account}, controls of versions the eufy app does not use are enabled next to the version it uses. Confirm to disable {disable} setting entities of other versions and to enable the version the eufy app uses where it is disabled ({enable} entities); after an enable, Home Assistant reloads the eufy account. Entities you enabled or disabled yourself since the integration set them stay as they are. Each setting entity's in_use attribute names the version in use. To keep them as they are, ignore this repair."
+            "description": "Some eufy settings come in several versions, and the eufy app uses one of them per device. On {devices} of the eufy account {account}, controls of versions the eufy app does not use are enabled. Confirm to disable {disable} setting entities of those versions and enable {enable} of the version the eufy app uses; if it enables any, Home Assistant reloads the eufy account. With Enable newly added entities turned off for this integration, the version in use is enabled only for a setting whose other version this disables, so the device keeps one working version of it. Entities you enabled or disabled yourself since the integration set them stay as they are. Each setting entity's in_use attribute names the version in use. To keep them as they are, ignore this repair."
           }
         },
         "abort": {

@@ -216,7 +216,7 @@ class EufySettingEntity(EufyDeviceEntity):
     value decodes and whether it is writable.
     """
 
-    # Constant for the entity's life, or provenance only: kept out of the recorder.
+    # Constant for the entity's life, provenance or derived metadata: kept out of the recorder.
     _unrecorded_attributes = frozenset(
         {
             ATTR_APPLIES_WHEN,
