@@ -411,10 +411,11 @@ HomeBase (version strings by parameter id; the subsystems are unnamed) and
 - The **Camera** switch turns a camera on or off; a camera turned off stops detecting
   and recording.
 - A status it can only read is enabled: one the eufy app shows on the device card
-  (an entry sensor's door, tamper or low battery) is a sensor or binary sensor with
-  a device class (door, tamper, battery, moisture, cold), one the app shows on a
-  settings page is listed under Diagnostic. A status the device has not reported
-  shows unknown. The door state follows the HomeBase's state, refreshed every 45 s.
+  (an entry sensor's door, tamper or low battery) is a sensor or binary sensor, a
+  binary sensor with its device class (door, tamper, battery, moisture, cold) where
+  one fits; one the app shows on a settings page is listed under Diagnostic. A
+  status the device has not reported shows unknown. The door state follows the
+  HomeBase's state, refreshed every 45 s.
 - A setting it can only read but the app offers as a control is a diagnostic sensor
   or binary sensor, disabled until you enable it. A value the app does not show, or
   one another entity already gives (battery, firmware update in progress), and a
