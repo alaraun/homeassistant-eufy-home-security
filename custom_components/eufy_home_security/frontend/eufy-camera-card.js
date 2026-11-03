@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.10.29-8';
+const CARD_VERSION = '2026.11.03-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -23,6 +23,17 @@ const HLS_RETRY_MS = 1000;
 // is asked again: a cold first playlist answers in ~11 s, and a failed request
 // (a network error on it) goes unreported by HA's HLS player
 const HLS_STALL_MS = 20000;
+// A WebRTC picture whose frame count stands still this long after it played gets a new session, once per stall:
+// go2rtc keeps a session on the codec it negotiated, so a camera that changes codec mid-stream leaves it frozen
+const RTC_STALL_MS = 2000;
+// The new session starts beside the frozen one, which stays until the new one shows video (closing the only
+// session first lets go2rtc and the integration close the camera, and the new one wakes it again); a new session
+// without video by then is dropped
+const RTC_SWAP_MS = 10000;
+// An HLS picture still this long after it played gets a new player, again every HLS_FREEZE_MS while it stays
+// still: HA's HLS player does not get past a codec change, and a new one plays once HA's playlist holds only the
+// new codec (about half a minute). HA's stream worker holds the camera, so the old player goes first.
+const HLS_FREEZE_MS = 10000;
 const TOAST_MS = 4000;
 // Moves (pan/tilt steps, go-to) waiting behind the running one; the integration returns a step after ~1.5 s
 const MOVE_QUEUE = 3;
@@ -1122,6 +1133,20 @@ class EufyCameraCard extends HTMLElement {
   // full segment, ~11 s from a cold camera). 'auto': HA's combined player, which runs both at once.
   _attachPlayer(L, kind) {
     if (this._stream) { this._stream.remove(); this._stream = null; }
+    const el = this._player(L, kind);
+    L.player = kind;
+    clearTimeout(L.stallT);
+    if (kind === 'hls') {
+      L.stallT = setTimeout(() => {
+        if (this._live === L && !L.video && L.player === 'hls') { L.retries = (L.retries || 0) + 1; this._attachPlayer(L, 'hls'); }
+      }, HLS_STALL_MS);
+    }
+    this._stream = el;
+    this._vslot.appendChild(el);
+    if (kind === 'web_rtc') Promise.resolve(el.updateComplete).then(() => { if (this._stream === el) this._applyMute(); });
+  }
+
+  _player(L, kind) {
     let el;
     if (kind === 'web_rtc' || kind === 'hls') {
       el = document.createElement(kind === 'web_rtc' ? 'ha-web-rtc-player' : 'ha-hls-player');
@@ -1137,22 +1162,73 @@ class EufyCameraCard extends HTMLElement {
     // and the card mutes its <video> (_applyMute)
     el.muted = kind === 'web_rtc' ? false : L.muted;
     el.fitMode = this._fit();
-    L.player = kind;
-    clearTimeout(L.stallT);
-    if (kind === 'hls') {
-      L.stallT = setTimeout(() => {
-        if (this._live === L && !L.video && L.player === 'hls') { L.retries = (L.retries || 0) + 1; this._attachPlayer(L, 'hls'); }
-      }, HLS_STALL_MS);
-    }
-    this._stream = el;
+    return el;
+  }
+
+  // A new WebRTC session for a picture that stopped (RTC_STALL_MS): a second player over the frozen one,
+  // transparent until it reports video (_onStreams), then it replaces the frozen one (_swap)
+  _reattach(L) {
+    const el = this._player(L, 'web_rtc');
+    el.classList.add('pend');
+    L.next = el;
+    L.nextT = setTimeout(() => { if (this._live === L && L.next === el) this._dropNext(L); }, RTC_SWAP_MS);
     this._vslot.appendChild(el);
-    if (kind === 'web_rtc') Promise.resolve(el.updateComplete).then(() => { if (this._stream === el) this._applyMute(); });
+    Promise.resolve(el.updateComplete).then(() => { if (L.next === el) this._applyMute(el); });
+  }
+
+  _swap(L) {
+    const el = L.next;
+    clearTimeout(L.nextT);
+    L.next = null;
+    if (this._stream) this._stream.remove();
+    el.classList.remove('pend');
+    el.fitMode = this._fit();
+    this._stream = el;
+    L.fAt = null;
+    this._applyMute();
+  }
+
+  _dropNext(L) {
+    if (!L || !L.next) return;
+    clearTimeout(L.nextT);
+    L.next.remove();
+    L.next = null;
+  }
+
+  // Frames the live <video> has shown (0 without a picture). Not currentTime: Chrome, Firefox and Safari keep it
+  // running on a WebRTC stream that gets no frames, and it jumps while HLS resets. Firefox counts a WebRTC stream's
+  // frames only in mozPaintedFrames.
+  _frames(v) {
+    if (!v) return 0;
+    const q = typeof v.getVideoPlaybackQuality === 'function' ? v.getVideoPlaybackQuality() : null;
+    if (q && q.totalVideoFrames > 0) return q.totalVideoFrames;
+    if (typeof v.mozPaintedFrames === 'number') return v.mozPaintedFrames;
+    return q ? 0 : v.currentTime;
+  }
+
+  // While the page is shown and the picture on screen: a WebRTC count that stood still RTC_STALL_MS starts one new
+  // session (_reattach), the next one only after the picture moved again; an HLS one still HLS_FREEZE_MS gets a new
+  // player each time. Otherwise the watch restarts: a hidden page may hold its timers, and Firefox pauses a muted
+  // video scrolled out of view.
+  _watchStall(L, v, now) {
+    const r = this._pic.getBoundingClientRect();
+    if (document.visibilityState !== 'visible' || r.bottom <= 0 || r.top >= window.innerHeight) { L.fAt = null; return; }
+    const n = this._frames(v);
+    if (L.fAt != null && n === L.fN) {
+      if (L.player === 'hls') {
+        if (now - L.fAt >= HLS_FREEZE_MS) { L.fAt = now; this._attachPlayer(L, 'hls'); }
+      } else if (!L.stalled && !L.next && now - L.fAt >= RTC_STALL_MS) { L.stalled = true; this._reattach(L); }
+      return;
+    }
+    if (L.fAt != null) L.stalled = false;
+    L.fN = n;
+    L.fAt = now;
   }
 
   // The live view's mute state on the player: the WebRTC player's own <video> (the player stays unmuted, see
   // _attachPlayer), the player's `muted` otherwise
-  _applyMute() {
-    const L = this._live, el = this._stream;
+  _applyMute(el = this._stream) {
+    const L = this._live;
     if (!L || !el) return;
     if (L.player !== 'web_rtc') { el.muted = L.muted; return; }
     const v = el.shadowRoot && el.shadowRoot.querySelector('video');
@@ -1162,7 +1238,7 @@ class EufyCameraCard extends HTMLElement {
   // reason: toast text ('' for none)
   _stop(reason) {
     if (!this._live && !this._stream) return;
-    if (this._live) { clearTimeout(this._live.retryT); clearTimeout(this._live.stallT); }
+    if (this._live) { clearTimeout(this._live.retryT); clearTimeout(this._live.stallT); this._dropNext(this._live); }
     clearInterval(this._tickT);
     this._tickT = null;
     if (this._stream) { this._stream.remove(); this._stream = null; }
@@ -1188,6 +1264,7 @@ class EufyCameraCard extends HTMLElement {
     this.content.querySelectorAll('[data-tick]').forEach((n) => { if (n.textContent !== txt) n.textContent = txt; });
     const v = L.video && this._liveVideo();
     if (v) this._noteRatio(this._config.entity, v.videoWidth, v.videoHeight);
+    if (L.video && (L.player === 'web_rtc' || L.player === 'hls')) this._watchStall(L, v, now);
     const ws = `${Math.floor((now - L.started) / 1000)} s`;
     this.content.querySelectorAll('[data-wake]').forEach((n) => { if (n.textContent !== ws) n.textContent = ws; });
   }
@@ -1207,6 +1284,7 @@ class EufyCameraCard extends HTMLElement {
     }
     const at = this._hidAt;
     this._hidAt = null;
+    if (this._live) this._live.fAt = null;
     if (at && Date.now() - at >= FS_HIDE_MS) this._hidden();
     this._autoTry();
   }
@@ -1221,6 +1299,12 @@ class EufyCameraCard extends HTMLElement {
   _onStreams(ev) {
     const L = this._live;
     if (!L || !ev.detail) return;
+    // From the new session of a re-attach: video replaces the frozen player, a failure drops the new one
+    if (L.next && ev.composedPath().includes(L.next)) {
+      if (ev.detail.hasVideo) this._swap(L);
+      else if (ev.detail.hasVideo === false) this._dropNext(L);
+      return;
+    }
     this._applyMute();  // a player that rendered a new <video> (after an error) starts unmuted
     if (ev.detail.hasAudio) L.audio = true;
     if (ev.detail.hasVideo && !L.video) { L.video = true; this.render(); this._awake(true); setTimeout(() => this._tick(), 300); return; }
@@ -3091,6 +3175,7 @@ const CSS_TEXT = `
   .vslot, .still, .over { position: absolute; inset: 0; }
   .vslot ha-camera-stream, .vslot ha-web-rtc-player, .vslot ha-hls-player { display: block; width: 100%; height: 100%; }
   .vslot ha-web-rtc-player, .vslot ha-hls-player { --video-max-height: 100%; }
+  .vslot .pend { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
   .ctr.wake { gap: 4px; }
   .ctr .ws { margin-top: -2px; font-size: var(--fs-xs); opacity: 0.85; font-variant-numeric: tabular-nums; }
   /* Narrow pictures: spinner and seconds only (the header says "Starting live view"), clear of the chips and the bar */

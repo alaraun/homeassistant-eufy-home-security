@@ -223,3 +223,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   player, and the first picture takes longer. A camera whose `video_codec` is not known yet (no picture since Home
   Assistant started) counts as HEVC. See [network.md](network.md) for the browser table.
 - A `New still` behind a HomeBase at its session budget waits up to about 20 s for a view to end first.
+- A live picture that stops after it played (a camera that changes video codec mid-stream) gets a new player
+  without ending the view: over WebRTC after 2 s, a new session opened beside the frozen one, which stays until the
+  new one shows video (closing it first would let the camera close, and the new session would wake it again); over
+  HLS every 10 s while the picture stands still (HA's HLS player does not get past a codec change; a new one plays
+  once HA's playlist holds only the new codec). The countdown, the LIVE chip and full screen stay as they are.
