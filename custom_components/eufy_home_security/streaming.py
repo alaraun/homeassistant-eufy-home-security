@@ -277,19 +277,22 @@ class EufyStreamView(HomeAssistantView):
                 "Live stream of %s ended after %d chunk(s): the viewer went away", serial, chunks
             )
             raise
-        # Read promptly: the library clears this when a new stream starts.
+        # Read promptly: the library clears both when a new stream starts or a viewer
+        # rejoins.
         error = broadcast.error
-        # Nothing is reopened here: Home Assistant asks for the URL again by itself.
+        codec_change = broadcast.ended_by_codec_change
+        # Nothing is reopened here: Home Assistant asks for the URL again by itself. After
+        # a codec change the library keeps the camera open for CODEC_CHANGE_GRACE, so that
+        # ask gets the new codec without a wake.
         # The error type, never the library's message, plus the eufy-session clause when
         # a replaced session is why the camera could not be reached.
-        _LOGGER.debug(
-            "Live stream of %s ended after %d chunk(s): %s",
-            serial,
-            chunks,
-            "clean end (viewer left or stream closed)"
-            if error is None
-            else errors.failure_reason(error),
-        )
+        if codec_change:
+            reason = "ended at a video-codec change; the camera is kept open for the reconnect"
+        elif error is None:
+            reason = "clean end (viewer left or stream closed)"
+        else:
+            reason = errors.failure_reason(error)
+        _LOGGER.debug("Live stream of %s ended after %d chunk(s): %s", serial, chunks, reason)
         return response
 
 
