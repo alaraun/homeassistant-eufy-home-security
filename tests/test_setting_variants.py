@@ -12,7 +12,7 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
-from conftest import add_entry, setup_entry
+from conftest import add_entry, entity_id_for, setup_entry
 from eufy_home_security import EufySecurity, Station, entity_unique_id
 from eufy_home_security.devices.model_settings import settings_of
 from eufy_home_security.testing import SYNTHETIC, FakeStation
@@ -25,7 +25,7 @@ from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.eufy_home_security import variant_mark
-from custom_components.eufy_home_security.const import DOMAIN
+from custom_components.eufy_home_security.const import ATTR_IN_USE, DOMAIN
 from custom_components.eufy_home_security.settings import SettingEntitySpec, setting_specs
 
 AI_EMPOWER_PARAM = 1299
@@ -471,4 +471,56 @@ async def test_a_row_home_assistant_disabled_stays(
     _ai(fake_station, False)
     await _restart(hass, entry)
     assert _all(hass, entry, V1, (er.RegistryEntryDisabler.HASS, "on"))
+    await _stop(hass, entry)
+
+
+def _in_use(hass: HomeAssistant, entry: MockConfigEntry, member: str) -> list[Any]:
+    """The ``in_use`` attribute of each row of ``member`` (``absent`` when it has none)."""
+    found = []
+    for row in _rows(hass, entry, member):
+        state = hass.states.get(row.entity_id)
+        assert state is not None, row.entity_id
+        found.append(state.attributes.get(ATTR_IN_USE, "absent"))
+    return found
+
+
+async def test_each_member_says_whether_the_app_uses_it(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``in_use`` is true on the member in use, false on another one, absent outside a
+    group and while the library cannot tell; it is read at every state write and kept
+    out of the recorder."""
+    entry = await _start(hass, fake_station, seed_warm_cache, ai=True)
+    _set(hass, entry, PRIMARY, None)
+    await _settle(hass, entry)
+    assert set(_in_use(hass, entry, V1)) == {True}
+    assert set(_in_use(hass, entry, PRIMARY)) == {False}
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+    night = hass.states.get(
+        entity_id_for(hass, Platform.SELECT, SYNTHETIC.camera_sn, "nightvision_type_new")
+    )
+    assert night is not None
+    expected = station.setting_in_use("nightvision_type_new", SYNTHETIC.camera_sn)
+    assert expected is not None
+    assert night.attributes[ATTR_IN_USE] is expected
+    assert night.state_info is not None
+    assert ATTR_IN_USE in night.state_info["unrecorded_attributes"]
+    # a setting outside any group: the library calls it in use, the entity says nothing
+    assert station.setting_in_use("watermark_set", SYNTHETIC.camera_sn) is True
+    watermark = hass.states.get(
+        entity_id_for(hass, Platform.SELECT, SYNTHETIC.camera_sn, "watermark_set")
+    )
+    assert watermark is not None
+    assert ATTR_IN_USE not in watermark.attributes
+
+    monkeypatch.setattr(Station, "setting_in_use", lambda self, key, device_sn=None: None)
+    coordinator = entry.runtime_data.coordinators[SYNTHETIC.station_sn]
+    coordinator.async_set_updated_data(coordinator.data)
+    await hass.async_block_till_done()
+    assert set(_in_use(hass, entry, V1)) == {"absent"}
+    assert set(_in_use(hass, entry, PRIMARY)) == {"absent"}
     await _stop(hass, entry)

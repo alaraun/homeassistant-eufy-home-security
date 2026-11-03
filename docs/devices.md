@@ -28,6 +28,11 @@ integration once. A version you enabled or disabled yourself stays as you set it
 then on. With "Enable newly added entities" turned off, only versions the integration
 turned off itself are turned on again.
 
+Each entity of such a setting has an `in_use` attribute: `true` on the version the
+eufy app uses for the device, `false` on the others. It is missing while the library
+cannot tell. The versions share one name, and Home Assistant numbers their entity ids
+by creation order (`_2`, `_3`), not by version: the attribute tells them apart.
+
 A model without a settings file in the library gets no setting entities. A newer
 library release adds models and controls; update the integration to get them.
 A device paired to a HomeBase gets no time zone, clock format, switching

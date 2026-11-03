@@ -27,13 +27,14 @@ from .const import (
     ATTR_APPLIES_WHEN,
     ATTR_APPLIES_WHEN_LABEL,
     ATTR_CONTROLS,
+    ATTR_IN_USE,
     ATTR_SECTION,
     ATTR_VALUE_SOURCE,
     DOMAIN,
     PICTURE_CHANGING_SETTINGS,
 )
 from .coordinator import StationCoordinator
-from .settings import SettingEntitySpec, setting_platform
+from .settings import SettingEntitySpec, member_in_use, setting_platform
 
 if TYPE_CHECKING:
     from .runtime import EufyConfigEntry
@@ -217,7 +218,14 @@ class EufySettingEntity(EufyDeviceEntity):
 
     # Constant for the entity's life, or provenance only: kept out of the recorder.
     _unrecorded_attributes = frozenset(
-        {ATTR_APPLIES_WHEN, ATTR_APPLIES_WHEN_LABEL, ATTR_CONTROLS, ATTR_SECTION, ATTR_VALUE_SOURCE}
+        {
+            ATTR_APPLIES_WHEN,
+            ATTR_APPLIES_WHEN_LABEL,
+            ATTR_CONTROLS,
+            ATTR_IN_USE,
+            ATTR_SECTION,
+            ATTR_VALUE_SOURCE,
+        }
     )
 
     def __init__(self, coordinator: StationCoordinator, spec: SettingEntitySpec) -> None:
@@ -247,10 +255,13 @@ class EufySettingEntity(EufyDeviceEntity):
     @override
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """``section`` and ``value_source``; ``applies_when`` with its label on a dependent;
-        ``controls`` on the setting it depends on."""
+        ``controls`` on the setting it depends on; ``in_use`` on a variant-group member,
+        asked of the library at every state write."""
         attributes: dict[str, Any] = {ATTR_SECTION: self._spec.setting.section}
         if (source := self._value_source()) is not None:
             attributes[ATTR_VALUE_SOURCE] = source
+        if (in_use := self._in_use()) is not None:
+            attributes[ATTR_IN_USE] = in_use
         if (condition := self._spec.setting.applies_when) is not None:
             key, wanted = condition
             attributes[ATTR_APPLIES_WHEN] = f"{key}={wanted}"
@@ -263,6 +274,13 @@ class EufySettingEntity(EufyDeviceEntity):
         if controls := self._controls():
             attributes[ATTR_CONTROLS] = controls
         return attributes
+
+    def _in_use(self) -> bool | None:
+        """Whether the app uses this variant-group member for the device; None outside a
+        group or when the library cannot tell."""
+        if not self._spec.grouped:
+            return None
+        return member_in_use(self.coordinator.station, self._spec.setting.key, self._spec.device_sn)
 
     def _value_source(self) -> str | None:
         """The library's source of the shown value (``p2p``, ``cloud``, ``app_default``), else None.

@@ -553,6 +553,9 @@ ATTR_SECTION: Final = "section"
 # Where a setting's value comes from: ``p2p``, ``cloud`` or ``app_default``
 # (``StationState.setting_source``); absent while there is no value.
 ATTR_VALUE_SOURCE: Final = "value_source"
+# On a member of a setting's variant group: whether the eufy app uses this member for the
+# device (``Station.setting_in_use``); absent when the library cannot tell.
+ATTR_IN_USE: Final = "in_use"
 
 # Setting keys whose write changes the picture size a camera sends: a running live view
 # is ended so the next open starts at the new size (an MPEG-TS stream cannot carry a
