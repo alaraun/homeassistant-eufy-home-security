@@ -149,9 +149,10 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
       with no event time of its own ends only on evidence newer than the floor.
     - A confirmed disarm ends triggered or pending: Home Assistant's own disarm
       returning a disarmed mode, an authenticated arming push to a disarmed mode no
-      older than the alarm, or a poll showing disarmed when the alarm began in a
-      known armed mode. Pending also ends on the station's own report of a disarmed
-      mode over P2P (a keypad or app disarm), a live frame, not a replayable push.
+      older than the alarm, or a poll showing disarmed when triggered began in a
+      known armed mode or pending did not begin in a known disarmed one. Pending also
+      ends on a disarmed mode delivered over P2P (a keypad or app disarm): the
+      library's age and repeat checks bound it, not the alarm's event-second order.
       While an alarm is shown, an arming push that cannot be ordered after it
       (older, or with no event time) changes nothing shown, not even
       ``changed_by``. A cloud push's mode or a pushed state never confirms a
@@ -491,9 +492,9 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
     def _async_on_mode_read(self, read: ModeRead) -> None:
         """End arming, or confirm a disarm, on a mode the station was just read in.
 
-        Any read ends arming. A poll confirms a disarm during an alarm, and the
-        station's own live report of a disarmed mode ends pending: a cloud push's
-        mode or a pushed state has no event time to order against the alarm.
+        Any read ends arming. A poll confirms a disarm during an alarm, and a
+        disarmed mode delivered over P2P ends pending: a cloud push's mode or a
+        pushed state has no event time to order against the alarm.
         """
         data: StationState | None = self.coordinator.data
         if data is None or self._lifecycle is None:
@@ -516,16 +517,18 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
     def _read_confirms_disarm(self) -> bool:
         """Whether the latest read, if a poll, confirms a disarm of the shown alarm.
 
-        It must show disarmed, and the alarm must have begun in a known armed mode.
+        It must show disarmed. Triggered must have begun in a known armed mode; pending
+        must not have begun in a known disarmed mode, in which no start shows pending.
         """
         data: StationState | None = self.coordinator.data
         mode = data.active_mode if data is not None else None
-        return (
-            isinstance(mode, GuardMode)
-            and mode.is_disarmed
-            and isinstance(self._mode_at_alarm, GuardMode)
-            and not self._mode_at_alarm.is_disarmed
-        )
+        if not (isinstance(mode, GuardMode) and mode.is_disarmed):
+            return False
+        began = self._mode_at_alarm
+        began_disarmed = isinstance(began, GuardMode) and began.is_disarmed
+        if self._lifecycle is AlarmControlPanelState.PENDING:
+            return not began_disarmed
+        return isinstance(began, GuardMode) and not began_disarmed
 
     def _older_than_last_stop(self, second: int | None) -> bool:
         """Whether an alarm of ``second`` predates the host-capped ordering floor.
@@ -598,8 +601,8 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
         The countdown runs ``ENTRY_DELAY_GRACE_SECONDS`` past ``remaining``;
         ``delay_until`` shows the delay's own end. While a countdown runs, the later of
         its end and this start's is kept. ``remaining`` None runs no countdown: pending
-        ends on a stop, a disarm or the timeout. State is written only when the state
-        or its attributes change. Nothing is shown while the mode in force is a known
+        ends on a stop, a disarm or the timeout, unless a countdown runs: that one is
+        kept. State is written only when the state or its attributes change. Nothing is shown while the mode in force is a known
         disarmed mode: the station runs an entry delay only when armed.
         """
         data: StationState | None = self.coordinator.data
@@ -612,12 +615,15 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
         running_end = self._phase_ends_at
         running_seconds, running_until = self._delay_seconds, self._delay_until
         self._async_begin_alarm(AlarmControlPanelState.PENDING, second)
+        now = self.hass.loop.time()
+        ends_at: float | None = None
+        until: datetime | None = None
         if remaining is not None:
-            now = self.hass.loop.time()
             ends_at = now + remaining + ENTRY_DELAY_GRACE_SECONDS
-            until: datetime | None = dt_util.utcnow() + timedelta(seconds=remaining)
-            if running_end is not None and running_end >= ends_at:
-                ends_at, seconds, until = running_end, running_seconds, running_until
+            until = dt_util.utcnow() + timedelta(seconds=remaining)
+        if running_end is not None and (ends_at is None or running_end >= ends_at):
+            ends_at, seconds, until = running_end, running_seconds, running_until
+        if ends_at is not None:
             self._phase_ends_at = ends_at
             self._cancel_phase = async_call_later(
                 self.hass, ends_at - now, self._async_entry_delay_ended

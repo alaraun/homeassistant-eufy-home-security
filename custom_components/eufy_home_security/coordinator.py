@@ -35,7 +35,8 @@ class ModeRead(Enum):
 
     # This coordinator's own refresh.
     POLL = "poll"
-    # The station's own report over the local connection (a P2P ``GuardModeChanged``).
+    # A mode delivered over the local connection (a P2P ``GuardModeChanged``): a
+    # station report or an authenticated P2P arming push's mode.
     LIVE = "live"
     # A cloud push's mode, a pushed state or a write's result.
     PUSHED = "pushed"
@@ -53,7 +54,7 @@ class StationCoordinator(DataUpdateCoordinator[StationState]):
     **Mode reads.** ``async_add_mode_read_listener`` hears every mode read: each
     successful refresh, and each pushed mode or state, changed or not. Each call
     says what the read was (``ModeRead``): this coordinator's own poll, the
-    station's own report over the local connection, or a cloud push, a pushed state
+    mode delivered over the local connection, or a cloud push, a pushed state
     or a write's result. The alarm panel ends an exit delay on any, ends an entry
     delay on a disarmed live report, and confirms a disarm during an alarm on a
     poll: a cloud push's mode carries no event time, so it cannot be ordered against

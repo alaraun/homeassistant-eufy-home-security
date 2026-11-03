@@ -1306,6 +1306,53 @@ async def test_lifecycle_a_restored_alarm_ends_on_a_setup_poll_showing_disarmed(
     await _unload(hass, entry)
 
 
+@pytest.mark.parametrize(
+    ("lifecycle", "mode_at_alarm", "expected"),
+    [
+        ("pending", None, "disarmed"),
+        ("pending", 9999, "disarmed"),
+        ("pending", int(GuardMode.DISARMED), "pending"),
+        ("triggered", None, "triggered"),
+    ],
+    ids=["pending no mode", "pending unknown mode", "pending disarmed", "triggered no mode"],
+)
+async def test_lifecycle_a_setup_poll_showing_disarmed_ends_a_restored_pending(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    lifecycle: str,
+    mode_at_alarm: int | None,
+    expected: str,
+) -> None:
+    """A restored pending ends on a disarmed setup poll unless it began in a known
+    disarmed mode; a restored triggered needs a known armed one."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = panel_entity_id(hass)
+    await _unload(hass, entry)
+
+    now = hass.loop.time()
+    data: dict[str, object] = {
+        "run": alarm_control_panel.restore_run_token(hass),
+        "lifecycle": lifecycle,
+        "alarm_second": None,
+        "floor_second": None,
+        "alarm_floor_second": None,
+        "mode_at_alarm": mode_at_alarm,
+        "timeout_at": now + 60,
+        "phase_ends_at": None,
+    }
+    mock_restore_cache_with_extra_data(hass, [(State(entity_id, lifecycle), data)])
+    set_guard_mode(fake_station, GuardMode.DISARMED)
+
+    states = record_states(hass, entity_id)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert states[0] == expected, states
+
+    await _unload(hass, entry)
+
+
 # Restore data a reload in this run could hand back, by the fields it varies.
 # Each deadline is seconds from the event loop's time now; "run" None drops the token.
 _RESTORE_CASES: dict[str, tuple[dict[str, object], str]] = {

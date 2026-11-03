@@ -7,7 +7,7 @@ shows or what the user must be told:
 - ``GuardModeChanged`` amends the coordinator's data with both modes, the selected
   one (``SCHEDULE`` while a schedule runs) and the one in force
   (``StationCoordinator.async_apply_guard_mode``), marked live when it came over
-  P2P (the station's own report).
+  P2P (a station report, or the mode of an authenticated P2P arming push).
 - ``StationStateChanged`` replaces the coordinator's data
   (``StationCoordinator.async_apply_state``), so one dump reconciles every entity of
   that station. It arrives from a dump the station pushes unasked, from the station's

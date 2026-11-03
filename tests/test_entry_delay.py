@@ -38,6 +38,7 @@ from eufy_home_security import (
     GuardMode,
     GuardModeChanged,
     PushMessageType,
+    StationState,
 )
 from eufy_home_security.p2p import FrameType
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation, camera_device
@@ -63,6 +64,7 @@ from custom_components.eufy_home_security.const import (
     ATTR_DELAY_UNTIL,
     ATTR_VALUE_SOURCE,
 )
+from custom_components.eufy_home_security.coordinator import ModeRead
 
 DOOR_SN: Final = "T8900P0000000001"
 _DOOR_CHANNEL: Final = 2
@@ -462,6 +464,33 @@ async def test_a_second_start_keeps_the_later_end(
     await _unload(hass, entry)
 
 
+async def test_a_push_with_no_seconds_keeps_the_running_countdown(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The frame's countdown, then a delay push with no ``alarm_delay``: the countdown
+    and its attributes stay, no state is written, and pending ends with the frame's."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    anchor = dt_util.utcnow()
+    entity_id = panel_entity_id(hass)
+    recorded = _record_writes(hass, entity_id)
+
+    await _handle(hass, entry, _delay(at=anchor))
+    shown = _attributes(hass, entity_id)
+    await _handle(hass, entry, station_event(PushMessageType.ALARM_DELAY, t_ms=now_ms()))
+    assert _attributes(hass, entity_id) == shown
+    assert shown[ATTR_DELAY_SECONDS] == 30
+    assert recorded == [("pending", shown[ATTR_DELAY_UNTIL])]
+
+    await _at(hass, anchor, 31.9)
+    assert state_of(hass, entity_id) == "pending"
+    await _at(hass, anchor, 32.1)
+    assert state_of(hass, entity_id) == "armed_away"
+    await _unload(hass, entry)
+
+
 @pytest.mark.parametrize("skew", [-0.999, -3.0])
 async def test_a_push_stamped_before_the_frame_of_one_trigger_moves_nothing(
     hass: HomeAssistant,
@@ -692,6 +721,53 @@ async def test_a_repeated_live_disarmed_report_ends_a_pushed_entry_delay(
 
     await _handle(hass, entry, disarmed(EventSource.P2P))
     assert state_of(hass, entity_id) == "disarmed"
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("mode_at_start", [None, 9999], ids=["no mode", "unknown mode"])
+@pytest.mark.parametrize(("start", "ended"), [("pending", True), ("triggered", False)])
+async def test_a_disarmed_poll_ends_pending_begun_in_an_unknown_mode(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    mode_at_start: int | None,
+    start: str,
+    ended: bool,
+) -> None:
+    """Pending never begins in a known disarmed mode, so a disarmed poll ends it.
+
+    Triggered can begin while disarmed: a poll ends it only when it began in a known
+    armed mode. The poll's read is the only mode read, with no live report beside it.
+    """
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = panel_entity_id(hass)
+    coordinator = entry.runtime_data.coordinators[SYNTHETIC.station_sn]
+    coordinator.data = dataclasses.replace(coordinator.data, active_mode=mode_at_start)
+
+    event = (
+        station_event(PushMessageType.ALARM_DELAY, t_ms=now_ms())
+        if start == "pending"
+        else alarm_changed()
+    )
+    await _handle(hass, entry, event)
+    assert state_of(hass, entity_id) == start
+
+    polled = dataclasses.replace(
+        coordinator.data, guard_mode=GuardMode.DISARMED, active_mode=GuardMode.DISARMED
+    )
+
+    async def _read() -> StationState:
+        return polled
+
+    monkeypatch.setattr(coordinator.station, "async_update", _read)
+    reads: list[ModeRead] = []
+    coordinator.async_add_mode_read_listener(reads.append)
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert reads == [ModeRead.POLL]
+    assert state_of(hass, entity_id) == ("disarmed" if ended else start)
     await _unload(hass, entry)
 
 
