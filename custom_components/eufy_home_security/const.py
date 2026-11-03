@@ -369,6 +369,9 @@ ISSUE_STATION_P2P_ID_UNSUPPORTED: Final = "station_p2p_id_unsupported"
 ISSUE_STATION_WEBRTC_ONLY: Final = "station_webrtc_only"
 # eufy lists a device whose serial is not letters and digits; it is left out.
 ISSUE_DEVICE_SERIAL_UNSUPPORTED: Final = "device_serial_unsupported"
+# Controls of a setting's versions the eufy app does not use are on; fixable by a reset
+# to the app's defaults.
+ISSUE_VARIANT_RESET: Final = "variant_reset"
 
 # Camera snapshots. The camera entity's unique-id key; it has no name of its
 # own, the camera is its device.

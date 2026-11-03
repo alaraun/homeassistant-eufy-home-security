@@ -262,6 +262,20 @@
       "title": "No eufy devices found for {account}",
       "description": "The eufy account {account} lists no devices ({regions}), so Home Assistant has nothing to set up. Home Assistant does not ask again by itself. Check in the eufy app that the account sees the HomeBase or camera; a shared account sees only what the owner shared with it, and only after it accepted the invitation. Check that the integration's eufy sign-in country (in its options) is the country your eufy app signs in with, and add the country of anyone who shared a home with this account as an extra sign-in country: eufy lists a device only under the country it was set up or shared under. Changing a country asks eufy again. Otherwise turn on Look for devices under every sign-in country on each refresh and press Refresh device list on the eufy account device; you can turn it off again once the devices show."
     },
+    "variant_reset": {
+      "title": "Setting versions the eufy app does not use are enabled for {account}",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Reset setting versions to the eufy app's defaults",
+            "description": "Some eufy settings come in several versions, and the eufy app uses one of them per device. On {devices} of the eufy account {account}, controls of versions the eufy app does not use are enabled next to the version it uses. Confirm to disable {disable} setting entities of other versions and to enable the version the eufy app uses where it is disabled ({enable} entities); after an enable, Home Assistant reloads the eufy account. Entities you enabled or disabled yourself since the integration set them stay as they are. Each setting entity's in_use attribute names the version in use. To keep them as they are, ignore this repair."
+          }
+        },
+        "abort": {
+          "entry_not_loaded": "The eufy account is not loaded in Home Assistant right now. Wait until it has finished loading, then open this repair again."
+        }
+      }
+    },
     "pending_invites": {
       "title": "eufy invitation not accepted for {account}",
       "fix_flow": {

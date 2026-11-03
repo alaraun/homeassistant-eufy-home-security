@@ -32,6 +32,11 @@ Each entity of such a setting has an `in_use` attribute: `true` on the version t
 eufy app uses for the device, `false` on the others. It is missing while the library
 cannot tell. The versions share one name, and Home Assistant numbers their entity ids
 by creation order (`_2`, `_3`), not by version: the attribute tells them apart.
+While versions the eufy app does not use are enabled (from an older release, or before
+the integration recorded who set them), the repair *Setting versions the eufy app does
+not use are enabled* counts them. Confirming it disables those and enables the version
+in use, then the integration reloads if it enabled one; entities you enabled or disabled
+yourself after the integration set them stay as they are. Ignore it to keep them.
 
 A model without a settings file in the library gets no setting entities. A newer
 library release adds models and controls; update the integration to get them.

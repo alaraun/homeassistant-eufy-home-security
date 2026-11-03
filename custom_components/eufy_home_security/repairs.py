@@ -29,7 +29,7 @@ from homeassistant.helpers import issue_registry as ir
 
 from eufy_home_security import EufySecurityError
 
-from . import errors, runtime
+from . import async_reset_variant_rows, errors, runtime, variant_reset_summary
 from .const import (
     CONF_CLOUD_PUSH,
     DOMAIN,
@@ -37,6 +37,7 @@ from .const import (
     ISSUE_PENDING_INVITES,
     ISSUE_PUSH_NEEDED,
     ISSUE_SESSION_REPLACED,
+    ISSUE_VARIANT_RESET,
 )
 from .runtime import EufyConfigEntry
 
@@ -242,6 +243,46 @@ class PushNeededFix(RepairsFlow):
         return self.async_create_entry(data={})
 
 
+class VariantResetFix(RepairsFlow):
+    """Reset the controls of setting versions to the eufy app's defaults.
+
+    On confirmation the version the app uses for each device is enabled and the others
+    disabled (``async_reset_variant_rows``); controls the user set stay. Enabling one makes
+    Home Assistant reload the entry; every setup raises the issue again only while a
+    control is left to reset. The counts shown are the current ones, not the issue's.
+    """
+
+    def __init__(self, entry_id: str) -> None:
+        self._entry_id = entry_id
+
+    async def async_step_init(self, user_input: dict[str, str] | None = None) -> RepairsFlowResult:
+        """Open straight on the confirmation."""
+        return await self.async_step_confirm()
+
+    async def async_step_confirm(
+        self, user_input: dict[str, str] | None = None
+    ) -> RepairsFlowResult:
+        """Ask first, with what changes; on submit, apply the reset."""
+        entry = _loaded_entry(self.hass, self._entry_id)
+        if entry is None:
+            return self.async_abort(reason="entry_not_loaded")
+        coordinators = entry.runtime_data.coordinators.values()
+        if user_input is None:
+            summary = variant_reset_summary(self.hass, entry, coordinators)
+            return self.async_show_form(
+                step_id="confirm",
+                data_schema=vol.Schema({}),
+                description_placeholders={
+                    "account": errors.account_label(entry),
+                    "disable": str(summary.disable),
+                    "enable": str(summary.enable),
+                    "devices": ", ".join(summary.devices),
+                },
+            )
+        async_reset_variant_rows(self.hass, entry, coordinators)
+        return self.async_create_entry(data={})
+
+
 async def async_create_fix_flow(
     hass: HomeAssistant,
     issue_id: str,
@@ -256,4 +297,6 @@ async def async_create_fix_flow(
         return PendingInvitesFix(str(data["entry_id"]))
     if issue_id.startswith(f"{ISSUE_PUSH_NEEDED}_") and data is not None:
         return PushNeededFix(str(data["entry_id"]))
+    if issue_id.startswith(f"{ISSUE_VARIANT_RESET}_") and data is not None:
+        return VariantResetFix(str(data["entry_id"]))
     return ConfirmRepairFlow()

@@ -155,6 +155,7 @@ from .const import (
     ISSUE_SESSION_REPLACED,
     ISSUE_STATION_P2P_ID_UNSUPPORTED,
     ISSUE_STATION_WEBRTC_ONLY,
+    ISSUE_VARIANT_RESET,
     MEDIA_DOCS_URL,
 )
 
@@ -1513,5 +1514,47 @@ def sync_push_needed_issue(
         translation_placeholders={
             "account": account_label(entry),
             "stations": ", ".join(sorted(needing)),
+        },
+    )
+
+
+def variant_reset_issue_id(entry_id: str) -> str:
+    """The account's setting-version reset issue: one per entry."""
+    return f"{ISSUE_VARIANT_RESET}_{entry_id}"
+
+
+def sync_variant_reset_issue(
+    hass: HomeAssistant,
+    entry: ConfigEntry[Any],
+    *,
+    disable: int,
+    enable: int,
+    devices: Sequence[str],
+) -> None:
+    """Offer the reset of setting versions while it would disable ``disable`` controls of
+    versions the eufy app does not use (on ``devices``, by name); withdraw it at 0.
+
+    Fixable: the fix enables the version in use (``enable`` controls are off) and disables
+    the others. Not persistent; every setup raises or deletes it, and an ignore survives
+    a restart (Home Assistant keeps it with the issue id).
+    """
+    issue_id = variant_reset_issue_id(entry.entry_id)
+    if not disable:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        data={"entry_id": entry.entry_id},
+        is_fixable=True,
+        is_persistent=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=ISSUE_VARIANT_RESET,
+        translation_placeholders={
+            "account": account_label(entry),
+            "disable": str(disable),
+            "enable": str(enable),
+            "devices": ", ".join(devices),
         },
     )

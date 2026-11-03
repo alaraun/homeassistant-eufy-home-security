@@ -7,7 +7,7 @@ import contextlib
 import logging
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
-from typing import Any, Final
+from typing import Any, Final, NamedTuple
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_EMAIL, EVENT_HOMEASSISTANT_STOP, Platform
@@ -525,6 +525,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     }
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _async_mark_new_variant_rows(hass, entry, coordinators.values(), known)
+    async_sync_variant_reset_issue(hass, entry, coordinators.values())
     for serial, storage_coordinator in storage.items():
         if coordinators[serial].station.connected:
             # The first storage read, as a task so a slow or failed one never holds
@@ -732,6 +733,87 @@ def _async_mark_new_variant_rows(
             and registered.disabled_by is er.RegistryEntryDisabler.INTEGRATION
         ):
             _async_mark_variant(registry, registered, VARIANT_OFF)
+
+
+def variant_reset_plan(
+    hass: HomeAssistant, entry: EufyConfigEntry, coordinators: Iterable[StationCoordinator]
+) -> list[tuple[er.RegistryEntry, bool]]:
+    """The variant-group rows a reset to the eufy app's defaults changes, each with whether
+    it ends enabled: the member in use on, the others off, each marked as this
+    integration's. Left out: rows the user set (marked "user", disabled by the user, or on
+    while marked "off"), rows disabled by Home Assistant or with their device, rows of a
+    disabled device. An unmarked row counts as this integration's."""
+    integration = er.RegistryEntryDisabler.INTEGRATION
+    plan: list[tuple[er.RegistryEntry, bool]] = []
+    for spec, registered in _variant_rows(hass, entry, coordinators):
+        mark = variant_mark(registered)
+        enabled = registered.disabled_by is None
+        if (
+            mark == VARIANT_USER
+            or registered.disabled_by not in (None, integration)
+            or (enabled and mark == VARIANT_OFF)
+        ):
+            continue
+        on = spec.in_use is True
+        if enabled != on or mark != (VARIANT_ON if on else VARIANT_OFF):
+            plan.append((registered, on))
+    return plan
+
+
+class VariantReset(NamedTuple):
+    """What :func:`async_reset_variant_rows` would change now."""
+
+    disable: int
+    """Controls of versions the app does not use that are on."""
+    enable: int
+    """Controls of the version in use that are off."""
+    devices: list[str]
+    """The names of the devices of the controls it disables, sorted."""
+
+
+def variant_reset_summary(
+    hass: HomeAssistant, entry: EufyConfigEntry, coordinators: Iterable[StationCoordinator]
+) -> VariantReset:
+    """Count :func:`variant_reset_plan`'s changes of state; a change of mark only is none."""
+    devices = dr.async_get(hass)
+    disable = enable = 0
+    names: set[str] = set()
+    for registered, on in variant_reset_plan(hass, entry, coordinators):
+        if on:
+            if registered.disabled_by is not None:
+                enable += 1
+            continue
+        if registered.disabled_by is not None:
+            continue
+        disable += 1
+        device = devices.async_get(registered.device_id) if registered.device_id else None
+        if device is not None and (name := device.name_by_user or device.name):
+            names.add(name)
+    return VariantReset(disable, enable, sorted(names))
+
+
+def async_sync_variant_reset_issue(
+    hass: HomeAssistant, entry: EufyConfigEntry, coordinators: Iterable[StationCoordinator]
+) -> None:
+    """Offer the reset (:func:`async_reset_variant_rows`) while it would disable a control:
+    another version's, on, that the user has not set; withdraw it otherwise."""
+    summary = variant_reset_summary(hass, entry, coordinators)
+    errors.sync_variant_reset_issue(
+        hass, entry, disable=summary.disable, enable=summary.enable, devices=summary.devices
+    )
+
+
+def async_reset_variant_rows(
+    hass: HomeAssistant, entry: EufyConfigEntry, coordinators: Iterable[StationCoordinator]
+) -> None:
+    """Apply :func:`variant_reset_plan`: enable the member in use, disable the others (by the
+    integration), and mark each row. Enabling a row makes Home Assistant reload the entry
+    once. Logs nothing."""
+    registry = er.async_get(hass)
+    integration = er.RegistryEntryDisabler.INTEGRATION
+    for registered, on in variant_reset_plan(hass, entry, coordinators):
+        registry.async_update_entity(registered.entity_id, disabled_by=None if on else integration)
+        _async_mark_variant(registry, registered, VARIANT_ON if on else VARIANT_OFF)
 
 
 def variant_mark(registered: er.RegistryEntry) -> str | None:
@@ -942,7 +1024,8 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry[Any]) -> No
     cloud. The store itself is never deleted (library guide, "Keep it").
 
     Any account-id-mismatch or cipher-unavailable issue goes too: an entry whose
-    setup failed was never unloaded, so nothing else deletes it. The entry's cached
+    setup failed was never unloaded, so nothing else deletes it. So does the
+    setting-version reset issue, which outlives an unload. The entry's cached
     stills are deleted, and with the last entry the dashboard cards' resources. The
     record of the recordings copied into the history goes too; the files stay.
     """
@@ -954,4 +1037,5 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry[Any]) -> No
     ):
         await card.async_remove_card_resource(hass)
     errors.sync_media_not_persistent_issue(hass, entry, None)
+    errors.sync_variant_reset_issue(hass, entry, disable=0, enable=0, devices=())
     await async_forget_account(runtime.cache_store(hass, entry.data[CONF_EMAIL]))
