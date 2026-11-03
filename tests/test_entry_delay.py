@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from collections.abc import Callable, Iterator
-from datetime import timedelta
-from typing import Final
+from collections.abc import Callable
+from datetime import datetime, timedelta
+from typing import Any, Final
 
 import pytest
 from conftest import (
@@ -30,22 +30,34 @@ from conftest import (
     wait_until,
 )
 from eufy_home_security import (
+    AlarmChanged,
     AlarmDelayChanged,
     EufySecurity,
     Event,
-    ParamChanged,
+    EventSource,
+    GuardMode,
+    GuardModeChanged,
     PushMessageType,
-    Station,
-    ValueSource,
 )
 from eufy_home_security.p2p import FrameType
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation, camera_device
 from homeassistant.components.alarm_control_panel import DOMAIN as ALARM_DOMAIN
-from homeassistant.const import ATTR_ENTITY_ID, SERVICE_ALARM_DISARM, Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.const import (
+    ATTR_ENTITY_ID,
+    EVENT_STATE_CHANGED,
+    EVENT_STATE_REPORTED,
+    SERVICE_ALARM_DISARM,
+    Platform,
+)
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed_exact,
+)
 
+from custom_components.eufy_home_security import detections
 from custom_components.eufy_home_security.const import (
     ATTR_DELAY_SECONDS,
     ATTR_DELAY_UNTIL,
@@ -55,9 +67,20 @@ from custom_components.eufy_home_security.const import (
 DOOR_SN: Final = "T8900P0000000001"
 _DOOR_CHANNEL: Final = 2
 _STATION_CHANNEL: Final = 255
-_SERIALLESS_CHANNEL: Final = 4
 _DOOR_PARAM: Final = 1550
-_BATTERY_PARAM: Final = 1101
+_RSSI_PARAM: Final = 1141
+# The HomeBase's notify of several parameters of one device at once.
+_PARAM_LIST_CMD: Final = 1829
+# An entry sensor's parameters as a HomeBase 3 lists them: battery, RSSI, door and
+# three more, each value a string.
+_SENSOR_PARAMS: Final = {
+    1101: "100",
+    1601: "0",
+    _RSSI_PARAM: "-65",
+    1243: "2",
+    61016: "0",
+    _DOOR_PARAM: "0",
+}
 # The alarm-delay frame's alarm type for a triggered sensor.
 _SENSOR_TRIGGERED: Final = 6
 
@@ -67,16 +90,34 @@ def _add_door(station: FakeStation, cloud: FakeCloud) -> None:
     cloud.devices.append(
         camera_device(DOOR_SN, station_sn=station.serial, channel=_DOOR_CHANNEL, name="Door")
     )
-    station.params[_DOOR_CHANNEL] = {_BATTERY_PARAM: "90", _DOOR_PARAM: "0"}
+    station.params[_DOOR_CHANNEL] = dict(_SENSOR_PARAMS)
 
 
-def _send_door(station: FakeStation, status: int) -> None:
-    """The station's door notify about the entry sensor's channel."""
-    station.send_json(
-        FrameType.NOTIFY_PAYLOAD,
-        {"cmd": _DOOR_PARAM, "payload": {"status": status}},
-        device_channel=_DOOR_CHANNEL,
-    )
+def _door_list(door: str, rssi: str) -> dict[str, object]:
+    """The HomeBase's parameter list notify about the sensor: every value a string."""
+    values = {**_SENSOR_PARAMS, _RSSI_PARAM: rssi, _DOOR_PARAM: door}
+    return {
+        "cmd": _PARAM_LIST_CMD,
+        "payload": {
+            "params": [
+                {"dev_type": _DOOR_CHANNEL, "param_type": param, "param_value": value}
+                for param, value in values.items()
+            ]
+        },
+    }
+
+
+def _send_door(station: FakeStation, status: int, *, shape: str = "single") -> None:
+    """The station's door notify about the entry sensor's channel.
+
+    ``single``: the door value alone; ``list``: the parameter list, its RSSI moving
+    with the door.
+    """
+    if shape == "list":
+        obj = _door_list(str(status), "-61" if status else "-63")
+    else:
+        obj = {"cmd": _DOOR_PARAM, "payload": {"status": status}}
+    station.send_json(FrameType.NOTIFY_PAYLOAD, obj, device_channel=_DOOR_CHANNEL)
 
 
 async def _handle(hass: HomeAssistant, entry: MockConfigEntry, event: Event) -> None:
@@ -90,32 +131,23 @@ async def _unload(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     await hass.async_block_till_done()
 
 
+async def _at(hass: HomeAssistant, anchor: datetime, seconds: float) -> None:
+    """Fire the timers due ``seconds`` after ``anchor``, to the microsecond."""
+    async_fire_time_changed_exact(hass, anchor + timedelta(seconds=seconds))
+    await hass.async_block_till_done()
+
+
 # ── the door ─────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture
-def quiet_dumps(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[bool]]:
-    """Hold back ``StationStateChanged`` while the yielded flag is True.
-
-    Patched before setup: the station binds its dump listener when it starts.
-    """
-    quiet = [False]
-    original = Station._on_dump_complete
-
-    def _on_dump_complete(self: Station) -> None:
-        if not quiet[0]:
-            original(self)
-
-    monkeypatch.setattr(Station, "_on_dump_complete", _on_dump_complete)
-    yield quiet
-
-
+@pytest.mark.parametrize("shape", ["single", "list"])
 async def test_a_door_notify_moves_the_door_entity_without_a_poll(
     hass: HomeAssistant,
     fake_station: FakeStation,
     fake_cloud: FakeCloud,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
+    shape: str,
 ) -> None:
     """Open, then closed, each from the station's notify alone."""
     _add_door(fake_station, fake_cloud)
@@ -126,138 +158,11 @@ async def test_a_door_notify_moves_the_door_entity_without_a_poll(
     assert state_of(hass, entity_id) == "off"
     states = record_states(hass, entity_id)
 
-    _send_door(fake_station, 1)
+    _send_door(fake_station, 1, shape=shape)
     await wait_until(lambda: state_of(hass, entity_id) == "on")
-    _send_door(fake_station, 0)
+    _send_door(fake_station, 0, shape=shape)
     await wait_until(lambda: state_of(hass, entity_id) == "off")
     assert states == ["on", "off"]
-    await _unload(hass, entry)
-
-
-async def test_the_notify_itself_refreshes_the_door_before_the_station_state(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    fake_cloud: FakeCloud,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    quiet_dumps: list[bool],
-) -> None:
-    """With no ``StationStateChanged`` following, the ``ParamChanged`` moves the door."""
-    _add_door(fake_station, fake_cloud)
-    seed_warm_cache()
-    entry = add_entry(hass)
-    assert await setup_entry(hass, entry)
-    entity_id = entity_id_for(hass, Platform.BINARY_SENSOR, DOOR_SN, "sensor_door_status")
-    assert state_of(hass, entity_id) == "off"
-
-    quiet_dumps[0] = True
-    _send_door(fake_station, 1)
-    await wait_until(lambda: state_of(hass, entity_id) == "on")
-    quiet_dumps[0] = False
-    await _unload(hass, entry)
-
-
-@pytest.mark.parametrize(
-    ("source", "channel", "station_sn", "refreshed"),
-    [
-        (ValueSource.NOTIFY, _DOOR_CHANNEL, SYNTHETIC.station_sn, True),
-        (ValueSource.NOTIFY, _STATION_CHANNEL, SYNTHETIC.station_sn, True),
-        (ValueSource.P2P, _DOOR_CHANNEL, SYNTHETIC.station_sn, False),
-        (ValueSource.CLOUD, _DOOR_CHANNEL, SYNTHETIC.station_sn, False),
-        (ValueSource.NOTIFY, 9, SYNTHETIC.station_sn, False),
-        (ValueSource.NOTIFY, _SERIALLESS_CHANNEL, SYNTHETIC.station_sn, False),
-        (ValueSource.NOTIFY, _DOOR_CHANNEL, "T8030P0000000999", False),
-    ],
-    ids=[
-        "notify-device",
-        "notify-station",
-        "p2p",
-        "cloud",
-        "unserved-channel",
-        "serialless-slot",
-        "other-station",
-    ],
-)
-async def test_only_a_notify_about_a_served_device_refreshes_from_the_station_state(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    fake_cloud: FakeCloud,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    source: ValueSource,
-    channel: int,
-    station_sn: str,
-    refreshed: bool,
-) -> None:
-    """A NOTIFY about the station or a device it serves shows ``station.state``.
-
-    Other sources wait for ``StationStateChanged`` or the poll; a channel no served
-    device is on and a station this entry does not serve change nothing.
-    """
-    _add_door(fake_station, fake_cloud)
-    # A slot the station reports that the cloud list does not name: no serial.
-    fake_station.params[_SERIALLESS_CHANNEL] = {_BATTERY_PARAM: "80"}
-    seed_warm_cache()
-    entry = add_entry(hass)
-    assert await setup_entry(hass, entry)
-    coordinator = entry.runtime_data.coordinators[SYNTHETIC.station_sn]
-    entity_id = entity_id_for(hass, Platform.BINARY_SENSOR, DOOR_SN, "sensor_door_status")
-    stale = coordinator.data
-    _send_door(fake_station, 1)
-    await wait_until(lambda: state_of(hass, entity_id) == "on")
-    # The coordinator still shows the closed door the station has since replaced.
-    coordinator.data = stale
-    coordinator.async_update_listeners()
-    await hass.async_block_till_done()
-    assert state_of(hass, entity_id) == "off"
-
-    await _handle(
-        hass,
-        entry,
-        ParamChanged(
-            station_sn=station_sn,
-            channel=channel,
-            param_id=_DOOR_PARAM,
-            old="0",
-            new="1",
-            source=source,
-        ),
-    )
-    assert state_of(hass, entity_id) == ("on" if refreshed else "off")
-    await _unload(hass, entry)
-
-
-async def test_a_notify_before_the_station_has_a_state_changes_nothing(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    fake_cloud: FakeCloud,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """With no merged state to show, the shown one stays."""
-    _add_door(fake_station, fake_cloud)
-    seed_warm_cache()
-    entry = add_entry(hass)
-    assert await setup_entry(hass, entry)
-    coordinator = entry.runtime_data.coordinators[SYNTHETIC.station_sn]
-    shown = coordinator.data
-    monkeypatch.setattr(Station, "state", property(lambda _self: None))
-
-    await _handle(
-        hass,
-        entry,
-        ParamChanged(
-            station_sn=SYNTHETIC.station_sn,
-            channel=_DOOR_CHANNEL,
-            param_id=_DOOR_PARAM,
-            old="0",
-            new="1",
-            source=ValueSource.NOTIFY,
-        ),
-    )
-    assert coordinator.data is shown
-    monkeypatch.undo()
     await _unload(hass, entry)
 
 
@@ -287,7 +192,11 @@ async def test_a_station_setting_from_a_notify_says_its_value_source_is_notify(
 
 
 def _delay(
-    delaying: bool = True, seconds: int | None = 30, *, ago: float = 0.0
+    delaying: bool = True,
+    seconds: int | None = 30,
+    *,
+    ago: float = 0.0,
+    at: datetime | None = None,
 ) -> AlarmDelayChanged:
     """The library's ``AlarmDelayChanged`` of a HomeBase 3: the station's channel."""
     return AlarmDelayChanged(
@@ -296,8 +205,40 @@ def _delay(
         channel=_STATION_CHANNEL,
         alarm_type=_SENSOR_TRIGGERED if delaying else None,
         seconds=seconds if delaying else None,
-        at=dt_util.utcnow() - timedelta(seconds=ago),
+        at=(at or dt_util.utcnow()) - timedelta(seconds=ago),
     )
+
+
+def _delay_push(at: datetime, *, skew: float = 0.0, seconds: int = 30) -> Event:
+    """An authenticated cloud delay push, stamped ``skew`` seconds off ``at``."""
+    t_ms = int((at.timestamp() + skew) * 1000)
+    return station_event(PushMessageType.ALARM_DELAY, t_ms=t_ms, alarm_delay=seconds)
+
+
+def _until(hass: HomeAssistant, entity_id: str) -> datetime:
+    """The shown ``delay_until``."""
+    until = dt_util.parse_datetime(str(_attributes(hass, entity_id)[ATTR_DELAY_UNTIL]))
+    assert until is not None
+    return until
+
+
+def _record_writes(hass: HomeAssistant, entity_id: str) -> list[tuple[str, object]]:
+    """Every state write of ``entity_id``, a repeat of the shown state included: its
+    state and ``delay_until``."""
+    writes: list[tuple[str, object]] = []
+
+    @callback
+    def _ours(data: Any) -> bool:
+        return bool(data["entity_id"] == entity_id and data["new_state"] is not None)
+
+    @callback
+    def _on_write(event: Any) -> None:
+        new = event.data["new_state"]
+        writes.append((new.state, new.attributes.get(ATTR_DELAY_UNTIL)))
+
+    hass.bus.async_listen(EVENT_STATE_CHANGED, _on_write, event_filter=_ours)
+    hass.bus.async_listen(EVENT_STATE_REPORTED, _on_write, event_filter=_ours)
+    return writes
 
 
 def _attributes(hass: HomeAssistant, entity_id: str) -> dict[str, object]:
@@ -314,7 +255,7 @@ async def test_the_alarm_delay_frame_shows_pending_until_it_runs_out(
 ) -> None:
     """The station's frame shows pending with its seconds; no end frame comes.
 
-    The countdown ends on its own after ``seconds``: back to the mode in force.
+    The countdown ends on its own 2 s after ``seconds``: back to the mode in force.
     """
     entry = await set_up_warm(hass, seed_warm_cache)
     anchor = dt_util.utcnow()
@@ -330,15 +271,97 @@ async def test_the_alarm_delay_frame_shows_pending_until_it_runs_out(
     assert attributes[ATTR_DELAY_SECONDS] == 30
     until = dt_util.parse_datetime(str(attributes[ATTR_DELAY_UNTIL]))
     assert until is not None
-    assert abs((until - anchor).total_seconds() - 30) < 2
+    assert abs((until - anchor).total_seconds() - 30) < 1
 
-    await advance_to_poll(hass, 29, anchor=anchor)
-    assert state_of(hass, entity_id) == "pending"
     await advance_to_poll(hass, 31, anchor=anchor)
+    assert state_of(hass, entity_id) == "pending"
+    await advance_to_poll(hass, 33, anchor=anchor)
     assert state_of(hass, entity_id) == "armed_away"
     assert ATTR_DELAY_UNTIL not in _attributes(hass, entity_id)
     assert ATTR_DELAY_SECONDS not in _attributes(hass, entity_id)
     assert states == ["pending", "armed_away"]
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("start", ["frame", "push"])
+async def test_pending_outlasts_the_delay_by_two_seconds(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    start: str,
+) -> None:
+    """With no alarm, pending ends 2 s after ``seconds``; ``delay_until`` is at + seconds.
+
+    The alarm the delay runs into comes a little after its seconds.
+    """
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = panel_entity_id(hass)
+    anchor = dt_util.utcnow()
+    states = record_states(hass, entity_id)
+
+    await _handle(hass, entry, _delay(at=anchor) if start == "frame" else _delay_push(anchor))
+    assert abs((_until(hass, entity_id) - anchor).total_seconds() - 30) < 1
+    await _at(hass, anchor, 31.9)
+    assert state_of(hass, entity_id) == "pending"
+    await _at(hass, anchor, 32.1)
+    assert state_of(hass, entity_id) == "armed_away"
+    assert states == ["pending", "armed_away"]
+    await _unload(hass, entry)
+
+
+async def test_the_real_frame_order_runs_the_delay_into_the_alarm_with_no_armed_state(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A HomeBase 3's frames for a door opened in Away, with their timing.
+
+    The parameter list (door open, RSSI moved), the delay on the station's channel
+    25 ms later, a poll, the alarm tone on the sensor's channel 30.009 s after the
+    delay, the tone's end and the door closing. The tone lands while pending.
+    """
+    _add_door(fake_station, fake_cloud)
+    seed_warm_cache()
+    entry = add_entry(hass)
+    assert await setup_entry(hass, entry)
+    panel = panel_entity_id(hass)
+    door = entity_id_for(hass, Platform.BINARY_SENSOR, DOOR_SN, "sensor_door_status")
+    coordinator = entry.runtime_data.coordinators[SYNTHETIC.station_sn]
+    assert state_of(hass, panel) == "armed_away"
+    panel_states = record_states(hass, panel)
+    door_states = record_states(hass, door)
+
+    _send_door(fake_station, 1, shape="list")
+    await wait_until(lambda: state_of(hass, door) == "on")
+    fake_station.send_alarm_frame(
+        FrameType.ALARM_DELAY_NOTIFY, _SENSOR_TRIGGERED, 30, channel=_STATION_CHANNEL
+    )
+    await wait_until(lambda: state_of(hass, panel) == "pending")
+    anchor = dt_util.utcnow()
+    assert _attributes(hass, panel)[ATTR_DELAY_SECONDS] == 30
+
+    await _at(hass, anchor, 6.4)
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert state_of(hass, panel) == "pending"
+    await _at(hass, anchor, 30.009)
+    assert state_of(hass, panel) == "pending"
+    fake_station.send_alarm_frame(
+        FrameType.ALARM_TONE_NOTIFY, _SENSOR_TRIGGERED, 30, channel=_DOOR_CHANNEL
+    )
+    await wait_until(lambda: state_of(hass, panel) == "triggered")
+    await _at(hass, anchor, 60.012)
+    fake_station.send_alarm_frame(FrameType.ALARM_TONE_NOTIFY, 0, 0, channel=_DOOR_CHANNEL)
+    await wait_until(lambda: state_of(hass, panel) == "armed_away")
+    await _at(hass, anchor, 72.125)
+    _send_door(fake_station, 0, shape="list")
+    await wait_until(lambda: state_of(hass, door) == "off")
+
+    assert panel_states == ["pending", "triggered", "armed_away"]
+    assert door_states == ["on", "off"]
     await _unload(hass, entry)
 
 
@@ -379,7 +402,7 @@ async def test_the_alarm_ends_the_delay_and_the_expiry_never_lowers_triggered(
     assert ATTR_DELAY_UNTIL not in _attributes(hass, entity_id)
     assert ATTR_DELAY_SECONDS not in _attributes(hass, entity_id)
 
-    await advance_to_poll(hass, 31, anchor=anchor)
+    await advance_to_poll(hass, 33, anchor=anchor)
     assert state_of(hass, entity_id) == "triggered"
     await _unload(hass, entry)
 
@@ -404,28 +427,91 @@ async def test_a_delay_frame_while_triggered_changes_nothing(
     await _unload(hass, entry)
 
 
-async def test_a_second_start_refreshes_the_entry_delay(
+@pytest.mark.parametrize(
+    ("seconds", "ends", "writes"),
+    [(45, 47, 2), (10, 32, 1)],
+    ids=["later-end", "earlier-end"],
+)
+async def test_a_second_start_keeps_the_later_end(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    seconds: int,
+    ends: int,
+    writes: int,
+) -> None:
+    """Another start runs pending to the later of its end and the running one.
+
+    A start that moves nothing shown writes no state.
+    """
+    entry = await set_up_warm(hass, seed_warm_cache)
+    anchor = dt_util.utcnow()
+    entity_id = panel_entity_id(hass)
+    recorded = _record_writes(hass, entity_id)
+
+    await _handle(hass, entry, _delay(seconds=30, at=anchor))
+    await _handle(hass, entry, _delay(seconds=seconds, at=anchor))
+    assert _attributes(hass, entity_id)[ATTR_DELAY_SECONDS] == max(30, seconds)
+    assert len(recorded) == writes
+
+    await _at(hass, anchor, ends - 0.1)
+    assert state_of(hass, entity_id) == "pending"
+    await _at(hass, anchor, ends + 0.1)
+    assert state_of(hass, entity_id) == "armed_away"
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("skew", [-0.999, -3.0])
+async def test_a_push_stamped_before_the_frame_of_one_trigger_moves_nothing(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    skew: float,
+) -> None:
+    """The frame first, then the same trigger's push stamped by the station's clock.
+
+    The push's earlier end neither shortens pending nor writes state.
+    """
+    entry = await set_up_warm(hass, seed_warm_cache)
+    anchor = dt_util.utcnow()
+    entity_id = panel_entity_id(hass)
+    recorded = _record_writes(hass, entity_id)
+
+    await _handle(hass, entry, _delay(at=anchor))
+    until = _attributes(hass, entity_id)[ATTR_DELAY_UNTIL]
+    await _handle(hass, entry, _delay_push(anchor, skew=skew))
+    assert recorded == [("pending", until)]
+
+    await _at(hass, anchor, 31.9)
+    assert state_of(hass, entity_id) == "pending"
+    await _at(hass, anchor, 32.1)
+    assert state_of(hass, entity_id) == "armed_away"
+    await _unload(hass, entry)
+
+
+async def test_a_frame_after_the_push_of_one_trigger_moves_the_end_later(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """Another trigger's start restarts the countdown from its own seconds."""
+    """A push stamped 3 s before the frame, then the frame: the frame's end is shown."""
     entry = await set_up_warm(hass, seed_warm_cache)
     anchor = dt_util.utcnow()
     entity_id = panel_entity_id(hass)
+    recorded = _record_writes(hass, entity_id)
 
-    await _handle(hass, entry, _delay(seconds=30))
-    await advance_to_poll(hass, 20, anchor=anchor)
-    assert state_of(hass, entity_id) == "pending"
-    await _handle(hass, entry, _delay(seconds=45))
-    assert _attributes(hass, entity_id)[ATTR_DELAY_SECONDS] == 45
+    await _handle(hass, entry, _delay_push(anchor, skew=-3.0))
+    assert abs((_until(hass, entity_id) - anchor).total_seconds() - 27) < 1
+    await _handle(hass, entry, _delay(at=anchor))
+    assert abs((_until(hass, entity_id) - anchor).total_seconds() - 30) < 1
+    assert [state for state, _ in recorded] == ["pending", "pending"]
 
-    await advance_to_poll(hass, 31, anchor=anchor)
+    await _at(hass, anchor, 31.9)
     assert state_of(hass, entity_id) == "pending"
-    await advance_to_poll(hass, 44, anchor=anchor)
-    assert state_of(hass, entity_id) == "pending"
-    await advance_to_poll(hass, 47, anchor=anchor)
+    await _at(hass, anchor, 32.1)
     assert state_of(hass, entity_id) == "armed_away"
     await _unload(hass, entry)
 
@@ -446,9 +532,9 @@ async def test_the_delay_counts_from_when_the_library_saw_the_frame(
     assert states == []
     await _handle(hass, entry, _delay(seconds=30, ago=10))
     assert state_of(hass, entity_id) == "pending"
-    await advance_to_poll(hass, 19, anchor=anchor)
-    assert state_of(hass, entity_id) == "pending"
     await advance_to_poll(hass, 21, anchor=anchor)
+    assert state_of(hass, entity_id) == "pending"
+    await advance_to_poll(hass, 23, anchor=anchor)
     assert state_of(hass, entity_id) == "armed_away"
     await _unload(hass, entry)
 
@@ -513,8 +599,116 @@ async def test_a_disarm_ends_the_entry_delay(
     assert state_of(hass, entity_id) == "disarmed"
     assert ATTR_DELAY_UNTIL not in _attributes(hass, entity_id)
     states = record_states(hass, entity_id)
-    await advance_to_poll(hass, 31, anchor=anchor)
+    await advance_to_poll(hass, 33, anchor=anchor)
     assert states == []
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("start", ["frame", "push"])
+async def test_a_disarm_the_station_reports_live_ends_the_entry_delay_at_once(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    start: str,
+) -> None:
+    """A keypad or app disarm seen only as the station's own mode report ends pending."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = panel_entity_id(hass)
+    anchor = dt_util.utcnow()
+    states = record_states(hass, entity_id)
+
+    await _handle(hass, entry, _delay(at=anchor) if start == "frame" else _delay_push(anchor))
+    await _at(hass, anchor, 5)
+    fake_station.send_alarm_mode(int(GuardMode.DISARMED))
+    await wait_until(lambda: state_of(hass, entity_id) == "disarmed")
+    assert ATTR_DELAY_UNTIL not in _attributes(hass, entity_id)
+    await _at(hass, anchor, 33)
+    assert states == ["pending", "disarmed"]
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize(
+    ("source", "mode", "ended"),
+    [
+        (EventSource.P2P, GuardMode.DISARMED, True),
+        (EventSource.P2P, GuardMode.OFF, True),
+        (EventSource.P2P, GuardMode.HOME, False),
+        (EventSource.CLOUD, GuardMode.DISARMED, False),
+    ],
+    ids=["live-disarmed", "live-off", "live-armed", "cloud-disarmed"],
+)
+async def test_only_a_live_disarmed_mode_report_ends_the_entry_delay(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    source: EventSource,
+    mode: GuardMode,
+    ended: bool,
+) -> None:
+    """The station's own report ends pending; a cloud push's mode has no order, an armed
+    mode is no disarm."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = panel_entity_id(hass)
+
+    await _handle(hass, entry, _delay())
+    await _handle(
+        hass,
+        entry,
+        GuardModeChanged(
+            station_sn=SYNTHETIC.station_sn, mode=mode, active_mode=mode, source=source
+        ),
+    )
+    assert (state_of(hass, entity_id) != "pending") is ended
+    await _unload(hass, entry)
+
+
+async def test_a_repeated_live_disarmed_report_ends_a_pushed_entry_delay(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A delay push on a disarmed panel shows pending; the station's own disarmed report,
+    though it moves no mode, ends it."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = panel_entity_id(hass)
+    disarmed = GuardModeChanged(
+        station_sn=SYNTHETIC.station_sn,
+        mode=GuardMode.DISARMED,
+        active_mode=GuardMode.DISARMED,
+        source=EventSource.P2P,
+    )
+    await _handle(hass, entry, disarmed)
+    await _handle(hass, entry, _delay_push(dt_util.utcnow()))
+    assert state_of(hass, entity_id) == "pending"
+
+    await _handle(hass, entry, disarmed)
+    assert state_of(hass, entity_id) == "disarmed"
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("mode", [GuardMode.DISARMED, GuardMode.OFF])
+async def test_a_delay_start_on_a_disarmed_panel_shows_nothing(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    caplog: pytest.LogCaptureFixture,
+    mode: GuardMode,
+) -> None:
+    """The station runs an entry delay only when armed: a start while disarmed is ignored."""
+    caplog.set_level(logging.DEBUG)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = panel_entity_id(hass)
+    fake_station.send_alarm_mode(int(mode))
+    await wait_until(lambda: state_of(hass, entity_id) == "disarmed")
+    states = record_states(hass, entity_id)
+
+    await _handle(hass, entry, _delay())
+    assert states == []
+    assert "entry delay start ignored" in caplog.text
     await _unload(hass, entry)
 
 
@@ -540,9 +734,11 @@ async def test_the_entry_delay_survives_an_entry_reload_with_its_attributes(
     original = dt_util.parse_datetime(str(until))
     assert restored is not None
     assert original is not None
-    assert abs((restored - original).total_seconds()) < 2
+    assert abs((restored - original).total_seconds()) < 1
 
     await advance_to_poll(hass, 31, anchor=anchor)
+    assert state_of(hass, entity_id) == "pending"
+    await advance_to_poll(hass, 33, anchor=anchor)
     await wait_until(lambda: state_of(hass, entity_id) == "armed_away")
     await _unload(hass, entry)
 
@@ -570,19 +766,44 @@ async def test_a_cloud_delay_push_shows_the_same_attributes(
     await _unload(hass, entry)
 
 
-async def test_a_delay_for_another_station_reaches_no_panel(
+@pytest.mark.parametrize("case", ["other_station", "not_consuming"])
+@pytest.mark.parametrize("kind", ["alarm", "delay"])
+async def test_an_alarm_or_delay_reaches_only_its_station_while_the_router_consumes(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
+    case: str,
+    kind: str,
 ) -> None:
-    """The router hands a delay only to the station it names."""
+    """One for a station this entry does not serve, or one after unload began, reaches
+    no panel."""
     entry = await set_up_warm(hass, seed_warm_cache)
-    entity_id = panel_entity_id(hass)
-    states = record_states(hass, entity_id)
+    signal = detections.alarm_signal if kind == "alarm" else detections.alarm_delay_signal
+    other_sn = "T8030P0000000999"
+    seen: list[AlarmChanged | AlarmDelayChanged] = []
+    unsubs = [
+        async_dispatcher_connect(hass, signal(entry.entry_id, serial), seen.append)
+        for serial in (SYNTHETIC.station_sn, other_sn)
+    ]
+    router = entry.runtime_data.router
+    event: AlarmChanged | AlarmDelayChanged = alarm_changed() if kind == "alarm" else _delay()
+    if case == "not_consuming":
+        router.async_stop_consuming()
+        router.handle(event)
+    else:
+        router.handle(dataclasses.replace(event, station_sn=other_sn))
+    await hass.async_block_till_done()
+    assert seen == []
 
-    await _handle(hass, entry, dataclasses.replace(_delay(), station_sn="T8030P0000000999"))
-    assert states == []
+    # The control: the same event for this entry's station while it consumes arrives.
+    if case == "not_consuming":
+        router.async_start_consuming()
+    router.handle(event)
+    await hass.async_block_till_done()
+    assert seen == [event]
+    for unsub in unsubs:
+        unsub()
     await _unload(hass, entry)
 
 

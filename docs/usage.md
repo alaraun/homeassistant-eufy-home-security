@@ -39,9 +39,13 @@ reloads the integration.
   with the attributes `delay_seconds` (the delay) and `delay_until` (when it runs
   out, UTC). Then:
   - the alarm sounds: **Triggered**, as for any alarm;
-  - the delay ends without an alarm, or the panel is disarmed: the mode again;
-  - another trigger during the delay: the countdown starts again from its seconds;
-  - nothing more is heard: Pending ends on its own when the delay runs out.
+  - the HomeBase ends the delay without an alarm: the mode again;
+  - a disarm in Home Assistant, on a keypad or in the eufy app: **Disarmed** as soon
+    as the HomeBase reports it (its own report comes at once; otherwise the 45 s
+    refresh shows it);
+  - another trigger during the delay: Pending runs to whichever end is later;
+  - nothing more is heard: Pending ends on its own 2 s after `delay_until` (the
+    alarm a delay runs into comes a little after it), showing the mode again.
 
   The panel does not say which sensor started the delay; the sensor's door entity
   turns on at the same moment.

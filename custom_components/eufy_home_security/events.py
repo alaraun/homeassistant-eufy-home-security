@@ -6,10 +6,12 @@ shows or what the user must be told:
 
 - ``GuardModeChanged`` amends the coordinator's data with both modes, the selected
   one (``SCHEDULE`` while a schedule runs) and the one in force
-  (``StationCoordinator.async_apply_guard_mode``).
+  (``StationCoordinator.async_apply_guard_mode``), marked live when it came over
+  P2P (the station's own report).
 - ``StationStateChanged`` replaces the coordinator's data
   (``StationCoordinator.async_apply_state``), so one dump reconciles every entity of
-  that station. It arrives from a dump the station pushes unasked and from the
+  that station. It arrives from a dump the station pushes unasked, from the station's
+  parameter notify (an entry sensor's door shows at once, with no read) and from the
   read-back of a confirmed setting write.
 - ``StationConfigChanged`` makes the coordinator rebuild ``station_config`` and notify
   its entities (``StationCoordinator.async_apply_config_changed``): the security-mode
@@ -73,11 +75,6 @@ shows or what the user must be told:
 - ``AlarmDelayChanged`` goes to that station's panel on its alarm delay signal, as
   ``AlarmChanged``. Its channel is the frame's (255, the station), never mapped to a
   device.
-- ``ParamChanged`` from the station's parameter notify (``ValueSource.NOTIFY``)
-  about the station or a device it serves shows ``Station.state`` at once
-  (``StationCoordinator.async_apply_state``): the library has already merged the
-  value, so no read is made. The ``StationStateChanged`` that follows is then a
-  repeat. Any other source is left to that event and the poll.
 - ``DeviceAlarmChanged`` goes to that device's siren on its device alarm signal, inside
   the consuming window, as ``AlarmChanged``.
 - ``PresetsChanged`` goes to the preset manager (``PresetManager.async_apply_presets``),
@@ -94,7 +91,7 @@ shows or what the user must be told:
   client's close at unload is never seen here (the router unsubscribes first, and
   unload deletes the issue); its close while Home Assistant stops is ignored.
 
-Everything else is ignored: the poll reconciles it.
+Everything else, ``ParamChanged`` included, is ignored: the poll reconciles it.
 Nothing here logs in or calls the cloud.
 """
 
@@ -123,10 +120,10 @@ from eufy_home_security import (
     DisconnectCause,
     Event,
     EventScope,
+    EventSource,
     FrameCipher,
     GuardModeChanged,
     KeyRejectedError,
-    ParamChanged,
     PresetsChanged,
     PushChanged,
     SecurityEvent,
@@ -134,11 +131,9 @@ from eufy_home_security import (
     StationsChanged,
     StationStateChanged,
     StorageChanged,
-    ValueSource,
     ZoomChanged,
     redact_serial,
 )
-from eufy_home_security.models import STATION_CHANNEL
 
 from . import detections, errors, runtime
 from .const import CONNECTION_LOSS_GRACE_SECONDS, DOMAIN, EVENT_EUFY_HOME_SECURITY
@@ -307,7 +302,9 @@ class EventRouter:
             coordinator = self._coordinators.get(event.station_sn)
             # A station with no coordinator is ignored: its first read takes the mode.
             if coordinator is not None:
-                coordinator.async_apply_guard_mode(event.mode, event.active_mode)
+                coordinator.async_apply_guard_mode(
+                    event.mode, event.active_mode, live=event.source is EventSource.P2P
+                )
         elif isinstance(event, StationStateChanged):
             coordinator = self._coordinators.get(event.station_sn)
             # As above, a station with no coordinator is ignored. The state the
@@ -373,9 +370,6 @@ class EventRouter:
                     detections.alarm_delay_signal(self._entry.entry_id, event.station_sn),
                     event,
                 )
-        elif isinstance(event, ParamChanged):
-            if event.source is ValueSource.NOTIFY:
-                self._apply_notified_state(event)
         elif isinstance(event, DeviceAlarmChanged):
             if self._consuming and event.station_sn in self._coordinators:
                 async_dispatcher_send(
@@ -399,22 +393,6 @@ class EventRouter:
             streams = runtime.streaming(self._entry)
             if self._consuming and streams is not None:
                 streams.async_apply_zoom_report(event.device_sn, event.zoom)
-
-    @callback
-    def _apply_notified_state(self, event: ParamChanged) -> None:
-        """Show the station's merged state for a notify about it or a device it serves."""
-        coordinator = self._coordinators.get(event.station_sn)
-        if coordinator is None:
-            return
-        state = coordinator.station.state
-        if state is None:
-            return
-        if event.channel != STATION_CHANNEL:
-            device = state.devices.get(event.channel)
-            # A slot without a serial has no entities (see the coordinator).
-            if device is None or device.serial is None:
-                return
-        coordinator.async_apply_state(state)
 
     @callback
     def _handle_push(self, event: PushChanged) -> None:

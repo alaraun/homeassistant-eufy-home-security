@@ -766,7 +766,10 @@ async def test_lifecycle_an_entry_delay_shows_pending_for_its_delay(
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """An authenticated delay shows pending for alarm_delay seconds from its own time."""
+    """An authenticated delay shows pending for alarm_delay seconds from its own time.
+
+    And 2 s more, for the alarm the delay runs into.
+    """
     entry = await set_up_warm(hass, seed_warm_cache)
     entity_id = panel_entity_id(hass)
 
@@ -775,9 +778,9 @@ async def test_lifecycle_an_entry_delay_shows_pending_for_its_delay(
     )
     assert state_of(hass, entity_id) == "pending"
 
-    await advance_to_poll(hass, 29)
-    assert state_of(hass, entity_id) == "pending"
     await advance_to_poll(hass, 31)
+    assert state_of(hass, entity_id) == "pending"
+    await advance_to_poll(hass, 33)
     assert state_of(hass, entity_id) == "armed_away"
 
     await _unload(hass, entry)
@@ -1169,7 +1172,7 @@ async def test_lifecycle_pending_survives_an_entry_reload_until_its_entry_delay_
     await hass.async_block_till_done()
     assert state_of(hass, entity_id) == "pending"
 
-    await advance_to_poll(hass, 31, anchor=anchor)
+    await advance_to_poll(hass, 33, anchor=anchor)
     await wait_until(lambda: state_of(hass, entity_id) == "armed_away")
 
     await _unload(hass, entry)
@@ -1513,7 +1516,7 @@ async def test_lifecycle_a_replayed_entry_delay_cannot_cut_pending_short(
 
     # A timeless delay naming no delay at all.
     await _handle(hass, entry, station_event(PushMessageType.ALARM_DELAY, t_ms=None))
-    await advance_to_poll(hass, 31)
+    await advance_to_poll(hass, 33)
     assert state_of(hass, entity_id) == "armed_away"
 
     await _unload(hass, entry)

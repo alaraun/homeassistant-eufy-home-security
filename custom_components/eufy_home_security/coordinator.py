@@ -6,6 +6,7 @@ import dataclasses
 import logging
 from collections.abc import Callable
 from datetime import timedelta
+from enum import Enum
 from typing import TYPE_CHECKING, override
 
 from homeassistant.core import HomeAssistant, callback
@@ -29,6 +30,17 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+class ModeRead(Enum):
+    """What a mode read was, as ``async_add_mode_read_listener`` hears it."""
+
+    # This coordinator's own refresh.
+    POLL = "poll"
+    # The station's own report over the local connection (a P2P ``GuardModeChanged``).
+    LIVE = "live"
+    # A cloud push's mode, a pushed state or a write's result.
+    PUSHED = "pushed"
+
+
 class StationCoordinator(DataUpdateCoordinator[StationState]):
     """A station's latest ``StationState``.
 
@@ -40,11 +52,12 @@ class StationCoordinator(DataUpdateCoordinator[StationState]):
 
     **Mode reads.** ``async_add_mode_read_listener`` hears every mode read: each
     successful refresh, and each pushed mode or state, changed or not. Each call
-    says whether the read was this coordinator's own poll (``polled=True``) or a
-    report the station pushed or a write returned (``polled=False``). The alarm
-    panel ends an exit delay on either, but confirms a disarm during an alarm only
-    on a poll: a pushed report carries no event time, so it cannot be ordered
-    against the alarm and could be a replay. With
+    says what the read was (``ModeRead``): this coordinator's own poll, the
+    station's own report over the local connection, or a cloud push, a pushed state
+    or a write's result. The alarm panel ends an exit delay on any, ends an entry
+    delay on a disarmed live report, and confirms a disarm during an alarm on a
+    poll: a cloud push's mode carries no event time, so it cannot be ordered against
+    the alarm and could be a replay. With
     ``always_update=False`` an unchanged read notifies no entity, so it cannot be
     observed through the ordinary listeners.
     """
@@ -68,7 +81,7 @@ class StationCoordinator(DataUpdateCoordinator[StationState]):
         # Channels already reported without a serial, so a station that keeps
         # reporting one says so once rather than on every 45 s poll.
         self._logged_serialless: set[int] = set()
-        self._mode_read_listeners: list[Callable[[bool], None]] = []
+        self._mode_read_listeners: list[Callable[[ModeRead], None]] = []
         # `Station.config`, built again after a `StationConfigChanged` (`_config_stale`).
         self._config: StationConfig | None = None
         self._config_stale = True
@@ -101,8 +114,10 @@ class StationCoordinator(DataUpdateCoordinator[StationState]):
         return state
 
     @callback
-    def async_add_mode_read_listener(self, listener: Callable[[bool], None]) -> Callable[[], None]:
-        """Call ``listener(polled)`` on every mode read; returns the function that removes it."""
+    def async_add_mode_read_listener(
+        self, listener: Callable[[ModeRead], None]
+    ) -> Callable[[], None]:
+        """Call ``listener(read)`` on every mode read; returns the function that removes it."""
         self._mode_read_listeners.append(listener)
 
         @callback
@@ -113,10 +128,10 @@ class StationCoordinator(DataUpdateCoordinator[StationState]):
         return _remove
 
     @callback
-    def _async_notify_mode_read(self, *, polled: bool) -> None:
+    def _async_notify_mode_read(self, read: ModeRead) -> None:
         """Tell every mode-read listener that the station's mode was just read."""
         for listener in list(self._mode_read_listeners):
-            listener(polled)
+            listener(read)
 
     @override
     @callback
@@ -132,7 +147,7 @@ class StationCoordinator(DataUpdateCoordinator[StationState]):
         # `data` is typed as the state but is None until the first success.
         data: StationState | None = self.data
         if self.last_update_success and data is not None:
-            self._async_notify_mode_read(polled=True)
+            self._async_notify_mode_read(ModeRead.POLL)
 
     @callback
     def async_mark_not_up(self, error: BaseException) -> None:
@@ -172,12 +187,17 @@ class StationCoordinator(DataUpdateCoordinator[StationState]):
 
     @callback
     def async_apply_guard_mode(
-        self, mode: GuardMode | int, active_mode: GuardMode | int | None = None
+        self,
+        mode: GuardMode | int,
+        active_mode: GuardMode | int | None = None,
+        *,
+        live: bool = False,
     ) -> None:
         """Show a guard mode the station reported, without touching the poll timer.
 
         Called with the mode a write returned and with a pushed
-        ``GuardModeChanged``. ``mode`` is the selected mode and ``active_mode`` the
+        ``GuardModeChanged``; ``live`` when that came over the local connection
+        (``ModeRead.LIVE``). ``mode`` is the selected mode and ``active_mode`` the
         mode in force. Without ``active_mode`` the mode in force is ``mode``
         itself, except when ``mode`` is ``SCHEDULE``: a write returns only the
         selection, and the slot's mode arrives in the report that follows, so the
@@ -197,11 +217,12 @@ class StationCoordinator(DataUpdateCoordinator[StationState]):
             return
         if active_mode is None:
             active_mode = data.active_mode if mode == GuardMode.SCHEDULE else mode
+        read = ModeRead.LIVE if live else ModeRead.PUSHED
         if data.guard_mode == mode and data.active_mode == active_mode:
-            self._async_notify_mode_read(polled=False)
+            self._async_notify_mode_read(read)
             return
         self.data = dataclasses.replace(data, guard_mode=mode, active_mode=active_mode)
-        self._async_notify_mode_read(polled=False)
+        self._async_notify_mode_read(read)
         self.async_update_listeners()
 
     @callback
@@ -224,8 +245,8 @@ class StationCoordinator(DataUpdateCoordinator[StationState]):
             return
         self._async_note_serialless_devices(state)
         if state == self.data:
-            self._async_notify_mode_read(polled=False)
+            self._async_notify_mode_read(ModeRead.PUSHED)
             return
         self.data = state
-        self._async_notify_mode_read(polled=False)
+        self._async_notify_mode_read(ModeRead.PUSHED)
         self.async_update_listeners()
