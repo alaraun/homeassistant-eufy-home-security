@@ -670,26 +670,50 @@ async def test_a_repeated_live_disarmed_report_ends_a_pushed_entry_delay(
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """A delay push on a disarmed panel shows pending; the station's own disarmed report,
-    though it moves no mode, ends it."""
+    """A cloud disarmed report leaves a pushed delay pending; the station's own disarmed
+    report, though it moves no mode, ends it."""
     entry = await set_up_warm(hass, seed_warm_cache)
     entity_id = panel_entity_id(hass)
-    disarmed = GuardModeChanged(
-        station_sn=SYNTHETIC.station_sn,
-        mode=GuardMode.DISARMED,
-        active_mode=GuardMode.DISARMED,
-        source=EventSource.P2P,
-    )
-    await _handle(hass, entry, disarmed)
+    coordinator = entry.runtime_data.coordinators[SYNTHETIC.station_sn]
     await _handle(hass, entry, _delay_push(dt_util.utcnow()))
     assert state_of(hass, entity_id) == "pending"
 
-    await _handle(hass, entry, disarmed)
+    def disarmed(source: EventSource) -> GuardModeChanged:
+        return GuardModeChanged(
+            station_sn=SYNTHETIC.station_sn,
+            mode=GuardMode.DISARMED,
+            active_mode=GuardMode.DISARMED,
+            source=source,
+        )
+
+    await _handle(hass, entry, disarmed(EventSource.CLOUD))
+    assert coordinator.data.active_mode is GuardMode.DISARMED
+    assert state_of(hass, entity_id) == "pending"
+
+    await _handle(hass, entry, disarmed(EventSource.P2P))
     assert state_of(hass, entity_id) == "disarmed"
     await _unload(hass, entry)
 
 
-@pytest.mark.parametrize("mode", [GuardMode.DISARMED, GuardMode.OFF])
+# Each start of an entry delay, built at the time it is handed on.
+_DELAY_STARTS: dict[str, Callable[[], Event]] = {
+    "frame": _delay,
+    "push": lambda: _delay_push(dt_util.utcnow()),
+    "push with no seconds": lambda: station_event(PushMessageType.ALARM_DELAY, t_ms=now_ms()),
+}
+
+
+@pytest.mark.parametrize("start", _DELAY_STARTS.values(), ids=_DELAY_STARTS)
+@pytest.mark.parametrize(
+    ("mode", "shown", "expected"),
+    [
+        (GuardMode.DISARMED, "disarmed", []),
+        (GuardMode.OFF, "disarmed", []),
+        # Control: the same start on an armed panel shows pending.
+        (GuardMode.HOME, "armed_home", ["pending"]),
+    ],
+    ids=["disarmed", "off", "armed control"],
+)
 async def test_a_delay_start_on_a_disarmed_panel_shows_nothing(
     hass: HomeAssistant,
     fake_station: FakeStation,
@@ -697,18 +721,21 @@ async def test_a_delay_start_on_a_disarmed_panel_shows_nothing(
     seed_warm_cache: Callable[..., None],
     caplog: pytest.LogCaptureFixture,
     mode: GuardMode,
+    shown: str,
+    expected: list[str],
+    start: Callable[[], Event],
 ) -> None:
     """The station runs an entry delay only when armed: a start while disarmed is ignored."""
     caplog.set_level(logging.DEBUG)
     entry = await set_up_warm(hass, seed_warm_cache)
     entity_id = panel_entity_id(hass)
     fake_station.send_alarm_mode(int(mode))
-    await wait_until(lambda: state_of(hass, entity_id) == "disarmed")
+    await wait_until(lambda: state_of(hass, entity_id) == shown)
     states = record_states(hass, entity_id)
 
-    await _handle(hass, entry, _delay())
-    assert states == []
-    assert "entry delay start ignored" in caplog.text
+    await _handle(hass, entry, start())
+    assert states == expected
+    assert ("entry delay start ignored" in caplog.text) == (not expected)
     await _unload(hass, entry)
 
 

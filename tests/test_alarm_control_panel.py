@@ -1293,12 +1293,15 @@ async def test_lifecycle_a_restored_alarm_ends_on_a_setup_poll_showing_disarmed(
     assert state_of(hass, entity_id) == "disarmed"
     assert "triggered" not in states
 
+    # Armed again, so only the floor refuses the replay, not the disarmed mode.
+    await _handle(hass, entry, _mode_report(GuardMode.AWAY))
+    assert state_of(hass, entity_id) == "armed_away"
     await _handle(
         hass,
         entry,
         station_event(PushMessageType.ALARM_DELAY, t_ms=t_ms - 120_000, alarm_delay=3600),
     )
-    assert state_of(hass, entity_id) == "disarmed"
+    assert state_of(hass, entity_id) == "armed_away"
 
     await _unload(hass, entry)
 
@@ -1487,8 +1490,11 @@ async def test_lifecycle_a_delay_older_than_an_ended_alarm_cannot_raise_it_again
     await hass.async_block_till_done()
     assert state_of(hass, entity_id) == "disarmed"
 
+    # Armed again, so only the floor refuses the replay, not the disarmed mode.
+    await _handle(hass, entry, _mode_report(GuardMode.AWAY))
+    assert state_of(hass, entity_id) == "armed_away"
     await _handle(hass, entry, earlier)
-    assert state_of(hass, entity_id) == "disarmed"
+    assert state_of(hass, entity_id) == "armed_away"
 
     await _unload(hass, entry)
 

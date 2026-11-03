@@ -130,8 +130,8 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
 
     - An authenticated DELAY shows pending for ``alarm_delay`` seconds from its own
       event time (plus the grace above), then the polled mode, unless a trigger
-      came. A DELAY while triggered, one whose delay already ran out and one of
-      zero seconds show nothing. One with no ``alarm_delay`` shows pending until a
+      came. A DELAY while triggered, one whose delay already ran out, one of zero
+      seconds and one while the mode in force is a known disarmed mode show nothing. One with no ``alarm_delay`` shows pending until a
       stop, a disarm or the timeout. While pending, a DELAY older than the running
       one or with no event time is ignored, so a replay cannot shorten or cancel
       the entry delay.
@@ -155,9 +155,9 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
       While an alarm is shown, an arming push that cannot be ordered after it
       (older, or with no event time) changes nothing shown, not even
       ``changed_by``. A cloud push's mode or a pushed state never confirms a
-      disarm: neither carries an order. An alarm raised while disarmed waits for a
-      stop, a disarm call, the timeout or (pending) the station's live disarmed
-      report. A read showing an armed mode never ends an alarm.
+      disarm: neither carries an order. An alarm raised while disarmed (triggered
+      only: a delay start then shows nothing) waits for a stop, a disarm call or the
+      timeout. A read showing an armed mode never ends an alarm.
     - An authenticated arming push to an armed mode with ``alarm_delay`` > 0 shows
       arming for that exit delay, from its own event time. It ends at the first mode
       read after the delay, so the push's own same-tick mode report cannot end it,
@@ -435,12 +435,6 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
             return
         if self._lifecycle is AlarmControlPanelState.TRIGGERED or event.seconds is None:
             return
-        data: StationState | None = self.coordinator.data
-        mode = data.active_mode if data is not None else None
-        if isinstance(mode, GuardMode) and mode.is_disarmed:
-            # The station runs an entry delay only when armed.
-            _LOGGER.debug("%s: entry delay start ignored, the panel is disarmed", self.entity_id)
-            return
         seen_ms = event.at.timestamp() * 1000
         remaining = detections.hold_remaining_seconds(
             int(seen_ms), event.seconds, dt_util.utcnow().timestamp() * 1000
@@ -605,8 +599,14 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
         ``delay_until`` shows the delay's own end. While a countdown runs, the later of
         its end and this start's is kept. ``remaining`` None runs no countdown: pending
         ends on a stop, a disarm or the timeout. State is written only when the state
-        or its attributes change.
+        or its attributes change. Nothing is shown while the mode in force is a known
+        disarmed mode: the station runs an entry delay only when armed.
         """
+        data: StationState | None = self.coordinator.data
+        mode = data.active_mode if data is not None else None
+        if isinstance(mode, GuardMode) and mode.is_disarmed:
+            _LOGGER.debug("%s: entry delay start ignored, the panel is disarmed", self.entity_id)
+            return
         shown = (self.alarm_state, self.extra_state_attributes)
         # Set only while pending with a countdown.
         running_end = self._phase_ends_at
