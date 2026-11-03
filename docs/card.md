@@ -226,5 +226,6 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
 - A live picture that stops after it played (a camera that changes video codec mid-stream) gets a new player
   without ending the view: over WebRTC after 2 s, a new session opened beside the frozen one, which stays until the
   new one shows video (closing it first would let the camera close, and the new session would wake it again); over
-  HLS every 10 s while the picture stands still (HA's HLS player does not get past a codec change; a new one plays
-  once HA's playlist holds only the new codec). The countdown, the LIVE chip and full screen stay as they are.
+  HLS every 10 s while the picture stands still, up to 5 times (HA's HLS player does not get past a codec change; a
+  new one plays once HA's playlist holds only the new codec). A player that never showed a frame is left as it is.
+  The countdown, the LIVE chip and full screen stay as they are.

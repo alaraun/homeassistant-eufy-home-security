@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.03-1';
+const CARD_VERSION = '2026.11.03-2';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -34,6 +34,8 @@ const RTC_SWAP_MS = 10000;
 // still: HA's HLS player does not get past a codec change, and a new one plays once HA's playlist holds only the
 // new codec (about half a minute). HA's stream worker holds the camera, so the old player goes first.
 const HLS_FREEZE_MS = 10000;
+// New HLS players per still picture (HLS_TRIES * HLS_FREEZE_MS = 50 s); then the frozen one stays until it moves
+const HLS_TRIES = 5;
 const TOAST_MS = 4000;
 // Moves (pan/tilt steps, go-to) waiting behind the running one; the integration returns a step after ~1.5 s
 const MOVE_QUEUE = 3;
@@ -1090,7 +1092,7 @@ class EufyCameraCard extends HTMLElement {
     if (!h || !st || st.state === 'unavailable' || !this._canLive(st)) return;
     if (this._live) { this._live.continuous = continuous; this._live.until = continuous ? null : Date.now() + this._liveSeconds() * 1000; this.render(); return; }
     this._view = null;
-    this._live = { continuous, until: continuous ? null : Date.now() + this._liveSeconds() * 1000, started: Date.now(), video: false, muted: true };
+    this._live = { continuous, until: continuous ? null : Date.now() + this._liveSeconds() * 1000, started: Date.now(), video: false, muted: true, hlsTries: 0 };
     const L = this._live;
     this._tickT = setInterval(() => this._tick(), 1000);
     this.render();
@@ -1206,21 +1208,25 @@ class EufyCameraCard extends HTMLElement {
     return q ? 0 : v.currentTime;
   }
 
-  // While the page is shown and the picture on screen: a WebRTC count that stood still RTC_STALL_MS starts one new
-  // session (_reattach), the next one only after the picture moved again; an HLS one still HLS_FREEZE_MS gets a new
-  // player each time. Otherwise the watch restarts: a hidden page may hold its timers, and Firefox pauses a muted
+  // While the page is shown, the picture on screen and the view has counted a frame (an engine may report 0 for a
+  // playing stream): a WebRTC count that stood still RTC_STALL_MS starts one new session (_reattach), the next one
+  // only after the picture moved again; an HLS one still HLS_FREEZE_MS gets a new player each time, up to HLS_TRIES
+  // until it moves. Otherwise the watch restarts: a hidden page may hold its timers, and Firefox pauses a muted
   // video scrolled out of view.
   _watchStall(L, v, now) {
     const r = this._pic.getBoundingClientRect();
     if (document.visibilityState !== 'visible' || r.bottom <= 0 || r.top >= window.innerHeight) { L.fAt = null; return; }
     const n = this._frames(v);
+    if (n > 0) L.counted = true;
+    if (!L.counted) { L.fAt = null; return; }
     if (L.fAt != null && n === L.fN) {
       if (L.player === 'hls') {
-        if (now - L.fAt >= HLS_FREEZE_MS) { L.fAt = now; this._attachPlayer(L, 'hls'); }
+        // the new player's count starts at 0
+        if (now - L.fAt >= HLS_FREEZE_MS && L.hlsTries < HLS_TRIES) { L.fAt = now; L.fN = 0; L.hlsTries += 1; this._attachPlayer(L, 'hls'); }
       } else if (!L.stalled && !L.next && now - L.fAt >= RTC_STALL_MS) { L.stalled = true; this._reattach(L); }
       return;
     }
-    if (L.fAt != null) L.stalled = false;
+    if (L.fAt != null) { L.stalled = false; L.hlsTries = 0; }
     L.fN = n;
     L.fAt = now;
   }
