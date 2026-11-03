@@ -556,6 +556,8 @@ ATTR_SECTION: Final = "section"
 # Where a setting's value comes from: ``p2p``, ``cloud`` or ``app_default``
 # (``StationState.setting_source``); absent while there is no value.
 ATTR_VALUE_SOURCE: Final = "value_source"
+# A setting value that is JSON (an object or array), never shown as the state.
+ATTR_VALUE: Final = "value"
 # On a member of a setting's variant group: whether the eufy app uses this member for the
 # device (``Station.setting_in_use``); absent when the library cannot tell.
 ATTR_IN_USE: Final = "in_use"

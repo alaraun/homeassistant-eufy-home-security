@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, override
 
-from homeassistant.const import EntityCategory
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
@@ -234,9 +233,7 @@ class EufySettingEntity(EufyDeviceEntity):
         # Vendor identifiers carry no translation of ours; the library names them.
         self._attr_name = spec.setting.name
         self._attr_assumed_state = not spec.setting.readable
-        self._attr_entity_category = (
-            EntityCategory.CONFIG if spec.is_control else EntityCategory.DIAGNOSTIC
-        )
+        self._attr_entity_category = spec.entity_category
         self._attr_entity_registry_enabled_default = spec.enabled_by_default
         # The last value written, shown for a setting the dump never reports.
         self._written: SettingValue | None = None

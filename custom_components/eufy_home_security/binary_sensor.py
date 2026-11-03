@@ -67,7 +67,7 @@ from .entity import (
     async_add_when_reported,
     device_block,
 )
-from .settings import setting_specs
+from .settings import STATUS_DEVICE_CLASSES, SettingEntitySpec, setting_specs
 from .storage import (
     EufyStorageEntity,
     StorageCoordinator,
@@ -276,7 +276,11 @@ async def async_setup_entry(
 
 
 class EufySettingBinarySensor(EufySettingEntity, BinarySensorEntity):
-    """A read-only bool setting."""
+    """A read-only bool setting, with the device class its key has (door, tamper, ...)."""
+
+    def __init__(self, coordinator: StationCoordinator, spec: SettingEntitySpec) -> None:
+        super().__init__(coordinator, spec)
+        self._attr_device_class = STATUS_DEVICE_CLASSES.get(spec.setting.key)
 
     @property
     @override

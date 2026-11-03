@@ -410,8 +410,21 @@ HomeBase (version strings by parameter id; the subsystems are unnamed) and
     nothing sent, while the device does not report that value.
 - The **Camera** switch turns a camera on or off; a camera turned off stops detecting
   and recording.
-- A setting it can only read is a diagnostic sensor or binary sensor, disabled until
-  you enable it. A setting it can neither read nor write has no entity.
+- A status it can only read is enabled: one the eufy app shows on the device card
+  (an entry sensor's door, tamper or low battery) is a sensor or binary sensor with
+  a device class (door, tamper, battery, moisture, cold), one the app shows on a
+  settings page is listed under Diagnostic. A status the device has not reported
+  shows unknown. The door state follows the HomeBase's state, refreshed every 45 s.
+- A setting it can only read but the app offers as a control is a diagnostic sensor
+  or binary sensor, disabled until you enable it. A value the app does not show, or
+  one another entity already gives (battery, firmware update in progress), and a
+  setting it can neither read nor write have no entity.
+- A value made of several fields (JSON) is never shown as the state: the state is
+  unknown and the attribute `value` holds the fields. A text longer than 255
+  characters is cut to 255.
+- A read-only status an earlier release created disabled is enabled at the next start
+  (Home Assistant reloads the integration once), unless you disabled it yourself or
+  "Enable newly added entities" is off.
 - **Per-mode actions and delays** (what each camera, doorbell and sensor does in Home,
   Away and Custom 1–3, and each mode's entry and leaving delays) have no entities: the
   [HomeBase card](homebase-card.md) edits them. Their switches, numbers and sensors

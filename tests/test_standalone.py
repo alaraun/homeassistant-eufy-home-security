@@ -38,7 +38,7 @@ from eufy_home_security import (
     StationUnreachableError,
     entity_unique_id,
 )
-from eufy_home_security.devices import Setting, SettingControl
+from eufy_home_security.devices import Setting, SettingControl, SettingRole, SettingShown
 from eufy_home_security.devices.model_settings import settings_of
 from eufy_home_security.p2p.messages import STANDALONE_RECEIPT_LEN
 from eufy_home_security.push.decode import decode_push
@@ -722,8 +722,9 @@ async def test_a_standalone_camera_gets_its_model_settings(
 ):
     """Every T8170 setting with a platform is an entity named by the library.
 
-    Controls are enabled config entities, settings with ``variant_of`` disabled; read-only
-    values are diagnostic and disabled.
+    Controls are enabled config entities, settings with ``variant_of`` disabled; a status
+    is enabled, without a category on the device card; other read-only values are
+    diagnostic and disabled.
     The station's own list is the expectation; no key is written out here.
     """
     entry = await set_up_warm(hass, seed_warm_cache)
@@ -749,10 +750,13 @@ async def test_a_standalone_camera_gets_its_model_settings(
             )
             assert ent.original_name == name, key
             control = platform in ("number", "select", "switch", "text")
+            status = not control and setting.role is SettingRole.STATUS
+            card = status and setting.shown is SettingShown.CARD
             assert ent.entity_category is (
-                EntityCategory.CONFIG if control else EntityCategory.DIAGNOSTIC
+                EntityCategory.CONFIG if control else None if card else EntityCategory.DIAGNOSTIC
             ), key
-            assert (ent.disabled_by is None) is (control and setting.variant_of is None), key
+            enabled = (control or status) and setting.variant_of is None
+            assert (ent.disabled_by is None) is enabled, key
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

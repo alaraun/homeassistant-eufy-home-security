@@ -85,7 +85,11 @@ from custom_components.eufy_home_security.const import (
     POLL_INTERVAL_SECONDS,
     SECURITY_MODE_KEY,
 )
-from custom_components.eufy_home_security.settings import is_setting_row, setting_specs
+from custom_components.eufy_home_security.settings import (
+    is_per_mode_entity,
+    is_setting_row,
+    setting_specs,
+)
 
 _HOUSE: Final = "house-1"
 _GROUP: Final = "group-1"
@@ -155,8 +159,8 @@ async def test_the_layout_lists_a_cameras_setting_entities_by_library_section_in
     seed_warm_cache: Callable[..., None],
 ) -> None:
     """Sections in the library's order with its headings; entity ids in ``settings_for``
-    order, disabled ones included, entities without a section left out. The camera's
-    Modes section holds only per-mode settings, which have no entities: not listed."""
+    order, disabled ones included, entities without a section left out. Per-mode
+    settings have no entities: none is listed."""
     entry = await set_up_warm(hass, seed_warm_cache)
     station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
     camera_id = _device_id(hass, SYNTHETIC.camera_sn)
@@ -169,7 +173,6 @@ async def test_the_layout_lists_a_cameras_setting_entities_by_library_section_in
     known = [s.id for s in SETTING_SECTIONS]
     ids = [s["id"] for s in sections]
     assert ids == sorted(ids, key=known.index)
-    assert "modes" not in ids
     for section in sections:
         info = setting_section(section["id"])
         assert (section["heading"], section["order"]) == (info.heading, info.order)
@@ -196,6 +199,12 @@ async def test_the_layout_lists_a_cameras_setting_entities_by_library_section_in
         if registry.async_get(e).disabled_by is not None  # type: ignore[union-attr]
     ]
     assert disabled, "a disabled setting entity is listed"
+    per_mode = [
+        e
+        for e in listed
+        if is_per_mode_entity(registry.async_get(e).unique_id)  # type: ignore[union-attr]
+    ]
+    assert not per_mode
     camera_entity = entity_id_for(hass, "camera", SYNTHETIC.camera_sn, "camera")
     assert camera_entity not in listed
     _no_serial(result)

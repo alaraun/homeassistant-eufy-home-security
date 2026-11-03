@@ -519,6 +519,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     _async_forget_siren_entities(hass, entry, coordinators.values())
     _async_forget_save_view_entities(hass, entry, coordinators.values())
     _async_follow_variants_in_use(hass, entry, coordinators.values())
+    _async_enable_status_rows(hass, entry, coordinators.values())
     known = {
         row.entity_id
         for row in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
@@ -713,6 +714,40 @@ def _async_follow_variants_in_use(
             _async_mark_variant(registry, registered, VARIANT_OFF)
         elif mark is None and not pref and registered.disabled_by is integration:
             _async_mark_variant(registry, registered, VARIANT_OFF)
+
+
+def _async_enable_status_rows(
+    hass: HomeAssistant, entry: EufyConfigEntry, coordinators: Iterable[StationCoordinator]
+) -> None:
+    """Enable a status row (``SettingEntitySpec.is_status``) this integration registered
+    disabled: an earlier release registered every read-only setting that way.
+
+    Only this entry's rows disabled by this integration move: never a row the user
+    disabled, none under the entry's "disable new entities" preference (which registers
+    every new row that way) and none of a disabled device. Enabling a row makes Home
+    Assistant reload the entry once. Logs nothing.
+    """
+    if entry.pref_disable_new_entities:
+        return
+    registry = er.async_get(hass)
+    devices = dr.async_get(hass)
+    for coordinator in coordinators:
+        station = coordinator.station
+        for spec in setting_specs(station):
+            if not (spec.is_status and spec.enabled_by_default):
+                continue
+            unique_id = entity_unique_id(spec.device_sn or station.serial, spec.key)
+            entity_id = registry.async_get_entity_id(spec.platform, DOMAIN, unique_id)
+            registered = registry.async_get(entity_id) if entity_id is not None else None
+            if (
+                registered is None
+                or registered.config_entry_id != entry.entry_id
+                or registered.disabled_by is not er.RegistryEntryDisabler.INTEGRATION
+            ):
+                continue
+            device = devices.async_get(registered.device_id) if registered.device_id else None
+            if device is None or device.disabled_by is None:
+                registry.async_update_entity(registered.entity_id, disabled_by=None)
 
 
 def _async_mark_new_variant_rows(

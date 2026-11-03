@@ -15,7 +15,10 @@ generated from eufy's own model data. What the file says decides the entity:
 |---|---|
 | write an on/off, a choice, a range or a string | switch, select, number (slider or box) or text, as the library's control says |
 | write several choices at once (detection types) | one switch per choice |
-| only read it | diagnostic sensor or binary sensor, disabled by default |
+| only read a status the eufy app shows on the device card (an entry sensor's door) | sensor or binary sensor, enabled |
+| only read a status the eufy app shows on a settings page | diagnostic sensor or binary sensor, enabled |
+| only read a setting the app offers as a control | diagnostic sensor or binary sensor, disabled by default |
+| only read a value the app does not show, or one another entity already gives (battery, firmware update in progress) | none |
 | neither | none |
 
 Some settings come in several versions; which one the eufy app uses depends on the
@@ -72,6 +75,8 @@ are offered, but none is tested:
 | T8161 | eufyCam 3C, on a HomeBase | as the T8160: detections, stills, live video, settings |
 | T8410 | Indoor Cam 2K Pan & Tilt, standalone | live video, pan/tilt one step; no presets, no zoom |
 | T90M0 | Motion sensor | as the T8910: Motion and a motion-only Detection event |
+| T8900 | Entry Sensor, on a HomeBase | door (binary sensor, on = open), low battery |
+| T90E0 | Entry Sensor T90E0, on a HomeBase | door (binary sensor, on = open), tamper |
 
 Report what works and what does not ([below](#reporting-a-new-device)).
 

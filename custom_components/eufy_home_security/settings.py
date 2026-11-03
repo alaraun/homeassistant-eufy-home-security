@@ -8,9 +8,12 @@ belongs on, and it is the only place that decides it.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any, Final
 
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.number import NumberDeviceClass
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import EntityCategory, Platform
@@ -23,6 +26,8 @@ from eufy_home_security.devices import (
     Setting,
     SettingControl,
     SettingKind,
+    SettingRole,
+    SettingShown,
 )
 from eufy_home_security.devices.model_settings import PARENTLESS_ONLY, mode_table_settings
 
@@ -54,26 +59,64 @@ def is_per_mode_entity(unique_id: str) -> bool:
     return unique_id.partition("_")[2] in _PER_MODE_ENTITY_KEYS
 
 
+# The device class of a bool status's binary sensor, by setting key.
+STATUS_DEVICE_CLASSES: Final[Mapping[str, BinarySensorDeviceClass]] = {
+    "sensor_door_status": BinarySensorDeviceClass.DOOR,
+    "sensor_disassemble_status": BinarySensorDeviceClass.TAMPER,
+    "sensor_is_low_power": BinarySensorDeviceClass.BATTERY,
+    "sensor_water_status": BinarySensorDeviceClass.MOISTURE,
+    "sensor_temperature_low_status": BinarySensorDeviceClass.COLD,
+}
+
 # The device classes a setting entity carries (a seconds range, an enum sensor); the
 # integration's own entities named by a device class (battery, signal) have none of these.
 _SETTING_DEVICE_CLASSES: frozenset[str] = frozenset(
     {NumberDeviceClass.DURATION, SensorDeviceClass.DURATION, SensorDeviceClass.ENUM}
 )
+# A status's binary-sensor classes; the battery sensor's class has the same name.
+_STATUS_BINARY_CLASSES: frozenset[str] = frozenset(STATUS_DEVICE_CLASSES.values())
+
+# Home Assistant's limit on a state's length.
+MAX_STATE_LENGTH: Final = 255
 
 
 def is_setting_row(row: er.RegistryEntry) -> bool:
     """Whether a registry row looks like a setting entity's: named by the library
     (``Setting.name``: a literal name, no translation key), a config or diagnostic
-    category, and no device class or one a setting entity carries."""
+    category or none (a status on the device card), and no device class or one a
+    setting entity carries (a status's on a binary sensor only)."""
+    device_class = row.original_device_class
     return (
         row.translation_key is None
         and row.original_name is not None
-        and row.entity_category in (EntityCategory.CONFIG, EntityCategory.DIAGNOSTIC)
+        and row.entity_category in (EntityCategory.CONFIG, EntityCategory.DIAGNOSTIC, None)
         and (
-            row.original_device_class is None
-            or row.original_device_class in _SETTING_DEVICE_CLASSES
+            device_class is None
+            or device_class in _SETTING_DEVICE_CLASSES
+            or (row.domain == Platform.BINARY_SENSOR and device_class in _STATUS_BINARY_CLASSES)
         )
     )
+
+
+def json_value(value: object) -> dict[str, Any] | list[Any] | None:
+    """``value`` as a JSON object or array: a dict or list as is, a str parsed when it
+    holds one; None for anything else."""
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str) and value.lstrip()[:1] in ("{", "["):
+        try:
+            parsed: dict[str, Any] | list[Any] = json.loads(value)
+        except ValueError:
+            return None
+        return parsed
+    return None
+
+
+def capped_state(value: str) -> str:
+    """``value`` cut to :data:`MAX_STATE_LENGTH` characters, ending in an ellipsis when cut."""
+    if len(value) <= MAX_STATE_LENGTH:
+        return value
+    return f"{value[: MAX_STATE_LENGTH - 1]}\u2026"
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,16 +155,31 @@ class SettingEntitySpec:
         return self.platform in _CONTROL_PLATFORMS
 
     @property
+    def is_status(self) -> bool:
+        """Whether this entity shows a status the eufy app shows (``SettingRole.STATUS``)."""
+        return not self.is_control and self.setting.role is SettingRole.STATUS
+
+    @property
+    def entity_category(self) -> EntityCategory | None:
+        """Config for a control, none for a status on the device card, diagnostic else."""
+        if self.is_control:
+            return EntityCategory.CONFIG
+        if self.is_status and self.setting.shown is SettingShown.CARD:
+            return None
+        return EntityCategory.DIAGNOSTIC
+
+    @property
     def enabled_by_default(self) -> bool:
-        """Controls are enabled; read-only values are off.
+        """Controls and statuses are enabled; other read-only values are off.
 
         Of a variant group (``Setting.variant_of``) only the member the app uses for the
-        device is on; while the library cannot tell, the primary. Read-only values, the
-        other members and settings the app puts behind a warning (``Setting.advanced``)
-        stay one click away in the registry instead of crowding every device page.
+        device is on; while the library cannot tell, the primary. A setting the library
+        cannot write, the other members and settings the app puts behind a warning
+        (``Setting.advanced``) stay one click away in the registry instead of crowding
+        every device page.
         """
         in_use = self.in_use if self.in_use is not None else not self.variant
-        return self.is_control and in_use and not self.setting.advanced
+        return (self.is_control or self.is_status) and in_use and not self.setting.advanced
 
     @property
     def group(self) -> str:
@@ -159,6 +217,8 @@ def setting_platform(setting: Setting) -> Platform | None:
     - A per-mode delay or action mask: none, the HomeBase card edits it (``is_per_mode``).
     - A writable setting with a ``control``: its platform (switch, select, number, a
       switch per member for ``toggles``, text).
+    - A diagnostic value (``SettingRole.DIAGNOSTIC``): none; the app shows it nowhere, or
+      a device field already gives it.
     - Otherwise, when readable: binary sensor for a bool, sensor for the rest.
     - Neither (a cloud-listed model, an app-local value): no entity, it never has a value.
     """
@@ -166,7 +226,7 @@ def setting_platform(setting: Setting) -> Platform | None:
         return None
     if setting.writable and setting.control is not None:
         return _CONTROLS[setting.control]
-    if not setting.readable:
+    if not setting.readable or setting.role is SettingRole.DIAGNOSTIC:
         return None
     if setting.kind is SettingKind.BOOL:
         return Platform.BINARY_SENSOR
