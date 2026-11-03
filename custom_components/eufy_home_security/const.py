@@ -356,6 +356,8 @@ ISSUE_PUSH_NOT_RUNNING: Final = "push_not_running"
 ISSUE_PUSH_NEEDED: Final = "push_needed"
 # The cloud holds no key for the cipher a station named, under the station's owner.
 ISSUE_CIPHER_UNAVAILABLE: Final = "cipher_unavailable"
+# The cloud answers for the cipher a station named, but no record carries its key.
+ISSUE_CIPHER_KEY_MISSING: Final = "cipher_key_missing"
 # eufy serves a station a key that does not parse (the legacy RSA handshake); no
 # re-fetch helps, so the issue is not fixable.
 ISSUE_KEY_UNUSABLE: Final = "key_unusable"

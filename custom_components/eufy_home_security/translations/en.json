@@ -254,6 +254,10 @@
       "title": "eufy has no key for {station}",
       "description": "{station} uses key number {cipher} for its local connection, but eufy holds no such key for the station's owner, so Home Assistant cannot connect to it and its entities are unavailable. Signing in again does not help. In the eufy app, on the account that set the station up, check that the station is still there and shared with the account Home Assistant uses; share it again if needed. Then reload the integration: Home Assistant asks eufy again on every reload, and on its own at most once an hour."
     },
+    "cipher_key_missing": {
+      "title": "eufy sends no key for {station}",
+      "description": "{station} uses key number {cipher} for its local connection. eufy answers for that key number but without the key itself, so Home Assistant cannot connect to it and its entities are unavailable. Signing in again does not help. Home Assistant asks eufy again on every reload, and on its own at most once an hour. If it stays, please open an issue with the integration's diagnostics download."
+    },
     "key_unusable": {
       "title": "eufy serves no usable key for {station}",
       "description": "{station} needs a key for its connection method that eufy does not serve for it, so Home Assistant cannot connect to it and its entities are unavailable. Fetching the key again returns the same, and signing in again does not help. Please open an issue with the integration's diagnostics download."
