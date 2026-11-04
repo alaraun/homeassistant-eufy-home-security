@@ -3746,7 +3746,7 @@ const EDITOR_HELPERS = {
   entities: 'With more than one camera, the name opens a list to switch cameras; history and settings follow. Name and history folder apply to the first camera',
   picture: 'Auto takes the shape of the camera\'s picture (a portrait doorbell shows upright); portrait shows the whole picture, at most 80 % of the screen high',
   show_header: 'Name, status and the camera menu; off with History and Settings off leaves the picture alone. Several cameras: the name moves onto the picture',
-  live_buttons: 'Buttons on the live view bar, e.g. a door lock (Open or Unlock) for a doorbell, a gate, a script; each needs a second press within 4 s',
+  live_buttons: 'Buttons on the live view bar, e.g. a door lock (Open or Unlock) for a doorbell, a gate, a light, a script; each needs a second press within 4 s',
   history_folder: 'The camera\'s folder under Media › eufy_home_security; only when the camera was renamed after its stills were saved',
   auto_live: 'Wakes the camera on every opening: costs battery',
   settings_include: 'Settings shows the camera\'s settings by section; entities named here join them (a guard-mode action or delay under Modes, an entity in no section under More)',
