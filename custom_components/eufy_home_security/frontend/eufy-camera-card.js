@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.03-3';
+const CARD_VERSION = '2026.11.03-4';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -33,13 +33,16 @@ const RTC_SWAP_MS = 10000;
 // A WebRTC session without video before the first picture gets one more session this long later, beside it:
 // go2rtc answers the video inactive while the camera sends a codec the browser cannot receive over WebRTC (a
 // doorbell opening on H.265 for ~1.5 s, then H.264); a session started after the switch plays it. Without video
-// there too, HLS, with the first session kept until HLS shows video, so the camera is not closed in between.
+// there too, HLS, with the first session kept until HLS's first report (HA's stream worker holds the camera by
+// then, or HLS failed and nothing will), so the camera is not closed in between.
 const RTC_RETRY_MS = 3000;
 // An HLS picture still this long after it played gets a new player, again every HLS_FREEZE_MS while it stays
 // still: HA's HLS player does not get past a codec change, and a new one plays once HA's playlist holds only the
 // new codec (about half a minute). HA's stream worker holds the camera, so the old player goes first.
 const HLS_FREEZE_MS = 10000;
-// New HLS players per still picture (HLS_TRIES * HLS_FREEZE_MS = 50 s); then the frozen one stays until it moves
+// New HLS players per still picture (HLS_TRIES * HLS_FREEZE_MS = 50 s); then the frozen one stays until it moves.
+// The count restarts only after the picture moved for HLS_FREEZE_MS: a new player that plays a few seconds and
+// stops again counts on.
 const HLS_TRIES = 5;
 const TOAST_MS = 4000;
 // Moves (pan/tilt steps, go-to) waiting behind the running one; the integration returns a step after ~1.5 s
@@ -1202,7 +1205,7 @@ class EufyCameraCard extends HTMLElement {
     L.next = null;
   }
 
-  // HLS after WebRTC without video: the WebRTC player stays (hidden) until HLS shows video or the view ends
+  // HLS after WebRTC without video: the WebRTC player stays (hidden) until HLS's first report or the view ends
   _toHls(L) {
     L.hold = this._stream;
     this._stream = null;
@@ -1228,7 +1231,7 @@ class EufyCameraCard extends HTMLElement {
   // While the page is shown, the picture on screen and the view has counted a frame (an engine may report 0 for a
   // playing stream): a WebRTC count that stood still RTC_STALL_MS starts one new session (_reattach), the next one
   // only after the picture moved again; an HLS one still HLS_FREEZE_MS gets a new player each time, up to HLS_TRIES
-  // until it moves. Otherwise the watch restarts: a hidden page may hold its timers, and Firefox pauses a muted
+  // until it moved for HLS_FREEZE_MS (L.mAt: since when it moves). Otherwise the watch restarts: a hidden page may hold its timers, and Firefox pauses a muted
   // video scrolled out of view.
   _watchStall(L, v, now) {
     const r = this._pic.getBoundingClientRect();
@@ -1237,13 +1240,18 @@ class EufyCameraCard extends HTMLElement {
     if (n > 0) L.counted = true;
     if (!L.counted) { L.fAt = null; return; }
     if (L.fAt != null && n === L.fN) {
+      L.mAt = null;
       if (L.player === 'hls') {
         // the new player's count starts at 0
         if (now - L.fAt >= HLS_FREEZE_MS && L.hlsTries < HLS_TRIES) { L.fAt = now; L.fN = 0; L.hlsTries += 1; this._attachPlayer(L, 'hls'); }
       } else if (!L.stalled && !L.next && now - L.fAt >= RTC_STALL_MS) { L.stalled = true; this._reattach(L); }
       return;
     }
-    if (L.fAt != null) { L.stalled = false; L.hlsTries = 0; }
+    if (L.fAt != null) {
+      L.stalled = false;
+      if (L.mAt == null) L.mAt = now;
+      else if (now - L.mAt >= HLS_FREEZE_MS) L.hlsTries = 0;
+    }
     L.fN = n;
     L.fAt = now;
   }
@@ -1344,6 +1352,8 @@ class EufyCameraCard extends HTMLElement {
     // HLS reports no video when its first playlist request failed and does not retry: ask again; HA's stream
     // is warm by then and answers at once
     if (ev.detail.hasVideo === false && !L.video && L.player === 'hls') {
+      // HA's stream worker holds the camera by now, or HLS failed and nothing will: the kept session goes
+      this._dropHold(L);
       // Doubling waits (1, 2, 4 ... s): a camera the HomeBase cannot serve now fails every ask alike
       clearTimeout(L.retryT);
       L.retryT = setTimeout(() => { if (this._live === L && !L.video) { L.retries = (L.retries || 0) + 1; this._attachPlayer(L, 'hls'); } },
