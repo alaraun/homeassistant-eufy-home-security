@@ -92,6 +92,29 @@ entity. A detection turns on only the sensor of its own kind (a person detection
 leaves Motion off) for the **Detection hold** seconds; the event entity fires for every
 kind, so an automation for "anything detected" triggers on it.
 
+### Counter-based Motion Detected and Motion Recorded events
+
+For supported cameras, two additional **event** entities complement **Detection**:
+**Motion Detected** and **Motion Recorded**. A rise in the HomeBase's **Detected
+Events** counter (1192) fires Motion Detected; a rise in its **Recorded Events**
+counter (1193) fires Motion Recorded. These are independent counter observations,
+not a per-clip event history or a person/pet/vehicle classification.
+
+The first value after startup or a missing/offline counter is a baseline; only a
+positive increase fires an event. One change of +3 results in **one event** with
+`count: 3`, not three individually timestamped events. `observed_at` is when Home
+Assistant received the observation, not the actual detection or clip time. A
+recording-counter increase **does not guarantee** a finished or downloadable clip.
+
+When a device has no usable detection counter, an admitted push can provide a
+Motion Detected event with `source: push`; otherwise the counter is authoritative.
+The existing **Detection** entity continues to report detailed detections normally.
+On hardware that still updates its counters when Home-mode notifications are disabled
+(observed on HomeBase 2), counter activity may arrive even if Detection does not.
+This does **not** remove the 0.4.13 notification-delivery repair warning: detailed
+person/motion pushes remain unavailable when the HomeBase suppresses them. Reporting
+and latency vary by camera model, firmware and station support.
+
 ### Detections in the security mode
 
 In the eufy app each camera has a **Notification** switch per security mode (Security

@@ -67,6 +67,7 @@ from .const import (
 )
 from .coordinator import StationCoordinator
 from .entity import EufyDeviceEntity, EufyPushAvailability, EufyStationEntity
+from .event_activity import EufyMotionDetectedEvent, EufyMotionRecordedEvent
 
 if TYPE_CHECKING:
     from .runtime import EufyConfigEntry
@@ -90,6 +91,8 @@ async def async_setup_entry(
         for device_sn, kind in detections.paired_device_kinds(coordinator.station).items():
             if detections.has_detection_entities(kind):
                 entities.append(EufyDetectionEvent(coordinator, device_sn))
+                entities.append(EufyMotionDetectedEvent(coordinator, device_sn))
+                entities.append(EufyMotionRecordedEvent(coordinator, device_sn))
             elif detections.has_motion_sensor_entities(device_sn):
                 entities.append(EufyMotionSensorEvent(coordinator, device_sn))
             if detections.has_doorbell_entity(device_sn):
