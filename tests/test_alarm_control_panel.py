@@ -766,7 +766,10 @@ async def test_lifecycle_an_entry_delay_shows_pending_for_its_delay(
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """An authenticated delay shows pending for alarm_delay seconds from its own time."""
+    """An authenticated delay shows pending for alarm_delay seconds from its own time.
+
+    And 2 s more, for the alarm the delay runs into.
+    """
     entry = await set_up_warm(hass, seed_warm_cache)
     entity_id = panel_entity_id(hass)
 
@@ -775,9 +778,9 @@ async def test_lifecycle_an_entry_delay_shows_pending_for_its_delay(
     )
     assert state_of(hass, entity_id) == "pending"
 
-    await advance_to_poll(hass, 29)
-    assert state_of(hass, entity_id) == "pending"
     await advance_to_poll(hass, 31)
+    assert state_of(hass, entity_id) == "pending"
+    await advance_to_poll(hass, 33)
     assert state_of(hass, entity_id) == "armed_away"
 
     await _unload(hass, entry)
@@ -1169,7 +1172,7 @@ async def test_lifecycle_pending_survives_an_entry_reload_until_its_entry_delay_
     await hass.async_block_till_done()
     assert state_of(hass, entity_id) == "pending"
 
-    await advance_to_poll(hass, 31, anchor=anchor)
+    await advance_to_poll(hass, 33, anchor=anchor)
     await wait_until(lambda: state_of(hass, entity_id) == "armed_away")
 
     await _unload(hass, entry)
@@ -1290,12 +1293,62 @@ async def test_lifecycle_a_restored_alarm_ends_on_a_setup_poll_showing_disarmed(
     assert state_of(hass, entity_id) == "disarmed"
     assert "triggered" not in states
 
+    # Armed again, so only the floor refuses the replay, not the disarmed mode.
+    await _handle(hass, entry, _mode_report(GuardMode.AWAY))
+    assert state_of(hass, entity_id) == "armed_away"
     await _handle(
         hass,
         entry,
         station_event(PushMessageType.ALARM_DELAY, t_ms=t_ms - 120_000, alarm_delay=3600),
     )
-    assert state_of(hass, entity_id) == "disarmed"
+    assert state_of(hass, entity_id) == "armed_away"
+
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize(
+    ("lifecycle", "mode_at_alarm", "expected"),
+    [
+        ("pending", None, "disarmed"),
+        ("pending", 9999, "disarmed"),
+        ("pending", int(GuardMode.DISARMED), "pending"),
+        ("triggered", None, "triggered"),
+    ],
+    ids=["pending no mode", "pending unknown mode", "pending disarmed", "triggered no mode"],
+)
+async def test_lifecycle_a_setup_poll_showing_disarmed_ends_a_restored_pending(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    lifecycle: str,
+    mode_at_alarm: int | None,
+    expected: str,
+) -> None:
+    """A restored pending ends on a disarmed setup poll unless it began in a known
+    disarmed mode; a restored triggered needs a known armed one."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = panel_entity_id(hass)
+    await _unload(hass, entry)
+
+    now = hass.loop.time()
+    data: dict[str, object] = {
+        "run": alarm_control_panel.restore_run_token(hass),
+        "lifecycle": lifecycle,
+        "alarm_second": None,
+        "floor_second": None,
+        "alarm_floor_second": None,
+        "mode_at_alarm": mode_at_alarm,
+        "timeout_at": now + 60,
+        "phase_ends_at": None,
+    }
+    mock_restore_cache_with_extra_data(hass, [(State(entity_id, lifecycle), data)])
+    set_guard_mode(fake_station, GuardMode.DISARMED)
+
+    states = record_states(hass, entity_id)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert states[0] == expected, states
 
     await _unload(hass, entry)
 
@@ -1484,8 +1537,11 @@ async def test_lifecycle_a_delay_older_than_an_ended_alarm_cannot_raise_it_again
     await hass.async_block_till_done()
     assert state_of(hass, entity_id) == "disarmed"
 
+    # Armed again, so only the floor refuses the replay, not the disarmed mode.
+    await _handle(hass, entry, _mode_report(GuardMode.AWAY))
+    assert state_of(hass, entity_id) == "armed_away"
     await _handle(hass, entry, earlier)
-    assert state_of(hass, entity_id) == "disarmed"
+    assert state_of(hass, entity_id) == "armed_away"
 
     await _unload(hass, entry)
 
@@ -1513,7 +1569,7 @@ async def test_lifecycle_a_replayed_entry_delay_cannot_cut_pending_short(
 
     # A timeless delay naming no delay at all.
     await _handle(hass, entry, station_event(PushMessageType.ALARM_DELAY, t_ms=None))
-    await advance_to_poll(hass, 31)
+    await advance_to_poll(hass, 33)
     assert state_of(hass, entity_id) == "armed_away"
 
     await _unload(hass, entry)

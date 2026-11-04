@@ -34,6 +34,21 @@ reloads the integration.
   (in an automation: `select.select_option`). It shows the selected mode (Schedule while
   a schedule runs); the panel shows the mode in force.
 - A mode changed in the eufy app shows within 45 s.
+- **Entry delay:** when an armed HomeBase starts its alarm delay for a trigger (an
+  entry sensor's door opened in a mode with a delay), the panel shows **Pending**
+  with the attributes `delay_seconds` (the delay) and `delay_until` (when it runs
+  out, UTC). Then:
+  - the alarm sounds: **Triggered**, as for any alarm;
+  - the HomeBase ends the delay without an alarm: the mode again;
+  - a disarm in Home Assistant, on a keypad or in the eufy app: **Disarmed** as soon
+    as the HomeBase reports it (its own report comes at once; otherwise the 45 s
+    refresh shows it);
+  - another trigger during the delay: Pending runs to whichever end is later;
+  - nothing more is heard: Pending ends on its own 2 s after `delay_until` (the
+    alarm a delay runs into comes a little after it), showing the mode again.
+
+  The panel does not say which sensor started the delay; the sensor's door entity
+  turns on at the same moment.
 
 ## Sirens
 
@@ -414,8 +429,9 @@ HomeBase (version strings by parameter id; the subsystems are unnamed) and
   (an entry sensor's door, tamper or low battery) is a sensor or binary sensor, a
   binary sensor with its device class (door, tamper, battery, moisture, cold) where
   one fits; one the app shows on a settings page is listed under Diagnostic. A
-  status the device has not reported shows unknown. The door state follows the
-  HomeBase's state, refreshed every 45 s.
+  status the device has not reported shows unknown. The door (and tamper) state
+  follows each open and close as the HomeBase reports it, without waiting for the
+  45 s refresh.
 - A setting it can only read but the app offers as a control is a diagnostic sensor
   or binary sensor, disabled until you enable it. A value the app does not show, one
   another entity already gives (battery, firmware update in progress), a status made

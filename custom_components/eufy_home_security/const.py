@@ -197,6 +197,9 @@ ATTR_STOP_SOURCE: Final = "stop_source"
 # The guard mode the user selected, beside the panel state that shows the mode in
 # force: "schedule" while a schedule drives the station.
 ATTR_SELECTED_MODE: Final = "selected_mode"
+# While the panel shows pending: the entry delay's seconds and when it runs out (UTC).
+ATTR_DELAY_SECONDS: Final = "delay_seconds"
+ATTR_DELAY_UNTIL: Final = "delay_until"
 
 STEP_USER: Final = "user"
 # Reauth: the new password, then (only when another client holds the session) an
@@ -555,8 +558,9 @@ ATTR_APPLIES_WHEN_LABEL: Final = "applies_when_label"
 ATTR_CONTROLS: Final = "controls"
 # The library's section id of a setting (``Setting.section``), for templates.
 ATTR_SECTION: Final = "section"
-# Where a setting's value comes from: ``p2p``, ``cloud`` or ``app_default``
-# (``StationState.setting_source``); absent while there is no value.
+# Where a setting's value comes from: ``p2p``, ``notify`` (the station's parameter
+# notify), ``cloud`` or ``app_default`` (``StationState.setting_source``); absent while
+# there is no value.
 ATTR_VALUE_SOURCE: Final = "value_source"
 # A setting value that is JSON (an object or array), never shown as the state.
 ATTR_VALUE: Final = "value"

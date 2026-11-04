@@ -6,10 +6,12 @@ shows or what the user must be told:
 
 - ``GuardModeChanged`` amends the coordinator's data with both modes, the selected
   one (``SCHEDULE`` while a schedule runs) and the one in force
-  (``StationCoordinator.async_apply_guard_mode``).
+  (``StationCoordinator.async_apply_guard_mode``), marked live when it came over
+  P2P (a station report, or the mode of an authenticated P2P arming push).
 - ``StationStateChanged`` replaces the coordinator's data
   (``StationCoordinator.async_apply_state``), so one dump reconciles every entity of
-  that station. It arrives from a dump the station pushes unasked and from the
+  that station. It arrives from a dump the station pushes unasked, from the station's
+  parameter notify (an entry sensor's door shows at once, with no read) and from the
   read-back of a confirmed setting write.
 - ``StationConfigChanged`` makes the coordinator rebuild ``station_config`` and notify
   its entities (``StationCoordinator.async_apply_config_changed``): the security-mode
@@ -70,6 +72,9 @@ shows or what the user must be told:
   inside the consuming window. The library has already authenticated and ordered
   it, so it needs no check here. Outside the window it is dropped: it is not a push,
   so it has no fallback bus event.
+- ``AlarmDelayChanged`` goes to that station's panel on its alarm delay signal, as
+  ``AlarmChanged``. Its channel is the frame's (255, the station), never mapped to a
+  device.
 - ``DeviceAlarmChanged`` goes to that device's siren on its device alarm signal, inside
   the consuming window, as ``AlarmChanged``.
 - ``PresetsChanged`` goes to the preset manager (``PresetManager.async_apply_presets``),
@@ -105,6 +110,7 @@ from homeassistant.helpers.event import async_call_later
 from eufy_home_security import (
     AccountMismatch,
     AlarmChanged,
+    AlarmDelayChanged,
     CipherUnusableError,
     CloudProblem,
     ConnectionChanged,
@@ -114,6 +120,7 @@ from eufy_home_security import (
     DisconnectCause,
     Event,
     EventScope,
+    EventSource,
     FrameCipher,
     GuardModeChanged,
     KeyRejectedError,
@@ -295,7 +302,9 @@ class EventRouter:
             coordinator = self._coordinators.get(event.station_sn)
             # A station with no coordinator is ignored: its first read takes the mode.
             if coordinator is not None:
-                coordinator.async_apply_guard_mode(event.mode, event.active_mode)
+                coordinator.async_apply_guard_mode(
+                    event.mode, event.active_mode, live=event.source is EventSource.P2P
+                )
         elif isinstance(event, StationStateChanged):
             coordinator = self._coordinators.get(event.station_sn)
             # As above, a station with no coordinator is ignored. The state the
@@ -352,6 +361,13 @@ class EventRouter:
                 async_dispatcher_send(
                     self._hass,
                     detections.alarm_signal(self._entry.entry_id, event.station_sn),
+                    event,
+                )
+        elif isinstance(event, AlarmDelayChanged):
+            if self._consuming and event.station_sn in self._coordinators:
+                async_dispatcher_send(
+                    self._hass,
+                    detections.alarm_delay_signal(self._entry.entry_id, event.station_sn),
                     event,
                 )
         elif isinstance(event, DeviceAlarmChanged):

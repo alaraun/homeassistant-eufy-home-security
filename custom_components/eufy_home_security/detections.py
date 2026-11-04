@@ -30,6 +30,7 @@ from homeassistant.util.signal_type import SignalType
 
 from eufy_home_security import (
     AlarmChanged,
+    AlarmDelayChanged,
     AlarmPhase,
     ArmingSource,
     DetectionType,
@@ -588,3 +589,11 @@ def alarm_signal(entry_id: str, station_sn: str) -> SignalType[AlarmChanged]:
     The name is never logged or stored.
     """
     return SignalType(f"{DOMAIN}_alarm_changed_{entry_id}_{station_sn}")
+
+
+def alarm_delay_signal(entry_id: str, station_sn: str) -> SignalType[AlarmDelayChanged]:
+    """The dispatcher signal of one station's alarm delay starts and ends in one entry.
+
+    The name is never logged or stored.
+    """
+    return SignalType(f"{DOMAIN}_alarm_delay_changed_{entry_id}_{station_sn}")
