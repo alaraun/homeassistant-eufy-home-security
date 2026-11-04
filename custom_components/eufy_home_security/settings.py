@@ -91,6 +91,8 @@ class SettingEntitySpec:
     in_use: bool | None = None
     """For a member of a variant group: whether the eufy app uses it for this device
     (``Station.setting_in_use``); None outside a group or when the library cannot tell."""
+    grouped: bool = False
+    """A member of a variant group: a variant, or a primary the device has variants of."""
 
     @property
     def key(self) -> str:
@@ -189,11 +191,8 @@ def setting_specs(station: Station) -> list[SettingEntitySpec]:
             platform = setting_platform(setting)
             if platform is None:
                 continue
-            in_use = (
-                _in_use(station, setting.key, device_sn)
-                if setting.variant_of is not None or setting.key in primaries
-                else None
-            )
+            grouped = setting.variant_of is not None or setting.key in primaries
+            in_use = member_in_use(station, setting.key, device_sn) if grouped else None
             if setting.writable and setting.control is SettingControl.TOGGLES:
                 specs.extend(
                     SettingEntitySpec(
@@ -203,6 +202,7 @@ def setting_specs(station: Station) -> list[SettingEntitySpec]:
                         flag=member,
                         variant=setting.variant_of is not None,
                         in_use=in_use,
+                        grouped=grouped,
                     )
                     for member in setting.flags
                 )
@@ -214,12 +214,13 @@ def setting_specs(station: Station) -> list[SettingEntitySpec]:
                         device_sn=device_sn,
                         variant=setting.variant_of is not None,
                         in_use=in_use,
+                        grouped=grouped,
                     )
                 )
     return specs
 
 
-def _in_use(station: Station, key: str, device_sn: str | None) -> bool | None:
+def member_in_use(station: Station, key: str, device_sn: str | None) -> bool | None:
     """Whether the app uses variant-group member ``key`` for the device; None when the
     library cannot tell or refuses the question."""
     try:

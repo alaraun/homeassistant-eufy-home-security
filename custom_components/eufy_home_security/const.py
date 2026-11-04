@@ -369,6 +369,9 @@ ISSUE_STATION_P2P_ID_UNSUPPORTED: Final = "station_p2p_id_unsupported"
 ISSUE_STATION_WEBRTC_ONLY: Final = "station_webrtc_only"
 # eufy lists a device whose serial is not letters and digits; it is left out.
 ISSUE_DEVICE_SERIAL_UNSUPPORTED: Final = "device_serial_unsupported"
+# Controls of a setting's versions the eufy app does not use are on; fixable by a reset
+# to the app's defaults.
+ISSUE_VARIANT_RESET: Final = "variant_reset"
 
 # Camera snapshots. The camera entity's unique-id key; it has no name of its
 # own, the camera is its device.
@@ -553,6 +556,9 @@ ATTR_SECTION: Final = "section"
 # Where a setting's value comes from: ``p2p``, ``cloud`` or ``app_default``
 # (``StationState.setting_source``); absent while there is no value.
 ATTR_VALUE_SOURCE: Final = "value_source"
+# On a member of a setting's variant group: whether the eufy app uses this member for the
+# device (``Station.setting_in_use``); absent when the library cannot tell.
+ATTR_IN_USE: Final = "in_use"
 
 # Setting keys whose write changes the picture size a camera sends: a running live view
 # is ended so the next open starts at the new size (an MPEG-TS stream cannot carry a
