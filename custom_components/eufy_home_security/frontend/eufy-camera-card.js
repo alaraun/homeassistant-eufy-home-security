@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.03-5';
+const CARD_VERSION = '2026.11.04-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -93,7 +93,7 @@ const ratioOf = (id) => {
 const RING_MS = 60000;
 // Live view buttons (`live_buttons`): the second press within LACT_ARM_MS sends; the first only asks
 const LACT_ARM_MS = 4000;
-const LACT_DOMAINS = ['lock', 'cover', 'button', 'input_button', 'script', 'scene', 'switch'];
+const LACT_DOMAINS = ['lock', 'cover', 'button', 'input_button', 'script', 'scene', 'switch', 'light'];
 // lock.open when the lock can open its latch (LockEntityFeature.OPEN)
 const LOCK_OPEN = 1;
 // Lock states with no action to offer: moving, or stuck
@@ -311,6 +311,8 @@ const liveAction = (st) => {
   if (dom === 'scene') return { domain: 'scene', service: 'turn_on', verb: 'Activate', icon: 'mdi:palette-outline' };
   if (dom === 'switch') return st.state === 'on' ? { domain: 'switch', service: 'turn_off', verb: 'Turn off', icon: 'mdi:toggle-switch-outline' }
     : { domain: 'switch', service: 'turn_on', verb: 'Turn on', icon: 'mdi:toggle-switch-off-outline' };
+  if (dom === 'light') return st.state === 'on' ? { domain: 'light', service: 'turn_off', verb: 'Turn off', icon: 'mdi:lightbulb-on-outline' }
+    : { domain: 'light', service: 'turn_on', verb: 'Turn on', icon: 'mdi:lightbulb-outline' };
   return null;
 };
 const ok = (st) => !!st && !INVALID.includes(String(st.state).toLowerCase());
@@ -3744,7 +3746,7 @@ const EDITOR_HELPERS = {
   entities: 'With more than one camera, the name opens a list to switch cameras; history and settings follow. Name and history folder apply to the first camera',
   picture: 'Auto takes the shape of the camera\'s picture (a portrait doorbell shows upright); portrait shows the whole picture, at most 80 % of the screen high',
   show_header: 'Name, status and the camera menu; off with History and Settings off leaves the picture alone. Several cameras: the name moves onto the picture',
-  live_buttons: 'Buttons on the live view bar, e.g. a door lock (Open or Unlock) for a doorbell, a gate, a script; each needs a second press within 4 s',
+  live_buttons: 'Buttons on the live view bar, e.g. a door lock (Open or Unlock) for a doorbell, a gate, a light, a script; each needs a second press within 4 s',
   history_folder: 'The camera\'s folder under Media › eufy_home_security; only when the camera was renamed after its stills were saved',
   auto_live: 'Wakes the camera on every opening: costs battery',
   settings_include: 'Settings shows the camera\'s settings by section; entities named here join them (a guard-mode action or delay under Modes, an entity in no section under More)',
