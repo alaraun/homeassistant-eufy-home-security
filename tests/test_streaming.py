@@ -17,7 +17,7 @@ import contextlib
 import logging
 import ssl
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
@@ -51,10 +51,13 @@ from eufy_home_security import (
     DetectionType,
     EufySecurity,
     Station,
+    StreamBroadcast,
+    VideoCodec,
     redact_serial,
 )
 from eufy_home_security.devices.model_settings import settings_of
 from eufy_home_security.p2p import session as session_module
+from eufy_home_security.p2p.media import MediaFrame, MediaKind
 from eufy_home_security.testing import FakeCloud, FakeStation, camera_device
 from homeassistant.components.button import DOMAIN as BUTTON_DOMAIN
 from homeassistant.components.button import SERVICE_PRESS
@@ -76,7 +79,7 @@ from homeassistant.exceptions import HomeAssistantError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
-from custom_components.eufy_home_security import detections, streaming
+from custom_components.eufy_home_security import detections, errors, streaming
 from custom_components.eufy_home_security.const import (
     CAMERA_KEY,
     CAPTURE_LIVE_IMAGE_KEY,
@@ -1392,6 +1395,134 @@ async def test_a_stream_that_ends_by_itself_is_a_clean_end_not_an_error(
 
     response.close()
     await _unload(hass, entry)
+
+
+# Synthetic access units per codec (parameter sets + keyframe slice, then a P slice),
+# each with a payload marker the muxed output is searched for.
+_SC: Final = b"\x00\x00\x00\x01"
+_UNITS: Final = {
+    VideoCodec.HEVC: (
+        _SC + b"\x40\x01\x0c" + _SC + b"\x42\x01\x01" + _SC + b"\x26\x01hevc-key",
+        _SC + b"\x02\x01hevc-p",
+    ),
+    VideoCodec.H264: (
+        _SC + b"\x67\x42\x00\x1f" + _SC + b"\x68\xce\x3c\x80" + _SC + b"\x65h264-key",
+        _SC + b"\x41\x9ah264-p",
+    ),
+}
+_CODEC_CHANGE_LOG: Final = "ended at a video-codec change; the camera is kept open"
+
+
+def _coded(codec: VideoCodec, ms: int, *, keyframe: bool = False) -> MediaFrame:
+    size = (1600, 2300) if codec is VideoCodec.HEVC else (640, 920)
+    return MediaFrame(
+        MediaKind.VIDEO,
+        _UNITS[codec][0 if keyframe else 1],
+        is_keyframe=keyframe,
+        timestamp_ms=ms,
+        codec=codec,
+        width=size[0],
+        height=size[1],
+    )
+
+
+class _CodecSwitchStream:
+    """A camera stream that opens on an HEVC picture group and goes on in H.264."""
+
+    def __init__(self) -> None:
+        self.closed = False
+        self._frames = [
+            _coded(VideoCodec.HEVC, 1000, keyframe=True),
+            _coded(VideoCodec.HEVC, 1066),
+            _coded(VideoCodec.H264, 1133),
+            _coded(VideoCodec.H264, 1200, keyframe=True),
+            _coded(VideoCodec.H264, 1266),
+        ]
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+    def __aiter__(self) -> AsyncIterator[MediaFrame]:
+        return self._iter()
+
+    async def _iter(self) -> AsyncIterator[MediaFrame]:
+        for frame in self._frames:
+            await asyncio.sleep(0)
+            yield frame
+        while not self.closed:
+            await asyncio.sleep(0.01)
+
+
+def _written(request: web.Request) -> bytes:
+    writer: Any = request.writer
+    return b"".join(
+        call.args[0] for call in writer.write.call_args_list if isinstance(call.args[0], bytes)
+    )
+
+
+async def test_a_codec_change_end_is_logged_as_a_reconnect_and_the_rejoin_wakes_nothing(
+    hass: HomeAssistant,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A codec-change end is its own reason, never a failure; the next GET gets H.264."""
+    stream = _CodecSwitchStream()
+    opens = 0
+
+    async def open_stream() -> _CodecSwitchStream:
+        nonlocal opens
+        opens += 1
+        return stream
+
+    registry = streaming.stream_registry(hass)
+    broadcast = StreamBroadcast(open_stream, settle=0.0, fill_audio=False, name="test")
+    registry.broadcasts[SYNTHETIC.camera_sn] = broadcast
+    view = streaming.EufyStreamView(registry)
+    path = f"/api/eufy_home_security/stream/x?auth={registry.secret}"
+
+    def no_failure(err: BaseException) -> str:
+        raise AssertionError(f"a codec-change end classified as a failure: {err!r}")
+
+    monkeypatch.setattr(errors, "failure_reason", no_failure)
+    caplog.clear()
+    try:
+        with caplog.at_level(logging.DEBUG, logger=LOGGER):
+            first = make_mocked_request("GET", path, transport=_Peer("127.0.0.1"))
+            async with asyncio.timeout(5):
+                response = await view.get(first, SYNTHETIC.camera_sn)
+            ended = [r.getMessage() for r in caplog.records if "ended after" in r.getMessage()]
+
+            assert response.status == 200
+            assert len(ended) == 1
+            assert _CODEC_CHANGE_LOG in ended[0]
+            assert "clean end" not in ended[0]
+            assert b"hevc-key" in _written(first)
+            assert b"h264" not in _written(first)
+            assert broadcast.running, "the camera stays open for the reconnect"
+
+            # The reconnect within the grace: the new codec, no second open.
+            caplog.clear()
+            second = make_mocked_request("GET", path, transport=_Peer("127.0.0.1"))
+            rejoin = asyncio.create_task(view.get(second, SYNTHETIC.camera_sn))
+            await wait_until(lambda: b"h264-key" in _written(second), timeout=5)
+            assert opens == 1
+            await broadcast.aclose()
+            async with asyncio.timeout(5):
+                await rejoin
+            again = [r.getMessage() for r in caplog.records if "ended after" in r.getMessage()]
+    finally:
+        await broadcast.aclose()
+
+    # The rejoin cleared the flag: its own end is a plain clean end.
+    assert len(again) == 1
+    assert "clean end" in again[0]
+    assert _CODEC_CHANGE_LOG not in again[0]
+    loud = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name.startswith(LOGGER) and record.levelno >= logging.WARNING
+    ]
+    assert loud == []
 
 
 async def test_only_a_device_the_library_can_open_live_advertises_a_stream(

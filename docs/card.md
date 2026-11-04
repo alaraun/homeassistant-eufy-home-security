@@ -223,3 +223,18 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   player, and the first picture takes longer. A camera whose `video_codec` is not known yet (no picture since Home
   Assistant started) counts as HEVC. See [network.md](network.md) for the browser table.
 - A `New still` behind a HomeBase at its session budget waits up to about 20 s for a view to end first.
+- A live picture that stops after it played (a camera that changes video codec mid-stream) gets a new player
+  without ending the view: over WebRTC after 2 s, a new session opened beside the frozen one, which stays until the
+  new one shows video (closing it first would let the camera close, and the new session would wake it again); over
+  HLS every 10 s while the picture stands still, up to 5 times (HA's HLS player does not get past a codec change; a
+  new one plays once HA's playlist holds only the new codec); the count starts again only after the picture moved for
+  10 s, so new players that each play a few seconds and stop count on. After five new players the frozen picture
+  stays until it moves again. A player that never showed a frame is left as it is.
+  The countdown, the LIVE chip and full screen stay as they are.
+- When the card picks WebRTC for a camera that then opens on a codec the browser cannot receive over WebRTC (the
+  camera's last picture was H.264 and it opens on an HEVC group, in Firefox), the session reports no video before
+  the first picture. The card opens one more WebRTC session 3 s later, beside it; the new one replaces it when it
+  shows video (first picture about 4-6 s after the start in our test, plus the camera's wake). Without video there
+  too (or none within 10 s) the view goes on over HLS, and the first session stays open until HLS answers (HA's
+  stream then holds the camera, or HLS failed), so the camera is not closed and woken again in between. Once per
+  view; the countdown runs on and no message is shown.
