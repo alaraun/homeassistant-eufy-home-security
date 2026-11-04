@@ -5,6 +5,36 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.13](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.12...v0.4.13) (2026-11-04)
+
+
+### Features
+
+* a "Detections in current mode" diagnostic sensor per camera and doorbell, and detection_delivery in diagnostics ([library issue 175](https://github.com/alaraun/python-eufy-home-security/issues/175)) ([2fb155f](https://github.com/alaraun/homeassistant-eufy-home-security/commit/2fb155fe942e20a967c1802433e072ea5e0fae74))
+* a Refresh event image keyframe option picks which keyframe of the recording the manual refresh shows by [@screamerbg](https://github.com/screamerbg) in [#153](https://github.com/alaraun/homeassistant-eufy-home-security/issues/153) ([ee4f3e2](https://github.com/alaraun/homeassistant-eufy-home-security/commit/ee4f3e23a0bd1194745c2053d15de0866005067c))
+* a repair issue names the cameras whose detections the armed security mode in force holds back (Notification off), one issue per mode ([library issue 175](https://github.com/alaraun/python-eufy-home-security/issues/175)) ([2fb155f](https://github.com/alaraun/homeassistant-eufy-home-security/commit/2fb155fe942e20a967c1802433e072ea5e0fae74))
+* an entry sensor's door and tamper state follow each open and close at once ([issue 154](https://github.com/alaraun/homeassistant-eufy-home-security/issues/154)) ([2bbe600](https://github.com/alaraun/homeassistant-eufy-home-security/commit/2bbe600ab5f7ba7d885756190ca62bc150be16bc))
+* **card:** light entities as live view buttons, suggested by [@fast2doc](https://github.com/fast2doc) ([issue 157](https://github.com/alaraun/homeassistant-eufy-home-security/issues/157)) ([1246223](https://github.com/alaraun/homeassistant-eufy-home-security/commit/12462238a06c0011a2b00dc7cfbcc6b702b46619))
+* entities from each setting's role: device-card statuses enabled with a device class, settings-page statuses as enabled diagnostics ([issue 154](https://github.com/alaraun/homeassistant-eufy-home-security/issues/154)) ([0a4b495](https://github.com/alaraun/homeassistant-eufy-home-security/commit/0a4b495af6384b2ca68f07bda29b2e1652b179a6))
+* show which setting version the eufy app uses, and offer a reset to its defaults ([issue 145](https://github.com/alaraun/homeassistant-eufy-home-security/issues/145)) ([f07a0d6](https://github.com/alaraun/homeassistant-eufy-home-security/commit/f07a0d63f0aff5d3b716a3a51f024ca580cec21f))
+* the alarm panel shows an armed HomeBase's entry delay as pending, with delay_seconds and delay_until ([issue 154](https://github.com/alaraun/homeassistant-eufy-home-security/issues/154)) ([2bbe600](https://github.com/alaraun/homeassistant-eufy-home-security/commit/2bbe600ab5f7ba7d885756190ca62bc150be16bc))
+* the integration is in HACS's default list: search for "Anker eufy Home Security" in HACS, no custom repository needed ([38da891](https://github.com/alaraun/homeassistant-eufy-home-security/commit/38da891779e91eb5971120b91d704aa1ef2a6f30))
+
+
+### Bug Fixes
+
+* a live stream that ends at a video-codec change is logged as a reconnect, not as an error (library 0.4.10) ([issue 149](https://github.com/alaraun/homeassistant-eufy-home-security/issues/149)) ([6c6ff28](https://github.com/alaraun/homeassistant-eufy-home-security/commit/6c6ff288b415e6eb8346c9e4b6fd333bac6934c4))
+* a recording cut at a video-codec change is given up at once instead of retried three times, and a card fetch of it says why ([issue 149](https://github.com/alaraun/homeassistant-eufy-home-security/issues/149)) ([2fb155f](https://github.com/alaraun/homeassistant-eufy-home-security/commit/2fb155fe942e20a967c1802433e072ea5e0fae74))
+* a repair for a station whose cipher eufy answers without a key ([issue 155](https://github.com/alaraun/homeassistant-eufy-home-security/issues/155)) ([0a4b495](https://github.com/alaraun/homeassistant-eufy-home-security/commit/0a4b495af6384b2ca68f07bda29b2e1652b179a6))
+* a status row an earlier release created disabled is enabled at the next start ([issue 154](https://github.com/alaraun/homeassistant-eufy-home-security/issues/154)) ([0a4b495](https://github.com/alaraun/homeassistant-eufy-home-security/commit/0a4b495af6384b2ca68f07bda29b2e1652b179a6))
+* a structured setting value is never the entity's state; the value attribute holds it ([issue 154](https://github.com/alaraun/homeassistant-eufy-home-security/issues/154)) ([0a4b495](https://github.com/alaraun/homeassistant-eufy-home-security/commit/0a4b495af6384b2ca68f07bda29b2e1652b179a6))
+* **card:** a live picture that stops after it played gets a new player without ending the view: a WebRTC session opened beside the frozen one, or a new HLS player ([issue 149](https://github.com/alaraun/homeassistant-eufy-home-security/issues/149)) ([6c6ff28](https://github.com/alaraun/homeassistant-eufy-home-security/commit/6c6ff288b415e6eb8346c9e4b6fd333bac6934c4))
+* **card:** a WebRTC live view that gets sound only before its first picture opens one more WebRTC session, then HLS, without waking the camera twice ([issue 149](https://github.com/alaraun/homeassistant-eufy-home-security/issues/149)) ([6c6ff28](https://github.com/alaraun/homeassistant-eufy-home-security/commit/6c6ff288b415e6eb8346c9e4b6fd333bac6934c4))
+* diagnostics number two devices whose redacted serials collide ([2fb155f](https://github.com/alaraun/homeassistant-eufy-home-security/commit/2fb155fe942e20a967c1802433e072ea5e0fae74))
+* no entity for diagnostic values, JSON statuses or icon-only codes; their rows from an earlier build are removed ([issue 154](https://github.com/alaraun/homeassistant-eufy-home-security/issues/154)) ([0a4b495](https://github.com/alaraun/homeassistant-eufy-home-security/commit/0a4b495af6384b2ca68f07bda29b2e1652b179a6))
+* only the station's own P2P mode report ends a pending entry delay at once; a P2P arming push is ordered by its event time ([issue 154](https://github.com/alaraun/homeassistant-eufy-home-security/issues/154)) ([2fb155f](https://github.com/alaraun/homeassistant-eufy-home-security/commit/2fb155fe942e20a967c1802433e072ea5e0fae74))
+* pin eufy-home-security 0.4.10 ([0a4b495](https://github.com/alaraun/homeassistant-eufy-home-security/commit/0a4b495af6384b2ca68f07bda29b2e1652b179a6))
+
 ## [0.4.12](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.11...v0.4.12) (2026-10-30)
 
 
