@@ -513,7 +513,8 @@ class EufyDetectionDeliverySensor(EufyDeviceEntity, SensorEntity):
     (``Station.detection_delivery``): ``sent``, ``not_sent_in_mode`` or ``unknown``.
 
     Attributes: ``mode``, the mode in force by the station's name, and
-    ``sending_modes``, the modes whose table sends the device's detections. Coordinator
+    ``sending_modes``, the armed modes whose table sends the device's detections (as
+    the repair names them; Off and Disarmed are left out). Coordinator
     updates refresh it: a mode change and a configuration change both notify. Its
     availability is the station's, not the device's block: the answer is read from
     the station's mode tables, which also grade a device the dump leaves out.
@@ -553,11 +554,14 @@ class EufyDetectionDeliverySensor(EufyDeviceEntity, SensorEntity):
     @property
     @override
     def extra_state_attributes(self) -> dict[str, Any]:
-        """``mode`` (None when unknown) and ``sending_modes``, by the station's names."""
+        """``mode`` (None when unknown) and the armed ``sending_modes``, by the station's
+        names."""
         report = self._report()
         return {
             "mode": None if report.mode is None else self._mode_name(report.mode),
-            "sending_modes": [self._mode_name(mode) for mode in report.sending_modes],
+            "sending_modes": [
+                self._mode_name(mode) for mode in report.sending_modes if not mode.is_disarmed
+            ],
         }
 
 

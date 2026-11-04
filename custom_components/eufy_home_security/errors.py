@@ -1343,7 +1343,7 @@ def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) ->
         pending_invites_issue_id(entry.entry_id),
         login_limited_issue_id(entry.entry_id),
         push_needed_issue_id(entry.entry_id),
-        mode_holds_detections_issue_id(entry.entry_id, ""),
+        mode_holds_detections_issue_prefix(entry.entry_id),
         *(skipped_devices_issue_id(entry.entry_id, key) for key in _SKIP_ISSUES.values()),
     )
     cancel_login_limited_expiry(hass, entry.entry_id)
@@ -1623,9 +1623,17 @@ def delete_variant_reset_issue(hass: HomeAssistant, entry: ConfigEntry[Any]) -> 
     ir.async_delete_issue(hass, DOMAIN, variant_reset_issue_id(entry.entry_id))
 
 
-def mode_holds_detections_issue_id(entry_id: str, device_id: str) -> str:
-    """A station's mode-holds-detections issue, by its device-registry id."""
-    return f"{ISSUE_MODE_HOLDS_DETECTIONS}_{entry_id}_{device_id}"
+def mode_holds_detections_issue_prefix(entry_id: str, device_id: str = "") -> str:
+    """The prefix of a station's mode-holds-detections issue ids, by its
+    device-registry id; without one, the prefix of all of the entry's."""
+    station = f"{device_id}_" if device_id else ""
+    return f"{ISSUE_MODE_HOLDS_DETECTIONS}_{entry_id}_{station}"
+
+
+def mode_holds_detections_issue_id(entry_id: str, device_id: str, mode: GuardMode | int) -> str:
+    """A station's mode-holds-detections issue for one mode, by the station's
+    device-registry id and the mode's code: an ignore covers that mode only."""
+    return f"{mode_holds_detections_issue_prefix(entry_id, device_id)}{int(mode)}"
 
 
 def _is_disarmed(mode: GuardMode | int | None) -> bool:
@@ -1669,7 +1677,10 @@ def sync_mode_holds_detections_issue(
     by the guard mode). Off and Disarmed name no device: a station that sends nothing
     while disarmed is no fault. One issue per station, deleted when it names no device;
     a warning, not fixable (the remedy is in the eufy app), not persistent, and ignorable
-    for a mode kept silent on purpose. Placeholders: the station, the mode in force,
+    for a mode kept silent on purpose. The issue id carries the mode in force, and each
+    check deletes the station's issues of every other mode: an ignore given in one mode
+    never silences another, and is lost once its mode leaves (Home Assistant drops the
+    dismissal of a deleted issue). Placeholders: the station, the mode in force,
     the devices, and the armed modes that send any of them in the station's order; with
     none, the ``_nowhere`` text, which names no mode.
     """
@@ -1681,12 +1692,23 @@ def sync_mode_holds_detections_issue(
                 redact_serial(station.serial),
             )
             continue
-        issue_id = mode_holds_detections_issue_id(entry.entry_id, device.id)
         held, config = _held_back(station)
-        if not held:
-            ir.async_delete_issue(hass, DOMAIN, issue_id)
+        mode = held[0].mode if held else None
+        issue_id = (
+            None
+            if mode is None
+            else mode_holds_detections_issue_id(entry.entry_id, device.id, mode)
+        )
+        prefix = mode_holds_detections_issue_prefix(entry.entry_id, device.id)
+        stale = [
+            other
+            for domain, other in ir.async_get(hass).issues
+            if domain == DOMAIN and other.startswith(prefix) and other != issue_id
+        ]
+        for other in stale:
+            ir.async_delete_issue(hass, DOMAIN, other)
+        if issue_id is None:
             continue
-        mode = held[0].mode
         # NOT_SENT_IN_MODE is read from a configuration, for a known mode.
         assert config is not None and mode is not None
         sending = {m for report in held for m in report.sending_modes if not m.is_disarmed}

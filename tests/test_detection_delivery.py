@@ -50,7 +50,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.eufy_home_security import diagnostics, errors
+from custom_components.eufy_home_security import detections, diagnostics, errors
 from custom_components.eufy_home_security.const import (
     DETECTION_DELIVERY_KEY,
     DETECTION_EVENT_KEY,
@@ -78,13 +78,19 @@ def _hold_back_in_home(station: FakeStation) -> None:
 
 
 def _issue(hass: HomeAssistant, entry: MockConfigEntry) -> ir.IssueEntry | None:
+    """The station's mode-holds-detections issue, of whichever mode; never more than one."""
     station = dr.async_get(hass).async_get_device_by_identifier(
         (DOMAIN, SYNTHETIC.station_sn), entry.entry_id
     )
     assert station is not None
-    return ir.async_get(hass).async_get_issue(
-        DOMAIN, errors.mode_holds_detections_issue_id(entry.entry_id, station.id)
-    )
+    prefix = errors.mode_holds_detections_issue_prefix(entry.entry_id, station.id)
+    found = [
+        issue
+        for (domain, issue_id), issue in ir.async_get(hass).issues.items()
+        if domain == DOMAIN and issue_id.startswith(prefix)
+    ]
+    assert len(found) <= 1, [issue.issue_id for issue in found]
+    return found[0] if found else None
 
 
 def _label(hass: HomeAssistant, entry: MockConfigEntry, serial: str) -> str:
@@ -412,14 +418,83 @@ def _entry_with_devices(hass: HomeAssistant, *serials: str) -> MockConfigEntry:
     return entry
 
 
-def _stand_in_issue(hass: HomeAssistant, entry: MockConfigEntry) -> ir.IssueEntry | None:
-    station = dr.async_get(hass).async_get_device_by_identifier(
-        (DOMAIN, SYNTHETIC.station_sn), entry.entry_id
+def _held(mode: GuardMode) -> _GradedStation:
+    """The camera held back in ``mode``, sent in Away."""
+    return _GradedStation(
+        SYNTHETIC.station_sn,
+        {
+            SYNTHETIC.camera_sn: _report(
+                SYNTHETIC.camera_sn, DetectionDelivery.NOT_SENT_IN_MODE, mode
+            )
+        },
     )
-    assert station is not None
-    return ir.async_get(hass).async_get_issue(
-        DOMAIN, errors.mode_holds_detections_issue_id(entry.entry_id, station.id)
+
+
+async def test_the_sensor_names_only_armed_modes_that_send(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Disarmed sends the camera's detections too, but ``sending_modes`` names the armed
+    modes only, as the repair does."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    coordinator = entry.runtime_data.coordinators[SYNTHETIC.station_sn]
+    report = _report(
+        SYNTHETIC.camera_sn,
+        DetectionDelivery.NOT_SENT_IN_MODE,
+        sending=(GuardMode.AWAY, GuardMode.DISARMED),
     )
+    monkeypatch.setattr(
+        coordinator.station, "detection_delivery", lambda serial, *, config=None: report
+    )
+    coordinator.async_update_listeners()
+
+    state = hass.states.get(_sensor(hass))
+    assert state is not None
+    assert state.attributes["sending_modes"] == ["Away"]
+    monkeypatch.undo()
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+# Two serials of one model whose redacted labels collide.
+_TWIN_SNS: Final = ("T8160P1000000001", "T8160P2000000001")
+
+
+@dataclass
+class _Slot:
+    index: int
+    enabled: bool
+
+
+async def test_diagnostics_number_devices_whose_redacted_labels_collide(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both twins keep their own delivery and preset figures, the second as ``#2``."""
+    assert redact_serial(_TWIN_SNS[0]) == redact_serial(_TWIN_SNS[1])
+    station = _GradedStation(
+        SYNTHETIC.station_sn,
+        {
+            _TWIN_SNS[0]: _report(_TWIN_SNS[0], DetectionDelivery.SENT),
+            _TWIN_SNS[1]: _report(_TWIN_SNS[1], DetectionDelivery.NOT_SENT_IN_MODE),
+        },
+    )
+    slots = {_TWIN_SNS[0]: [_Slot(0, True)], _TWIN_SNS[1]: [_Slot(0, True), _Slot(1, True)]}
+    station.presets = slots.get  # type: ignore[attr-defined]
+    monkeypatch.setattr(detections, "has_preset_entities", lambda st, sn: True)
+    label = redact_serial(_TWIN_SNS[0])
+
+    delivery = diagnostics._delivery_figures(station)  # type: ignore[arg-type]
+    presets = diagnostics._preset_figures(station)  # type: ignore[arg-type]
+
+    assert {key: value["delivery"] for key, value in delivery.items()} == {
+        label: "sent",
+        f"{label}#2": "not_sent_in_mode",
+    }
+    assert presets == {
+        label: {"count": 1, "enabled": [0]},
+        f"{label}#2": {"count": 2, "enabled": [0, 1]},
+    }
 
 
 async def test_a_keypad_or_the_station_itself_is_never_named(hass: HomeAssistant) -> None:
@@ -431,7 +506,7 @@ async def test_a_keypad_or_the_station_itself_is_never_named(hass: HomeAssistant
 
     errors.sync_mode_holds_detections_issue(hass, entry, [station])  # type: ignore[list-item]
 
-    issue = _stand_in_issue(hass, entry)
+    issue = _issue(hass, entry)
     assert issue is not None
     assert (issue.translation_placeholders or {})["devices"] == f"Device {SYNTHETIC.camera_sn[-4:]}"
     assert station.asked == [SYNTHETIC.camera_sn]
@@ -448,7 +523,7 @@ async def test_a_device_without_a_registry_row_is_named_by_its_redacted_serial(
 
     errors.sync_mode_holds_detections_issue(hass, entry, [station])  # type: ignore[list-item]
 
-    issue = _stand_in_issue(hass, entry)
+    issue = _issue(hass, entry)
     assert issue is not None
     assert (issue.translation_placeholders or {})["devices"] == redact_serial(SYNTHETIC.camera_sn)
 
@@ -490,7 +565,7 @@ async def test_a_disarmed_mode_in_force_names_nobody(
 
     errors.sync_mode_holds_detections_issue(hass, entry, [station])  # type: ignore[list-item]
 
-    assert (_stand_in_issue(hass, entry) is not None) is raised
+    assert (_issue(hass, entry) is not None) is raised
 
 
 @pytest.mark.parametrize(
@@ -505,14 +580,14 @@ async def test_a_device_not_held_back_deletes_the_issue(
         {SYNTHETIC.camera_sn: _report(SYNTHETIC.camera_sn, DetectionDelivery.NOT_SENT_IN_MODE)},
     )
     errors.sync_mode_holds_detections_issue(hass, entry, [held])  # type: ignore[list-item]
-    assert _stand_in_issue(hass, entry) is not None
+    assert _issue(hass, entry) is not None
 
     graded = _GradedStation(
         SYNTHETIC.station_sn, {SYNTHETIC.camera_sn: _report(SYNTHETIC.camera_sn, delivery)}
     )
     errors.sync_mode_holds_detections_issue(hass, entry, [graded])  # type: ignore[list-item]
 
-    assert _stand_in_issue(hass, entry) is None
+    assert _issue(hass, entry) is None
 
 
 async def test_the_issue_names_every_held_device_and_the_armed_modes_that_send_them(
@@ -537,12 +612,124 @@ async def test_the_issue_names_every_held_device_and_the_armed_modes_that_send_t
 
     errors.sync_mode_holds_detections_issue(hass, entry, [station])  # type: ignore[list-item]
 
-    issue = _stand_in_issue(hass, entry)
+    issue = _issue(hass, entry)
     assert issue is not None
     assert issue.translation_key == ISSUE_MODE_HOLDS_DETECTIONS
     placeholders = issue.translation_placeholders or {}
     assert placeholders["devices"] == f"Device {SYNTHETIC.camera_sn[-4:]}, Device {_INDOOR_SN[-4:]}"
     assert placeholders["sending_modes"] == "Away, Night"
+
+
+async def test_the_sending_modes_follow_the_stations_order_not_the_codes(
+    hass: HomeAssistant,
+) -> None:
+    """A station that lists Night before Away: the issue names them in that order."""
+    entry = _entry_with_devices(hass, SYNTHETIC.station_sn, SYNTHETIC.camera_sn, _INDOOR_SN)
+    config = _Config(
+        mode_tables=dict.fromkeys((GuardMode.HOME, GuardMode.CUSTOM_1, GuardMode.AWAY))
+    )
+    station = _GradedStation(
+        SYNTHETIC.station_sn,
+        {
+            SYNTHETIC.camera_sn: _report(
+                SYNTHETIC.camera_sn, DetectionDelivery.NOT_SENT_IN_MODE, sending=(GuardMode.AWAY,)
+            ),
+            _INDOOR_SN: _report(
+                _INDOOR_SN, DetectionDelivery.NOT_SENT_IN_MODE, sending=(GuardMode.CUSTOM_1,)
+            ),
+        },
+        config=config,
+    )
+
+    errors.sync_mode_holds_detections_issue(hass, entry, [station])  # type: ignore[list-item]
+
+    issue = _issue(hass, entry)
+    assert issue is not None
+    assert (issue.translation_placeholders or {})["sending_modes"] == "Night, Away"
+
+
+async def test_an_ignore_holds_while_its_mode_stays_in_force(hass: HomeAssistant) -> None:
+    """A check in the same mode (a table change elsewhere) keeps the ignored issue."""
+    entry = _entry_with_devices(hass, SYNTHETIC.station_sn, SYNTHETIC.camera_sn)
+    errors.sync_mode_holds_detections_issue(hass, entry, [_held(GuardMode.HOME)])  # type: ignore[list-item]
+    issue = _issue(hass, entry)
+    assert issue is not None
+    ir.async_ignore_issue(hass, DOMAIN, issue.issue_id, True)
+
+    errors.sync_mode_holds_detections_issue(hass, entry, [_held(GuardMode.HOME)])  # type: ignore[list-item]
+
+    kept = _issue(hass, entry)
+    assert kept is not None
+    assert kept.dismissed_version is not None
+
+
+async def test_an_ignore_in_one_mode_does_not_silence_another(hass: HomeAssistant) -> None:
+    """Home ignored, then Night in force and also holding the camera back: the Night
+    issue shows, and the Home one is gone."""
+    entry = _entry_with_devices(hass, SYNTHETIC.station_sn, SYNTHETIC.camera_sn)
+    errors.sync_mode_holds_detections_issue(hass, entry, [_held(GuardMode.HOME)])  # type: ignore[list-item]
+    home = _issue(hass, entry)
+    assert home is not None
+    ir.async_ignore_issue(hass, DOMAIN, home.issue_id, True)
+
+    errors.sync_mode_holds_detections_issue(hass, entry, [_held(GuardMode.CUSTOM_1)])  # type: ignore[list-item]
+
+    night = _issue(hass, entry)
+    assert night is not None
+    assert night.issue_id != home.issue_id
+    assert (night.translation_placeholders or {})["mode"] == "Night"
+    assert night.dismissed_version is None
+    assert ir.async_get(hass).async_get_issue(DOMAIN, home.issue_id) is None
+
+
+async def test_an_ignore_is_lost_once_its_mode_leaves_and_comes_back(hass: HomeAssistant) -> None:
+    """Home ignored, Disarmed, Home again: the issue shows again (the withdrawn issue
+    takes its dismissal with it)."""
+    entry = _entry_with_devices(hass, SYNTHETIC.station_sn, SYNTHETIC.camera_sn)
+    errors.sync_mode_holds_detections_issue(hass, entry, [_held(GuardMode.HOME)])  # type: ignore[list-item]
+    issue = _issue(hass, entry)
+    assert issue is not None
+    ir.async_ignore_issue(hass, DOMAIN, issue.issue_id, True)
+
+    errors.sync_mode_holds_detections_issue(hass, entry, [_held(GuardMode.DISARMED)])  # type: ignore[list-item]
+    assert _issue(hass, entry) is None
+    errors.sync_mode_holds_detections_issue(hass, entry, [_held(GuardMode.HOME)])  # type: ignore[list-item]
+
+    again = _issue(hass, entry)
+    assert again is not None
+    assert again.issue_id == issue.issue_id
+    assert again.dismissed_version is None
+
+
+async def test_unload_deletes_the_issue_of_every_mode(hass: HomeAssistant) -> None:
+    """The entry's cleanup finds each station's issue whatever mode its id carries, and
+    leaves another entry's."""
+    entry = _entry_with_devices(hass, SYNTHETIC.station_sn, SYNTHETIC.camera_sn)
+    station = dr.async_get(hass).async_get_device_by_identifier(
+        (DOMAIN, SYNTHETIC.station_sn), entry.entry_id
+    )
+    assert station is not None
+    other = MockConfigEntry(domain=DOMAIN, title="Other")
+    other.add_to_hass(hass)
+    ids = [
+        errors.mode_holds_detections_issue_id(entry.entry_id, station.id, mode)
+        for mode in (GuardMode.HOME, GuardMode.CUSTOM_1, 99)
+    ]
+    kept = errors.mode_holds_detections_issue_id(other.entry_id, station.id, GuardMode.HOME)
+    for issue_id in (*ids, kept):
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=ISSUE_MODE_HOLDS_DETECTIONS,
+        )
+
+    errors.delete_reload_scoped_issues(hass, entry)
+
+    left = [issue_id for (domain, issue_id) in ir.async_get(hass).issues if domain == DOMAIN]
+    assert left == [kept]
 
 
 @pytest.mark.parametrize("sending", [(), (GuardMode.DISARMED,)], ids=["no_mode", "only_disarmed"])
@@ -561,7 +748,7 @@ async def test_without_an_armed_mode_that_sends_the_issue_names_none(
 
     errors.sync_mode_holds_detections_issue(hass, entry, [station])  # type: ignore[list-item]
 
-    issue = _stand_in_issue(hass, entry)
+    issue = _issue(hass, entry)
     assert issue is not None
     assert issue.translation_key == ISSUE_MODE_HOLDS_DETECTIONS_NOWHERE
     assert "sending_modes" not in (issue.translation_placeholders or {})

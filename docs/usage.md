@@ -107,8 +107,9 @@ Each camera and doorbell has a **Detections in current mode** diagnostic sensor:
 | `not_sent_in_mode` | Notification is off: no detections from it while this mode is in force |
 | `unknown` | not known: no mode settings reported yet, the mode in force unknown, or a mode without per-device settings (Geofencing) |
 
-Attributes: `mode` (the mode in force) and `sending_modes` (the modes that send its
-detections). In an armed mode, `not_sent_in_mode` also raises a repair issue; see
+Attributes: `mode` (the mode in force) and `sending_modes` (the armed modes that send
+its detections; Disarmed is not listed). In an armed mode, `not_sent_in_mode` also
+raises a repair issue; see
 [troubleshooting.md](troubleshooting.md#no-detections-from-a-camera). Motion sensors get no
 such sensor: whether their Notification switch holds detections back is not known.
 

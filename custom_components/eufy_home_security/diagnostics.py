@@ -53,19 +53,28 @@ def _storage_figures(storage: StorageInfo | None) -> dict[str, Any] | None:
     return figures
 
 
+def _device_labels(station: Station) -> dict[str, str]:
+    """Each paired device's redacted label, numbered as :func:`_station_labels` numbers
+    stations: two serials of one model can share a redacted label."""
+    serials = [device.device_sn for device in station.devices if device.device_sn]
+    return _station_labels(serials, ())
+
+
 def _preset_figures(station: Station) -> dict[str, dict[str, Any] | None]:
-    """Each pan/tilt camera's preset slots by redacted label: count and enabled indexes.
+    """Each pan/tilt camera's preset slots by its :func:`_device_labels` label: count and
+    enabled indexes.
 
     None for a camera whose slots were never read (the station holds none, and
     nothing here reads them). Indexes and a count only: no zoom, no default flag.
     """
+    labels = _device_labels(station)
     figures: dict[str, dict[str, Any] | None] = {}
     for device in station.devices:
         serial = device.device_sn
         if not serial or not detections.has_preset_entities(station, serial):
             continue
         slots = station.presets(serial)
-        figures[redact_serial(serial)] = (
+        figures[labels[serial]] = (
             None
             if slots is None
             else {
@@ -82,17 +91,18 @@ def _mode_key(mode: GuardMode | int) -> str | int:
 
 
 def _delivery_figures(station: Station) -> dict[str, dict[str, Any]]:
-    """Each paired device's ``Station.detection_delivery`` by redacted label: the grade,
-    the mode in force, the device's action mask in it and the modes that send. The
-    reason text is left out."""
+    """Each paired device's ``Station.detection_delivery`` by its :func:`_device_labels`
+    label: the grade, the mode in force, the device's action mask in it and the modes
+    that send. The reason text is left out."""
     config = station.config
+    labels = _device_labels(station)
     figures: dict[str, dict[str, Any]] = {}
     for device in station.devices:
         serial = device.device_sn
         if not serial:
             continue
         report = station.detection_delivery(serial, config=config)
-        figures[redact_serial(serial)] = {
+        figures[labels[serial]] = {
             "delivery": report.delivery.value,
             "mode": None if report.mode is None else _mode_key(report.mode),
             "action": report.action,
