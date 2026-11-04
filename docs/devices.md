@@ -18,7 +18,7 @@ generated from eufy's own model data. What the file says decides the entity:
 | only read a status the eufy app shows on the device card (an entry sensor's door) | sensor or binary sensor, enabled |
 | only read a status the eufy app shows on a settings page | diagnostic sensor or binary sensor, enabled |
 | only read a setting the app offers as a control | diagnostic sensor or binary sensor, disabled by default |
-| only read a value the app does not show, one another entity already gives (battery, firmware update in progress), a status made of several fields (JSON), or a code the device card shows only as an icon (connection type, Wi-Fi level) | none |
+| only read a value the app does not show, one another entity already gives (battery, firmware update in progress), a status made of several fields, or a code the device card shows only as an icon (connection type, Wi-Fi level) | none |
 | neither | none |
 
 Some settings come in several versions; which one the eufy app uses depends on the

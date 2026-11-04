@@ -1,8 +1,8 @@
 """Setting entities by role, shown and readable: statuses on, diagnostics none.
 
 An entry sensor's door, tamper and low-battery statuses are enabled binary sensors on
-the device card; a status of a settings page is an enabled diagnostic entity; a JSON
-value is never a state.
+the device card; a status of a settings page is an enabled diagnostic entity; a
+structured or JSON value is never a state.
 """
 
 from __future__ import annotations
@@ -331,36 +331,78 @@ async def test_diagnostic_values_get_no_entity(
     await _stop(hass, entry)
 
 
-async def test_a_json_value_is_an_attribute_and_a_long_text_is_cut(
+async def _enabled_station_sensor(
+    hass: HomeAssistant, fake_station: FakeStation, key: str, raw: str
+) -> tuple[MockConfigEntry, Setting, str]:
+    """Set up with ``raw`` as the HomeBase's ``key``, its sensor row enabled."""
+    seed_setting(fake_station, key, raw, channel=_STATION_CHANNEL)
+    entry = add_entry(hass)
+    assert await setup_entry(hass, entry)
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+    setting = next(s for s in station.settings_for() if s.key == key)
+    entity_id = entity_id_for(hass, Platform.SENSOR, SYNTHETIC.station_sn, key)
+    er.async_get(hass).async_update_entity(entity_id, disabled_by=None)
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry, setting, entity_id
+
+
+_DOCUMENT: Final = {"mode": 1, "devices": [{"channel": 0, "action": 3}]}
+
+
+@pytest.mark.parametrize(
+    ("key", "raw", "expected"),
+    [
+        ("ai_empower", "1", "1"),
+        ("ai_empower", '[{"ch": 0, "on": 1}]', [{"ch": 0, "on": 1}]),
+        (_JSON_SETTING, json.dumps(_DOCUMENT), _DOCUMENT),
+        (_JSON_SETTING, "y" * 400, "y" * 400),
+    ],
+)
+async def test_a_structured_value_is_never_the_state(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    key: str,
+    raw: str,
+    expected: Any,
+) -> None:
+    """A structured setting's value: state unknown, ``value`` the decoded JSON, or the
+    raw value when it does not parse."""
+    seed_warm_cache()
+    entry, setting, entity_id = await _enabled_station_sensor(hass, fake_station, key, raw)
+    assert setting.structured
+    assert not setting.writable
+
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.state == "unknown"
+    assert state.attributes[ATTR_VALUE] == expected
+    await _stop(hass, entry)
+
+
+async def test_a_json_text_of_another_setting_is_an_attribute_and_a_long_text_is_cut(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """A read-only setting's JSON value: state unknown, decoded under ``value``. A text
-    longer than the limit is cut to it."""
-    document = {"mode": 1, "devices": [{"channel": 0, "action": 3}]}
-    seed_setting(fake_station, _JSON_SETTING, json.dumps(document), channel=_STATION_CHANNEL)
+    """A setting not flagged structured: a JSON text is an attribute, state unknown; a
+    text longer than the limit is cut to it."""
+    key = "notification_alarm_delay_value"
     seed_warm_cache()
-    entry = add_entry(hass)
-    assert await setup_entry(hass, entry)
-    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
-    setting = next(s for s in station.settings_for() if s.key == _JSON_SETTING)
-    assert setting.structured
-    assert not setting.writable
-    entity_id = entity_id_for(hass, Platform.SENSOR, SYNTHETIC.station_sn, _JSON_SETTING)
-    registry = er.async_get(hass)
-    registry.async_update_entity(entity_id, disabled_by=None)
-    await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
-
+    entry, setting, entity_id = await _enabled_station_sensor(
+        hass, fake_station, key, json.dumps(_DOCUMENT)
+    )
+    assert not setting.structured
     state = hass.states.get(entity_id)
     assert state is not None
     assert state.state == "unknown"
-    assert state.attributes[ATTR_VALUE] == document
+    assert state.attributes[ATTR_VALUE] == _DOCUMENT
     await _stop(hass, entry)
 
-    seed_setting(fake_station, _JSON_SETTING, "y" * 400, channel=_STATION_CHANNEL)
+    seed_setting(fake_station, key, "y" * 400, channel=_STATION_CHANNEL)
     assert await setup_entry(hass, entry)
     state = hass.states.get(entity_id)
     assert state is not None

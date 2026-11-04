@@ -497,8 +497,10 @@ class EufyDeviceFieldSensor(EufyDeviceEntity, SensorEntity):
 class EufySettingSensor(EufySettingEntity, SensorEntity):
     """A readable setting with no control: read-only, or a string or code value.
 
-    A JSON value (an object or array) is never the state: the state is unknown and the
-    decoded value is the ``value`` attribute. A longer text is cut to the state limit.
+    A structured value (``Setting.structured``) is never the state: the state is unknown
+    and the ``value`` attribute holds the decoded JSON, or the raw value when it does not
+    parse. A JSON object or array text of another setting is treated the same. A longer
+    text is cut to the state limit.
     """
 
     # Raw device JSON can be large: kept out of the recorder.
@@ -523,9 +525,9 @@ class EufySettingSensor(EufySettingEntity, SensorEntity):
     def native_value(self) -> StateType:
         """The decoded value; an enum by its label, None for a value outside its values."""
         value = self.setting_value
-        if value is None:
-            return None
         setting = self._spec.setting
+        if value is None or setting.structured:
+            return None
         if setting.kind is SettingKind.ENUM:
             return self.option_label(value) if value in setting.values else None
         if isinstance(value, bool):
@@ -539,9 +541,13 @@ class EufySettingSensor(EufySettingEntity, SensorEntity):
     @property
     @override
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        """The base attributes, plus ``value`` holding a JSON value."""
+        """The base attributes, plus ``value`` holding a structured or JSON value."""
         attributes = super().extra_state_attributes
-        if (decoded := json_value(self.setting_value)) is not None:
+        value = self.setting_value
+        decoded: object = json_value(value)
+        if decoded is None and self._spec.setting.structured:
+            decoded = value
+        if decoded is not None:
             attributes = {**(attributes or {}), ATTR_VALUE: decoded}
         return attributes
 
