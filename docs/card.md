@@ -228,8 +228,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   new one shows video (closing it first would let the camera close, and the new session would wake it again); over
   HLS every 10 s while the picture stands still, up to 5 times (HA's HLS player does not get past a codec change; a
   new one plays once HA's playlist holds only the new codec); the count starts again only after the picture moved for
-  10 s, so new players that each play a few seconds and stop count on. A player that never showed a frame is left as
-  it is.
+  10 s, so new players that each play a few seconds and stop count on. After five new players the frozen picture
+  stays until it moves again. A player that never showed a frame is left as it is.
   The countdown, the LIVE chip and full screen stay as they are.
 - When the card picks WebRTC for a camera that then opens on a codec the browser cannot receive over WebRTC (the
   camera's last picture was H.264 and it opens on an HEVC group, in Firefox), the session reports no video before

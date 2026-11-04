@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.03-4';
+const CARD_VERSION = '2026.11.03-5';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -1231,8 +1231,8 @@ class EufyCameraCard extends HTMLElement {
   // While the page is shown, the picture on screen and the view has counted a frame (an engine may report 0 for a
   // playing stream): a WebRTC count that stood still RTC_STALL_MS starts one new session (_reattach), the next one
   // only after the picture moved again; an HLS one still HLS_FREEZE_MS gets a new player each time, up to HLS_TRIES
-  // until it moved for HLS_FREEZE_MS (L.mAt: since when it moves). Otherwise the watch restarts: a hidden page may hold its timers, and Firefox pauses a muted
-  // video scrolled out of view.
+  // until it moved for HLS_FREEZE_MS (L.mAt: since when it moves, cleared when the watch restarts). Otherwise the
+  // watch restarts: a hidden page may hold its timers, and Firefox pauses a muted video scrolled out of view.
   _watchStall(L, v, now) {
     const r = this._pic.getBoundingClientRect();
     if (document.visibilityState !== 'visible' || r.bottom <= 0 || r.top >= window.innerHeight) { L.fAt = null; return; }
@@ -1251,7 +1251,7 @@ class EufyCameraCard extends HTMLElement {
       L.stalled = false;
       if (L.mAt == null) L.mAt = now;
       else if (now - L.mAt >= HLS_FREEZE_MS) L.hlsTries = 0;
-    }
+    } else L.mAt = null;
     L.fN = n;
     L.fAt = now;
   }
