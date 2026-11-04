@@ -39,7 +39,7 @@ picture: auto                    # optional: auto | landscape | portrait
 show_header: true                # optional: false hides the header (name, status, camera menu)
 show_history: true               # optional: false hides History
 show_settings: true              # optional: false hides Settings
-live_buttons:                    # optional: buttons on the live view bar (lock, cover, button, script, scene, switch)
+live_buttons:                    # optional: buttons on the live view bar (lock, cover, button, script, scene, switch, light)
   - lock.front_door
 live_seconds: 120                # optional: length of a started live view (default 120 s)
 auto_live: timed                 # optional: start live view when the dashboard opens: timed | continuous (true = timed)
@@ -94,7 +94,8 @@ settings_groups:                 # optional: Settings tabs to show, in this orde
   lock `lock.lock` while unlocked or open, else `lock.open` when it can open its latch, else `lock.unlock`; a lock
   that is jammed, locking, unlocking or opening offers nothing (the button is disabled and names the state); a
   cover `cover.open_cover` / `cover.close_cover`; a button `button.press` (or `input_button.press`); a script or
-  scene `turn_on`; a switch `turn_on` / `turn_off`.
+  scene `turn_on`; a switch or light `turn_on` / `turn_off` (on and off only: brightness and colour stay with
+  Home Assistant's light controls).
 
 ## Battery rule
 

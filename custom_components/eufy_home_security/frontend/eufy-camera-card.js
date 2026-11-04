@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.03-5';
+const CARD_VERSION = '2026.11.04-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -93,7 +93,7 @@ const ratioOf = (id) => {
 const RING_MS = 60000;
 // Live view buttons (`live_buttons`): the second press within LACT_ARM_MS sends; the first only asks
 const LACT_ARM_MS = 4000;
-const LACT_DOMAINS = ['lock', 'cover', 'button', 'input_button', 'script', 'scene', 'switch'];
+const LACT_DOMAINS = ['lock', 'cover', 'button', 'input_button', 'script', 'scene', 'switch', 'light'];
 // lock.open when the lock can open its latch (LockEntityFeature.OPEN)
 const LOCK_OPEN = 1;
 // Lock states with no action to offer: moving, or stuck
@@ -311,6 +311,8 @@ const liveAction = (st) => {
   if (dom === 'scene') return { domain: 'scene', service: 'turn_on', verb: 'Activate', icon: 'mdi:palette-outline' };
   if (dom === 'switch') return st.state === 'on' ? { domain: 'switch', service: 'turn_off', verb: 'Turn off', icon: 'mdi:toggle-switch-outline' }
     : { domain: 'switch', service: 'turn_on', verb: 'Turn on', icon: 'mdi:toggle-switch-off-outline' };
+  if (dom === 'light') return st.state === 'on' ? { domain: 'light', service: 'turn_off', verb: 'Turn off', icon: 'mdi:lightbulb-on-outline' }
+    : { domain: 'light', service: 'turn_on', verb: 'Turn on', icon: 'mdi:lightbulb-outline' };
   return null;
 };
 const ok = (st) => !!st && !INVALID.includes(String(st.state).toLowerCase());
