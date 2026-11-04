@@ -61,6 +61,7 @@ from custom_components.eufy_home_security.const import (
     CONNECTION_LOSS_GRACE_SECONDS,
     DEFAULT_REFRESH_KEYFRAME,
     DOMAIN,
+    MAX_REFRESH_KEYFRAME,
     REFRESH_IMAGE_KEY,
     THUMBNAIL_RETRY_DELAY_SECONDS,
 )
@@ -594,6 +595,20 @@ async def test_a_stored_refresh_keyframe_outside_the_range_uses_the_default(
     await wait_until(lambda: manager.source_for(SYNTHETIC.camera_sn) == "trigger_frame")
     await wait_until(lambda: not manager.busy)
     assert _commands(fake_station, 1025) == 1
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("good_value", [1, MAX_REFRESH_KEYFRAME])
+async def test_a_stored_refresh_keyframe_at_either_end_of_the_range_is_kept(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    good_value: int,
+) -> None:
+    """Both ends of 1-5 reach the refresh unchanged."""
+    entry = await set_up_warm(hass, seed_warm_cache, options={CONF_REFRESH_KEYFRAME: good_value})
+    assert _manager(entry)._refresh_keyframe == good_value
     await _unload(hass, entry)
 
 
