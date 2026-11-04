@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.03-2';
+const CARD_VERSION = '2026.11.03-3';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -30,6 +30,11 @@ const RTC_STALL_MS = 2000;
 // session first lets go2rtc and the integration close the camera, and the new one wakes it again); a new session
 // without video by then is dropped
 const RTC_SWAP_MS = 10000;
+// A WebRTC session without video before the first picture gets one more session this long later, beside it:
+// go2rtc answers the video inactive while the camera sends a codec the browser cannot receive over WebRTC (a
+// doorbell opening on H.265 for ~1.5 s, then H.264); a session started after the switch plays it. Without video
+// there too, HLS, with the first session kept until HLS shows video, so the camera is not closed in between.
+const RTC_RETRY_MS = 3000;
 // An HLS picture still this long after it played gets a new player, again every HLS_FREEZE_MS while it stays
 // still: HA's HLS player does not get past a codec change, and a new one plays once HA's playlist holds only the
 // new codec (about half a minute). HA's stream worker holds the camera, so the old player goes first.
@@ -1103,7 +1108,7 @@ class EufyCameraCard extends HTMLElement {
   }
 
   // WebRTC when the browser can receive the camera's codec over it (go2rtc passes the video through; without it
-  // the video track is inactive and the player reports nothing): H.264 in every browser, H.265 only where offered
+  // the video track is inactive and the player reports no video): H.264 in every browser, H.265 only where offered
   // (not Firefox). Else HLS, which plays HEVC via MSE. No video_codec yet (no keyframe this run) counts as HEVC.
   _playerFor(types) {
     const rtc = types.includes('web_rtc'), hls = types.includes('hls');
@@ -1173,7 +1178,7 @@ class EufyCameraCard extends HTMLElement {
     const el = this._player(L, 'web_rtc');
     el.classList.add('pend');
     L.next = el;
-    L.nextT = setTimeout(() => { if (this._live === L && L.next === el) this._dropNext(L); }, RTC_SWAP_MS);
+    L.nextT = setTimeout(() => { if (this._live === L && L.next === el) { this._dropNext(L); if (!L.video) this._toHls(L); } }, RTC_SWAP_MS);
     this._vslot.appendChild(el);
     Promise.resolve(el.updateComplete).then(() => { if (L.next === el) this._applyMute(el); });
   }
@@ -1195,6 +1200,18 @@ class EufyCameraCard extends HTMLElement {
     clearTimeout(L.nextT);
     L.next.remove();
     L.next = null;
+  }
+
+  // HLS after WebRTC without video: the WebRTC player stays (hidden) until HLS shows video or the view ends
+  _toHls(L) {
+    L.hold = this._stream;
+    this._stream = null;
+    L.hold.classList.add('pend');
+    this._attachPlayer(L, 'hls');
+  }
+
+  _dropHold(L) {
+    if (L.hold) { L.hold.remove(); L.hold = null; }
   }
 
   // Frames the live <video> has shown (0 without a picture). Not currentTime: Chrome, Firefox and Safari keep it
@@ -1244,7 +1261,7 @@ class EufyCameraCard extends HTMLElement {
   // reason: toast text ('' for none)
   _stop(reason) {
     if (!this._live && !this._stream) return;
-    if (this._live) { clearTimeout(this._live.retryT); clearTimeout(this._live.stallT); this._dropNext(this._live); }
+    if (this._live) { clearTimeout(this._live.retryT); clearTimeout(this._live.stallT); this._dropNext(this._live); this._dropHold(this._live); }
     clearInterval(this._tickT);
     this._tickT = null;
     if (this._stream) { this._stream.remove(); this._stream = null; }
@@ -1270,7 +1287,7 @@ class EufyCameraCard extends HTMLElement {
     this.content.querySelectorAll('[data-tick]').forEach((n) => { if (n.textContent !== txt) n.textContent = txt; });
     const v = L.video && this._liveVideo();
     if (v) this._noteRatio(this._config.entity, v.videoWidth, v.videoHeight);
-    if (L.video && (L.player === 'web_rtc' || L.player === 'hls')) this._watchStall(L, v, now);
+    if (L.player === 'web_rtc' || L.player === 'hls') this._watchStall(L, v, now);
     const ws = `${Math.floor((now - L.started) / 1000)} s`;
     this.content.querySelectorAll('[data-wake]').forEach((n) => { if (n.textContent !== ws) n.textContent = ws; });
   }
@@ -1305,17 +1322,25 @@ class EufyCameraCard extends HTMLElement {
   _onStreams(ev) {
     const L = this._live;
     if (!L || !ev.detail) return;
-    // From the new session of a re-attach: video replaces the frozen player, a failure drops the new one
+    // From the new session of a re-attach: video replaces the old player, a failure drops the new one (before
+    // the first picture: HLS)
     if (L.next && ev.composedPath().includes(L.next)) {
-      if (ev.detail.hasVideo) this._swap(L);
-      else if (ev.detail.hasVideo === false) this._dropNext(L);
+      if (ev.detail.hasVideo) { this._swap(L); if (!L.video) this._firstPicture(L); }
+      else if (ev.detail.hasVideo === false) { this._dropNext(L); if (!L.video) this._toHls(L); }
       return;
     }
+    if (L.hold && ev.composedPath().includes(L.hold)) return;
     this._applyMute();  // a player that rendered a new <video> (after an error) starts unmuted
     if (ev.detail.hasAudio) L.audio = true;
-    if (ev.detail.hasVideo && !L.video) { L.video = true; this.render(); this._awake(true); setTimeout(() => this._tick(), 300); return; }
-    // The lone WebRTC player reports no video only when it failed (go2rtc error): try HLS once
-    if (ev.detail.hasVideo === false && !L.video && L.player === 'web_rtc') { this._attachPlayer(L, 'hls'); return; }
+    if (ev.detail.hasVideo && !L.video) { this._firstPicture(L); return; }
+    // WebRTC without video (go2rtc error, or a codec the browser cannot receive): one more session, then HLS
+    if (ev.detail.hasVideo === false && !L.video && L.player === 'web_rtc') {
+      if (!L.rtcRetry) {
+        L.rtcRetry = true;
+        L.retryT = setTimeout(() => { if (this._live === L && !L.video) this._reattach(L); }, RTC_RETRY_MS);
+      }
+      return;
+    }
     // HLS reports no video when its first playlist request failed and does not retry: ask again; HA's stream
     // is warm by then and answers at once
     if (ev.detail.hasVideo === false && !L.video && L.player === 'hls') {
@@ -1324,6 +1349,15 @@ class EufyCameraCard extends HTMLElement {
       L.retryT = setTimeout(() => { if (this._live === L && !L.video) { L.retries = (L.retries || 0) + 1; this._attachPlayer(L, 'hls'); } },
         HLS_RETRY_MS * 2 ** Math.min(L.retries || 0, 4));
     }
+  }
+
+  // The first picture of the view: ends the start state
+  _firstPicture(L) {
+    L.video = true;
+    this._dropHold(L);
+    this.render();
+    this._awake(true);
+    setTimeout(() => this._tick(), 300);
   }
 
   // The controls over the live picture: shown now; with `run`, hidden again CTL_HIDE_MS later while the live

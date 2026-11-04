@@ -93,9 +93,11 @@ an account where no device was found too.
 - **A camera that changes video codec during live view** (a battery doorbell that opens
   on HEVC and goes on in H.264) restarts the stream at the change on the open camera,
   without a second wake. The [camera card](card.md) shows a pause of a few seconds over
-  WebRTC; in a browser that plays the stream over HLS the picture comes back after about
-  30-40 s, once HA's playlist holds only the new codec. Home Assistant's own camera views
-  do not reopen their player and stay frozen until they are opened again. HA's stream
-  component logs `Error from stream worker: Error demuxing stream` at each change for an
-  HLS viewer.
+  WebRTC. A browser that cannot receive HEVC over WebRTC gets sound only on the first
+  WebRTC session; the card opens a second one about 3 s later, which plays the H.264 part
+  (in our test the first picture came about 4 s after the start, with one camera wake).
+  Over HLS the picture comes back once HA's playlist holds only the new codec: about
+  30-40 s after the change in our test. Home Assistant's own camera views do not reopen
+  their player and stay frozen until they are opened again. HA's stream component logs
+  `Error from stream worker: Error demuxing stream` at each change for an HLS viewer.
 - Not supported: firmware installation.
