@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.04-1';
+const CARD_VERSION = '2026.11.05-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -356,6 +356,8 @@ class EufyCameraCard extends HTMLElement {
     this._cams = [];        // the configured cameras; this._config is the card's config for the shown one
     this._lact = null;      // { id, domain, service, until } while a live view button waits for its second press
     this._gen = 0;          // camera generation: _useCam bumps it, so an answer for the previous camera is told apart
+    this._detActive = null;  // a camera detection sensor is on (null: not looked since attached or the camera chosen)
+    this._detStopped = false; // manual Stop clicked during detection; suppresses auto-start until all sensors turn off
   }
 
   static getConfigElement() { return document.createElement('eufy-camera-card-editor'); }
@@ -417,6 +419,8 @@ class EufyCameraCard extends HTMLElement {
     this._stg = {};
     this._keys = {};
     this._autoDone = false;
+    this._detActive = null;
+    this._detStopped = false;
     this._types = null;
     this._hist = null;
     this._view = null;
@@ -497,9 +501,14 @@ class EufyCameraCard extends HTMLElement {
       const a = prev.states[this._config.entity], b = hass.states[this._config.entity];
       if (a && b && a.attributes.image_updated !== b.attributes.image_updated) this._loadHistory();
     }
-    if (prev && this.content && this._ents && !Object.keys(this._pending).length && !this._changed(prev, hass)) { this._autoTry(); return; }
+    if (prev && this.content && this._ents && !Object.keys(this._pending).length && !this._changed(prev, hass)) {
+      this._autoTry();
+      this._checkDetection(prev);
+      return;
+    }
     this.render();
     this._autoTry();
+    this._checkDetection(prev);
   }
 
   // Preloads a picture so the old one stays until the new one is ready. Returns { src, err } for the slot.
@@ -589,6 +598,8 @@ class EufyCameraCard extends HTMLElement {
     // Leaving the view ends live view: nothing keeps a battery camera awake without a viewer
     this._setWinFull(false);
     this._stop('');
+    this._detActive = null;
+    this._detStopped = false;
     clearTimeout(this._timer);
     this._timer = null;
     clearTimeout(this._toastT);
@@ -1079,6 +1090,14 @@ class EufyCameraCard extends HTMLElement {
   // Whether the camera offers a live stream (CameraEntityFeature.STREAM): only then live view and record
   _canLive(st) { return !!st && ((st.attributes.supported_features || 0) & 2) === 2; }
 
+  // True when the card is connected, in a visible tab, not an editor preview, and not hidden (e.g. display: none)
+  _isCardVisible() {
+    if (!this.isConnected || this.preview || !this._hass || !this.content) return false;
+    if (document.visibilityState !== 'visible') return false;
+    if (typeof this.checkVisibility === 'function' && !this.checkVisibility()) return false;
+    return true;
+  }
+
   // `auto_live`: true | 'timed' (a timed view) or 'continuous', started when the card is shown
   _autoMode() {
     const a = this._config && this._config.auto_live;
@@ -1089,12 +1108,43 @@ class EufyCameraCard extends HTMLElement {
   // Once per showing: the card is on screen in a visible tab, not an editor preview, and the camera is available
   _autoTry() {
     const mode = this._autoMode();
-    if (!mode || this._autoDone || this._live || !this.isConnected || this.preview || !this._hass || !this.content) return;
-    if (document.visibilityState !== 'visible') return;
+    if (!mode || this._autoDone || this._live || !this._isCardVisible()) return;
     const st = this._st(this._config.entity);
     if (!st || st.state === 'unavailable' || !this._canLive(st)) return;
     this._autoDone = true;
     this._start(mode === 'continuous');
+  }
+
+  // `live_on_detection`: starts timed live view when a camera detection sensor turns on while the card is visible.
+  // A manual Stop wins for the rest of that detection (until all detection sensors turn off).
+  _checkDetection(prev) {
+    if (!this._config || !this._config.live_on_detection) return;
+    const E = this._entities();
+    const detIds = DETECT.map(([k]) => E[k]).filter(Boolean);
+    if (!detIds.length) return;
+
+    const anyOn = detIds.some((id) => {
+      const s = this._st(id);
+      return s && s.state === 'on';
+    });
+
+    if (!anyOn) {
+      this._detActive = false;
+      this._detStopped = false;
+      return;
+    }
+
+    const turnedOn = prev && detIds.some((id) => {
+      const s0 = prev.states[id], s1 = this._st(id);
+      return (!s0 || s0.state !== 'on') && (s1 && s1.state === 'on');
+    });
+
+    // The first look after the card was attached or the camera chosen only records: a detection already on then
+    // began while nobody saw the card
+    const was = this._detActive;
+    this._detActive = true;
+    if (was === null || (was && !turnedOn)) return;
+    if (!this._detStopped && !this._live && this._isCardVisible()) this._start(false);
   }
 
   _start(continuous) {
@@ -1647,7 +1697,10 @@ class EufyCameraCard extends HTMLElement {
         this._focus(this._live ? 'live-rec' : 'play');
         return;
       }
-      if (v === 'stop') this._stop('');
+      if (v === 'stop') {
+        if (this._detActive) this._detStopped = true;
+        this._stop('');
+      }
       else if (v === 'mute') { if (this._live) { this._live.muted = !this._live.muted; this._applyMute(); this.render(); } }
       else if (v === 'full') { if (this._menuOpen) this._setMenu(false); this._fullscreen(); this._focus('live-full'); return; }
       else if (v === 'presets') { this._preOpen = !this._preOpen; this.render(); this._focus(this._preOpen ? `lp-${this._firstPreset()}` : 'live-presets'); return; }
@@ -3724,6 +3777,7 @@ const EDITOR_SCHEMA = [
   { name: 'show_settings', selector: { boolean: {} } },
   { name: 'auto_live', selector: { select: { mode: 'dropdown', options: [
     { value: 'off', label: 'Off: start by hand' }, { value: 'timed', label: 'Timed live view' }, { value: 'continuous', label: 'Continuous live view' }] } } },
+  { name: 'live_on_detection', selector: { boolean: {} } },
   { name: 'live_seconds', selector: { number: { min: 30, max: 900, step: 10, mode: 'box', unit_of_measurement: 's' } } },
   { name: 'live_buttons', selector: { entity: { multiple: true, filter: [{ domain: LACT_DOMAINS }] } } },
   { name: 'history_folder', selector: { text: {} } },
@@ -3731,7 +3785,7 @@ const EDITOR_SCHEMA = [
     { value: 'auto', label: 'Auto (compact below 400 px)' }, { value: 'compact', label: 'Compact' }, { value: 'regular', label: 'Regular' }] } } },
 ];
 const EDITOR_LABELS = { entity: 'Camera', entities: 'More cameras', picture: 'Picture shape', show_header: 'Header',
-  show_history: 'History', show_settings: 'Settings', live_buttons: 'Live view buttons', name: 'Name', history_folder: 'History folder', auto_live: 'Start live view when the dashboard opens', live_seconds: 'Live view length', layout: 'Layout',
+  show_history: 'History', show_settings: 'Settings', live_buttons: 'Live view buttons', name: 'Name', history_folder: 'History folder', auto_live: 'Start live view when the dashboard opens', live_on_detection: 'Start live view on detection', live_seconds: 'Live view length', layout: 'Layout',
   settings_include: 'Settings to add', settings_exclude: 'Hidden settings', settings_groups: 'Settings tabs' };
 // Settings tabs as HA's reorderable multi-select: a chip per shown tab (drag to reorder, ✕ to hide), the rest to add.
 // Options: the camera's layout sections, More, and any listed id the layout lacks (kept, never dropped from the list).
@@ -3749,6 +3803,7 @@ const EDITOR_HELPERS = {
   live_buttons: 'Buttons on the live view bar, e.g. a door lock (Open or Unlock) for a doorbell, a gate, a light, a script; each needs a second press within 4 s',
   history_folder: 'The camera\'s folder under Media › eufy_home_security; only when the camera was renamed after its stills were saved',
   auto_live: 'Wakes the camera on every opening: costs battery',
+  live_on_detection: 'Starts timed live view when the camera detects motion, a person, a vehicle or a pet while the card is shown. Wakes the camera on every detection: costs battery',
   settings_include: 'Settings shows the camera\'s settings by section; entities named here join them (a guard-mode action or delay under Modes, an entity in no section under More)',
   settings_exclude: 'Controls of the camera to leave out of Settings',
   settings_groups: 'Tabs in Settings, in this order: drag to reorder, remove a tab to hide it with its settings. While this list differs from the default, a section the integration adds later stays hidden; removing every tab shows them all again',
@@ -3797,6 +3852,7 @@ class EufyCameraCardEditor extends HTMLElement {
   _data() {
     const d = { ...(this._config || {}) };
     if (d.auto_live === true) d.auto_live = 'timed';
+    if (d.live_on_detection) d.live_on_detection = true;
     ['header', 'history', 'settings'].forEach((k) => { if (d[`show_${k}`] === undefined) d[`show_${k}`] = true; });
     if (!PICTURE_MODES.includes(d.picture)) d.picture = 'auto';
     const secs = this._lay && this._lay.secs;
@@ -3826,7 +3882,7 @@ class EufyCameraCardEditor extends HTMLElement {
             if (!list.length || list.join() === shownTabs(null, secs).join()) delete next[k]; else next[k] = list;
             return;
           }
-          if (v === '' || v === undefined || v === null || (Array.isArray(v) && !v.length) || (k === 'layout' && v === 'auto') || (k === 'picture' && v === 'auto') || (/^show_/.test(k) && v === true) || (k === 'auto_live' && v === 'off') || (k === 'live_seconds' && v === LIVE_S)) delete next[k]; else next[k] = v;
+          if (v === '' || v === undefined || v === null || (Array.isArray(v) && !v.length) || (k === 'layout' && v === 'auto') || (k === 'picture' && v === 'auto') || (/^show_/.test(k) && v === true) || (k === 'auto_live' && v === 'off') || (k === 'live_seconds' && v === LIVE_S) || (k === 'live_on_detection' && !v)) delete next[k]; else next[k] = v;
         });
         this._config = next;
         this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: next }, bubbles: true, composed: true }));

@@ -43,6 +43,7 @@ live_buttons:                    # optional: buttons on the live view bar (lock,
   - lock.front_door
 live_seconds: 120                # optional: length of a started live view (default 120 s)
 auto_live: timed                 # optional: start live view when the dashboard opens: timed | continuous (true = timed)
+live_on_detection: true         # optional: timed live view when the camera detects something (default off)
 history_folder: Front_door       # optional: the camera's history folder, when it differs from the device name
 layout: auto                     # optional: auto | compact | regular
 settings_include:                # optional: more of the camera's entities in Settings (entity ids)
@@ -57,6 +58,7 @@ settings_groups:                 # optional: Settings tabs to show, in this orde
 
 - `auto_live` wakes the camera every time the card is shown (dashboard opened, view entered, tab shown again),
   so it costs battery. Stop holds until the next showing.
+- `live_on_detection` starts a timed live view (`live_seconds`) when one of the shown camera's detection sensors (person, vehicle, pet, motion) turns on while the card is shown: its view open, the browser tab or app in front, the card not hidden. A detection that began while the card was not shown does not start it, and Stop holds until every detection sensor is off. Every start wakes the camera, so it costs battery. A card scrolled out of sight on the open view counts as shown.
 - `layout: auto` switches to the compact layout (one column of settings rows) below 400 px card width.
 - `history_folder` is needed only when the camera was renamed after its files were saved.
 - Colours come from the HA theme, light or dark: tabs, switches, sliders and fields use HA's own control
@@ -70,7 +72,7 @@ settings_groups:                 # optional: Settings tabs to show, in this orde
   `auto_live` starts the chosen camera's view. `name`, `history_folder` and the `<role>_entity` keys apply to
   the first camera only; the other cameras use their own entity names, device-name folders and the entities of
   their own devices. Every other option applies to every camera of the card: `picture`, `show_header` /
-  `show_history` / `show_settings`, `layout`, `live_seconds`, `auto_live`, `live_buttons` (the same buttons on
+  `show_history` / `show_settings`, `layout`, `live_seconds`, `auto_live`, `live_on_detection`, `live_buttons` (the same buttons on
   each camera's live view bar) and `settings_include` / `settings_exclude` / `settings_groups` (an entity id
   there only matters on the camera whose device it belongs to). The card starts at the first camera when the
   page loads. In full screen the list is a name chip on the picture, after the `● LIVE` chip, and a running
@@ -99,7 +101,7 @@ settings_groups:                 # optional: Settings tabs to show, in this orde
 
 ## Battery rule
 
-Without `auto_live` nothing on the card opens a stream on its own. The picture is the integration's cached still;
+Without `auto_live` or `live_on_detection` nothing on the card opens a stream on its own. The picture is the integration's cached still;
 the card never wakes a camera for it. Live view opens only on a press and ends:
 
 - after `live_seconds`, unless continuous (∞) is on;
