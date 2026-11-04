@@ -59,6 +59,7 @@ from custom_components.eufy_home_security.const import (
     CONF_CAMERA_IMAGE,
     CONF_REFRESH_KEYFRAME,
     CONNECTION_LOSS_GRACE_SECONDS,
+    DEFAULT_REFRESH_KEYFRAME,
     DOMAIN,
     REFRESH_IMAGE_KEY,
     THUMBNAIL_RETRY_DELAY_SECONDS,
@@ -545,7 +546,7 @@ async def test_a_refresh_in_hd_shows_the_newest_recordings_trigger_frame_and_its
     await _unload(hass, entry)
 
 
-async def test_hd_refresh_passes_configured_keyframe_to_library(
+async def test_a_refresh_in_hd_asks_for_the_configured_keyframe(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
     fake_station: FakeStation,
@@ -576,6 +577,26 @@ async def test_hd_refresh_passes_configured_keyframe_to_library(
     await _unload(hass, entry)
 
 
+@pytest.mark.parametrize("bad_value", [0, 6, "invalid", True])
+async def test_a_stored_refresh_keyframe_outside_the_range_uses_the_default(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    bad_value: object,
+) -> None:
+    """Invalid stored values cannot break setup or an ordinary HD refresh."""
+    _seed_recordings(fake_station)
+    entry = await set_up_warm(hass, seed_warm_cache, options={CONF_REFRESH_KEYFRAME: bad_value})
+    manager = _manager(entry)
+    assert manager._refresh_keyframe == DEFAULT_REFRESH_KEYFRAME
+    await _press(hass, _button_id(hass, REFRESH_IMAGE_KEY))
+    await wait_until(lambda: manager.source_for(SYNTHETIC.camera_sn) == "trigger_frame")
+    await wait_until(lambda: not manager.busy)
+    assert _commands(fake_station, 1025) == 1
+    await _unload(hass, entry)
+
+
 async def test_a_refresh_in_thumbnail_mode_shows_the_newest_thumbnail_without_decoding(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
@@ -585,7 +606,11 @@ async def test_a_refresh_in_thumbnail_mode_shows_the_newest_thumbnail_without_de
 ) -> None:
     """Fast thumbnail only: the newest thumbnail as it is; no playback, no live open, no decode."""
     _seed_recordings(fake_station)
-    entry = await set_up_warm(hass, seed_warm_cache, options={CONF_CAMERA_IMAGE: "thumbnail"})
+    entry = await set_up_warm(
+        hass,
+        seed_warm_cache,
+        options={CONF_CAMERA_IMAGE: "thumbnail", CONF_REFRESH_KEYFRAME: 3},
+    )
     manager = _manager(entry)
     decodes = _count_decoder_calls(monkeypatch)
 

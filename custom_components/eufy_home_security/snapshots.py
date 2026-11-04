@@ -154,6 +154,7 @@ from .const import (
     ATTR_TRIGGERED_AT,
     CAMERA_STILL_NAME,
     DEFAULT_CAMERA_IMAGE,
+    DEFAULT_REFRESH_KEYFRAME,
     DOMAIN,
     FFMPEG_DECODE_TIMEOUT_SECONDS,
     LIVE_SNAPSHOT_COOLDOWN_SECONDS,
@@ -449,7 +450,7 @@ class SnapshotManager:
         live_snapshot: bool,
         camera_image: CameraImageMode,
         yield_media: Callable[[str], Awaitable[None]],
-        refresh_keyframe: int = 1,
+        refresh_keyframe: int = DEFAULT_REFRESH_KEYFRAME,
         cache: StillCache | None = None,
         history: EventHistory | None = None,
         push_image: Callable[[SecurityEvent, PushPictureSource], Awaitable[PushImage]]
@@ -1497,12 +1498,15 @@ class SnapshotManager:
         )
         try:
             async with asyncio.timeout(cap):
-                if source is ImageSource.TRIGGER_FRAME and self._refresh_keyframe != 1:
-                    image = await station.async_camera_image(
-                        device_sn, source, keyframe_number=self._refresh_keyframe
-                    )
-                else:
-                    image = await station.async_camera_image(device_sn, source)
+                image = await station.async_camera_image(
+                    device_sn,
+                    source,
+                    keyframe_number=(
+                        self._refresh_keyframe
+                        if source is ImageSource.TRIGGER_FRAME
+                        else DEFAULT_REFRESH_KEYFRAME
+                    ),
+                )
         except RecordNotFoundError:
             _LOGGER.debug(
                 "Refresh of %s: no %s in the station's history, keeping the image, in %.1f s",

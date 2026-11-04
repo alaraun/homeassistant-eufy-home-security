@@ -63,6 +63,7 @@ from .const import (
     DEFAULT_EVENT_HISTORY_DAYS,
     DEFAULT_REFRESH_KEYFRAME,
     DOMAIN,
+    MAX_REFRESH_KEYFRAME,
     SAVE_VIEW_KEY,
     SIREN_KEY,
     SOLAR_CHARGING_KEY,
@@ -357,12 +358,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         hass, entry, None if persistent else str(history.media_dir(hass))
     )
     event_history.async_start()
+    refresh_keyframe = entry.options.get(CONF_REFRESH_KEYFRAME, DEFAULT_REFRESH_KEYFRAME)
+    if type(refresh_keyframe) is not int or not 1 <= refresh_keyframe <= MAX_REFRESH_KEYFRAME:
+        refresh_keyframe = DEFAULT_REFRESH_KEYFRAME
     snapshots = SnapshotManager(
         hass,
         entry,
         live_snapshot=bool(entry.options.get(CONF_LIVE_SNAPSHOT, False)),
         camera_image=camera_image_mode(entry.options.get(CONF_CAMERA_IMAGE)),
-        refresh_keyframe=int(entry.options.get(CONF_REFRESH_KEYFRAME, DEFAULT_REFRESH_KEYFRAME)),
+        refresh_keyframe=refresh_keyframe,
         yield_media=stream_manager.async_yield_media,
         cache=cache,
         history=event_history,

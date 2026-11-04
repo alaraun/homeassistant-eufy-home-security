@@ -701,6 +701,7 @@ def test_the_options_flow_offers_exactly_its_fourteen_options() -> None:
     The detection hold (seconds) and the alarm safety-net timeout (minutes) default
     to 10. The live snapshot is off by default: a live keyframe wakes a battery
     camera. The camera image defaults to hd, the library's suggested configuration.
+    The refresh keyframe defaults to 1, the recording's first.
     Cloud push is off by default: it uses eufy's cloud. The login country is empty by
     default, which means Home Assistant's country, and there is no extra country (each
     costs a sign-in). The event history keeps 7
@@ -737,6 +738,7 @@ def test_the_options_flow_offers_exactly_its_fourteen_options() -> None:
         CONF_STATION_SESSIONS,
         DEFAULT_EVENT_HISTORY_DAYS,
         DEFAULT_RECORD_LENGTH_SECONDS,
+        DEFAULT_REFRESH_KEYFRAME,
         OPTIONS_SECTION_MORE_COUNTRIES,
         OPTIONS_STEP_INIT,
     )
@@ -805,7 +807,7 @@ def test_the_options_flow_offers_exactly_its_fourteen_options() -> None:
     assert camera_image.default() == "hd", (
         "the camera image does not default to hd, the library's suggested configuration"
     )
-    assert refresh_keyframe.default() == 1
+    assert refresh_keyframe.default() == DEFAULT_REFRESH_KEYFRAME
     assert live.default() is False, "the live snapshot must be opt-in: it wakes battery cameras"
     assert probe.default() is True, (
         "the session probe is on by default: a kick-out by another eufy client must "

@@ -98,7 +98,8 @@ async def test_the_options_form_offers_its_fourteen_options_with_their_defaults(
     and the alarm timeout 10 minutes by default.
     The live snapshot wakes a battery camera, so it is off by default too.
     The camera image is HD from the recording by default, the library's suggested
-    configuration. The event history keeps 7 days, and the form's
+    configuration. The refresh keyframe defaults to 1, the recording's first.
+    The event history keeps 7 days, and the form's
     description names the folder it is written to. Event videos are off by default
     (storage); the recording length is 30 s, HA's own camera.record default.
     """
@@ -263,7 +264,7 @@ async def test_the_saved_options_are_exactly_the_fourteen_offered(
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The save is rebuilt from the fourteen keys, five bools, five ints, a choice, a
+    """The save is rebuilt from the fourteen keys, five bools, six ints, a choice, a
     country and a country list; it reloads."""
 
     async def no_push(_eufy: EufySecurity) -> None:
@@ -455,6 +456,30 @@ async def test_build_client_hands_the_region_option_to_the_library(
 def _station_budget(entry: MockConfigEntry) -> int:
     budget: int = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station.max_sessions
     return budget
+
+
+async def test_the_refresh_keyframe_is_1_to_5(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Both ends inclusive; outside the range nothing is saved."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    result = await _open_options(hass, entry)
+    for value in (0, 6):
+        with pytest.raises(InvalidData):
+            await configure_options(hass, result["flow_id"], {CONF_REFRESH_KEYFRAME: value})
+        assert entry.options == {}, value
+    hass.config_entries.options.async_abort(result["flow_id"])
+
+    for value in (1, 5):
+        await _submit_options(hass, entry, {CONF_REFRESH_KEYFRAME: value})
+        assert entry.options[CONF_REFRESH_KEYFRAME] == value
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
 
 
 async def test_sessions_per_homebase_outside_the_library_range_are_refused(
