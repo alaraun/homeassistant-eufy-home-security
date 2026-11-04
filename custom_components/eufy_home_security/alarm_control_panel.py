@@ -152,8 +152,9 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
       returning a disarmed mode, an authenticated arming push to a disarmed mode no
       older than the alarm, or a poll showing disarmed when triggered began in a
       known armed mode or pending did not begin in a known disarmed one. Pending also
-      ends on a disarmed mode delivered over P2P (a keypad or app disarm): the
-      library's age and repeat checks bound it, not the alarm's event-second order.
+      ends on a disarmed mode the station reports over P2P (a keypad or app disarm),
+      a live report, not a replayable push. An arming push's mode (P2P or cloud) ends
+      nothing by itself: the push is ordered by its event second, as above.
       While an alarm is shown, an arming push that cannot be ordered after it
       (older, or with no event time) changes nothing shown, not even
       ``changed_by``. A cloud push's mode or a pushed state never confirms a
@@ -494,8 +495,8 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
         """End arming, or confirm a disarm, on a mode the station was just read in.
 
         Any read ends arming. A poll confirms a disarm during an alarm, and a
-        disarmed mode delivered over P2P ends pending: a cloud push's mode or a
-        pushed state has no event time to order against the alarm.
+        disarmed live report (the station's own, over P2P) ends pending: a push's
+        mode or a pushed state has no event time to order against the alarm.
         """
         data: StationState | None = self.coordinator.data
         if data is None or self._lifecycle is None:

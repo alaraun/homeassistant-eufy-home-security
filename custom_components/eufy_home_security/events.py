@@ -6,8 +6,9 @@ shows or what the user must be told:
 
 - ``GuardModeChanged`` amends the coordinator's data with both modes, the selected
   one (``SCHEDULE`` while a schedule runs) and the one in force
-  (``StationCoordinator.async_apply_guard_mode``), marked live when it came over
-  P2P (a station report, or the mode of an authenticated P2P arming push).
+  (``StationCoordinator.async_apply_guard_mode``), marked live when it is the
+  station's own report over P2P (``source`` P2P, ``origin`` REPORT); an arming
+  push's mode, of either channel, is not.
 - ``StationStateChanged`` replaces the coordinator's data
   (``StationCoordinator.async_apply_state``), so one dump reconciles every entity of
   that station. It arrives from a dump the station pushes unasked, from the station's
@@ -128,6 +129,7 @@ from eufy_home_security import (
     EventSource,
     FrameCipher,
     GuardModeChanged,
+    GuardModeOrigin,
     KeyRejectedError,
     PresetsChanged,
     PushChanged,
@@ -313,7 +315,9 @@ class EventRouter:
             # A station with no coordinator is ignored: its first read takes the mode.
             if coordinator is not None:
                 coordinator.async_apply_guard_mode(
-                    event.mode, event.active_mode, live=event.source is EventSource.P2P
+                    event.mode,
+                    event.active_mode,
+                    live=event.source is EventSource.P2P and event.origin is GuardModeOrigin.REPORT,
                 )
             self._async_check_delivery_soon(event.station_sn)
         elif isinstance(event, StationStateChanged):

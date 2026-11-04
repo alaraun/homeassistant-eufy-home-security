@@ -35,10 +35,11 @@ class ModeRead(Enum):
 
     # This coordinator's own refresh.
     POLL = "poll"
-    # A mode delivered over the local connection (a P2P ``GuardModeChanged``): a
-    # station report or an authenticated P2P arming push's mode.
+    # The station's own mode report over the local connection (a ``GuardModeChanged``
+    # with ``source`` P2P and ``origin`` REPORT).
     LIVE = "live"
-    # A cloud push's mode, a pushed state or a write's result.
+    # An arming push's mode (either channel), a cloud report, a pushed state or a
+    # write's result.
     PUSHED = "pushed"
 
 
@@ -54,11 +55,12 @@ class StationCoordinator(DataUpdateCoordinator[StationState]):
     **Mode reads.** ``async_add_mode_read_listener`` hears every mode read: each
     successful refresh, and each pushed mode or state, changed or not. Each call
     says what the read was (``ModeRead``): this coordinator's own poll, the
-    mode delivered over the local connection, or a cloud push, a pushed state
-    or a write's result. The alarm panel ends an exit delay on any, ends an entry
-    delay on a disarmed live report, and confirms a disarm during an alarm on a
-    poll: a cloud push's mode carries no event time, so it cannot be ordered against
-    the alarm and could be a replay. With
+    station's own report over the local connection, or a push's mode, a cloud
+    report, a pushed state or a write's result. The alarm panel ends an exit delay
+    on any, ends an entry delay on a disarmed live report, and confirms a disarm
+    during an alarm on a poll: a pushed read carries no event time, so it cannot be
+    ordered against the alarm and could be a replay (an arming push is ordered by
+    its own ``SecurityEvent`` instead). With
     ``always_update=False`` an unchanged read notifies no entity, so it cannot be
     observed through the ordinary listeners.
     """
@@ -197,8 +199,8 @@ class StationCoordinator(DataUpdateCoordinator[StationState]):
         """Show a guard mode the station reported, without touching the poll timer.
 
         Called with the mode a write returned and with a pushed
-        ``GuardModeChanged``; ``live`` when that came over the local connection
-        (``ModeRead.LIVE``). ``mode`` is the selected mode and ``active_mode`` the
+        ``GuardModeChanged``; ``live`` when that is the station's own report over
+        the local connection (``ModeRead.LIVE``). ``mode`` is the selected mode and ``active_mode`` the
         mode in force. Without ``active_mode`` the mode in force is ``mode``
         itself, except when ``mode`` is ``SCHEDULE``: a write returns only the
         selection, and the slot's mode arrives in the report that follows, so the
