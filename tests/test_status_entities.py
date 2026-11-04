@@ -55,8 +55,16 @@ _DOOR_PARAM: Final = 1550
 _LOW_POWER_PARAM: Final = 1552
 _TAMPER_PARAM: Final = 61015
 _BATTERY_PARAM: Final = 1101
-# A STATUS + PAGE string of the HomeBase whose value is JSON text.
-_JSON_STATUS: Final = "arming_get_alarm_home_mode"
+# A string of the HomeBase the app offers as a control (read-only here) whose value is
+# JSON (``Setting.structured``): a disabled diagnostic sensor.
+_JSON_SETTING: Final = "arming_schedule_config"
+# HomeBase statuses of an earlier library build that are diagnostic values now: bare
+# codes on the device card and a structured value on a page.
+_DIAGNOSTIC_NOW: Final = (
+    ("setting_current_connection_type", None),
+    ("device_wifi_signal_strength_level", None),
+    ("arming_get_alarm_home_mode", EntityCategory.DIAGNOSTIC),
+)
 
 
 def _add_entry_sensors(station: FakeStation, cloud: FakeCloud) -> None:
@@ -323,24 +331,28 @@ async def test_diagnostic_values_get_no_entity(
     await _stop(hass, entry)
 
 
-async def test_a_json_status_is_an_attribute_and_a_long_text_is_cut(
+async def test_a_json_value_is_an_attribute_and_a_long_text_is_cut(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """A status page's JSON value: state unknown, decoded under ``value``; an enabled
-    diagnostic entity. A text longer than the limit is cut to it."""
+    """A read-only setting's JSON value: state unknown, decoded under ``value``. A text
+    longer than the limit is cut to it."""
     document = {"mode": 1, "devices": [{"channel": 0, "action": 3}]}
-    seed_setting(fake_station, _JSON_STATUS, json.dumps(document), channel=_STATION_CHANNEL)
+    seed_setting(fake_station, _JSON_SETTING, json.dumps(document), channel=_STATION_CHANNEL)
     seed_warm_cache()
     entry = add_entry(hass)
     assert await setup_entry(hass, entry)
-    entity_id = entity_id_for(hass, Platform.SENSOR, SYNTHETIC.station_sn, _JSON_STATUS)
-    row = er.async_get(hass).async_get(entity_id)
-    assert row is not None
-    assert row.disabled_by is None
-    assert row.entity_category is EntityCategory.DIAGNOSTIC
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+    setting = next(s for s in station.settings_for() if s.key == _JSON_SETTING)
+    assert setting.structured
+    assert not setting.writable
+    entity_id = entity_id_for(hass, Platform.SENSOR, SYNTHETIC.station_sn, _JSON_SETTING)
+    registry = er.async_get(hass)
+    registry.async_update_entity(entity_id, disabled_by=None)
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
 
     state = hass.states.get(entity_id)
     assert state is not None
@@ -348,7 +360,7 @@ async def test_a_json_status_is_an_attribute_and_a_long_text_is_cut(
     assert state.attributes[ATTR_VALUE] == document
     await _stop(hass, entry)
 
-    seed_setting(fake_station, _JSON_STATUS, "y" * 400, channel=_STATION_CHANNEL)
+    seed_setting(fake_station, _JSON_SETTING, "y" * 400, channel=_STATION_CHANNEL)
     assert await setup_entry(hass, entry)
     state = hass.states.get(entity_id)
     assert state is not None
@@ -553,6 +565,48 @@ async def test_a_status_row_nothing_builds_is_forgotten(
     assert registry.async_get(stale.entity_id) is None
     assert registry.async_get_entity_id(
         Platform.BINARY_SENSOR, DOMAIN, entity_unique_id(serial, "sensor_door_status")
+    )
+    await _stop(hass, entry)
+
+
+@pytest.mark.parametrize(("key", "category"), _DIAGNOSTIC_NOW)
+async def test_an_enabled_status_row_whose_setting_is_diagnostic_now_is_forgotten(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    key: str,
+    category: EntityCategory | None,
+) -> None:
+    """A HomeBase status sensor an earlier build created enabled is removed once the
+    library makes its setting a diagnostic value; the station still lists the setting.
+    A status still built (the keypad's password state) keeps its row."""
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    stale = registry.async_get_or_create(
+        Platform.SENSOR,
+        DOMAIN,
+        entity_unique_id(SYNTHETIC.station_sn, key),
+        config_entry=entry,
+        entity_category=category,
+        original_name=key,
+    )
+    assert stale.disabled_by is None
+    assert is_setting_row(stale)
+
+    assert await setup_entry(hass, entry)
+
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+    assert station.has_setting(key) is True
+    setting = next(s for s in station.settings_for() if s.key == key)
+    assert setting.readable
+    assert setting.role is SettingRole.DIAGNOSTIC
+    assert registry.async_get(stale.entity_id) is None
+    assert registry.async_get_entity_id(
+        Platform.BINARY_SENSOR,
+        DOMAIN,
+        entity_unique_id(SYNTHETIC.station_sn, "hb_keypad_is_password_set"),
     )
     await _stop(hass, entry)
 

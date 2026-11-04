@@ -417,11 +417,13 @@ HomeBase (version strings by parameter id; the subsystems are unnamed) and
   status the device has not reported shows unknown. The door state follows the
   HomeBase's state, refreshed every 45 s.
 - A setting it can only read but the app offers as a control is a diagnostic sensor
-  or binary sensor, disabled until you enable it. A value the app does not show, or
-  one another entity already gives (battery, firmware update in progress), and a
-  setting it can neither read nor write have no entity.
-- A value made of several fields (JSON) is never shown as the state: the state is
-  unknown and the attribute `value` holds the fields. A text longer than 255
+  or binary sensor, disabled until you enable it. A value the app does not show, one
+  another entity already gives (battery, firmware update in progress), a status made
+  of several fields (JSON), a code the device card shows only as an icon (connection
+  type, Wi-Fi level), and a setting it can neither read nor write have no entity.
+  Their rows from an earlier release are removed at the next start.
+- A setting value made of several fields (JSON) is never shown as the state: the
+  state is unknown and the attribute `value` holds the fields. A text longer than 255
   characters is cut to 255.
 - A read-only status an earlier release created disabled is enabled at the next start
   (Home Assistant reloads the integration once), unless you disabled it yourself or

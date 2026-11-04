@@ -284,8 +284,8 @@ async def test_controls_are_config_statuses_on_and_other_read_only_values_diagno
             assert entity.disabled_by is er.RegistryEntryDisabler.INTEGRATION, spec.key
     # The HomeBase's working mode is the library's advanced control on this fixture.
     assert "working_mode_value" in advanced
-    # The HomeBase's connection type is on its card, the keypad's password state on a page.
-    assert {"setting_current_connection_type", "hb_keypad_is_password_set"} <= set(statuses)
+    # The keypad's password state and the alarm delay are statuses of a settings page.
+    assert {"hb_keypad_is_password_set", "notification_alarm_delay_value"} <= set(statuses)
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
