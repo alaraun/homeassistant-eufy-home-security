@@ -42,6 +42,7 @@ from eufy_home_security import (
     AccountRejectedError,
     AuthenticationError,
     CameraWakeError,
+    CipherKeyMissingError,
     CipherUnavailableError,
     CipherUnusableError,
     CloudError,
@@ -138,6 +139,7 @@ from .const import (
     EXC_ZOOM_NEEDS_SINGLE_VIEW,
     EXC_ZOOM_UNSUPPORTED,
     ISSUE_ACCOUNT_ID_MISMATCH,
+    ISSUE_CIPHER_KEY_MISSING,
     ISSUE_CIPHER_UNAVAILABLE,
     ISSUE_CREDENTIALS_REFRESHED,
     ISSUE_CREDENTIALS_REFRESHED_LOGIN,
@@ -766,7 +768,8 @@ def route_cloud_problem(
     """A background cloud failure, routed to reauth or a repair issue.
 
     - ``CipherUnavailableError`` with a station: that station's cipher-unavailable
-      issue (:func:`raise_cipher_unavailable_issue`).
+      issue (:func:`raise_cipher_unavailable_issue`); ``CipherKeyMissingError`` its
+      cipher-key-missing issue (:func:`raise_cipher_key_missing_issue`).
     - ``AuthenticationError``: the reauth flow, through
       ``async_start_reauth_if_available`` (the path setup's ``ConfigEntryAuthFailed``
       takes too), which starts at most one flow per entry and nothing for a config
@@ -783,6 +786,9 @@ def route_cloud_problem(
     """
     if isinstance(problem.error, CipherUnavailableError) and problem.station_sn:
         raise_cipher_unavailable_issue(hass, entry, problem.station_sn, problem.error.cipher_id)
+        return
+    if isinstance(problem.error, CipherKeyMissingError) and problem.station_sn:
+        raise_cipher_key_missing_issue(hass, entry, problem.station_sn, problem.error.cipher_id)
         return
     route_cloud_error(hass, entry, problem.error)
 
@@ -1145,7 +1151,8 @@ def raise_key_rejected_issues(
 def clear_station_issues(hass: HomeAssistant, entry: ConfigEntry[Any], serial: str) -> None:
     """The station is connected: its key is accepted, so its key issues go.
 
-    The key-rejected, key-unusable and cipher-unavailable issues are deleted. The
+    The key-rejected, key-unusable, cipher-unavailable and cipher-key-missing issues are
+    deleted. The
     credentials-refreshed notice stays: it is emitted about a second before the
     reconnect it enables, so clearing it here would delete it unseen.
     """
@@ -1154,6 +1161,7 @@ def clear_station_issues(hass: HomeAssistant, entry: ConfigEntry[Any], serial: s
         ir.async_delete_issue(hass, DOMAIN, key_rejected_issue_id(entry.entry_id, device.id))
         ir.async_delete_issue(hass, DOMAIN, key_unusable_issue_id(entry.entry_id, device.id))
         ir.async_delete_issue(hass, DOMAIN, cipher_unavailable_issue_id(entry.entry_id, device.id))
+        ir.async_delete_issue(hass, DOMAIN, cipher_key_missing_issue_id(entry.entry_id, device.id))
 
 
 def cipher_unavailable_issue_id(entry_id: str, device_id: str) -> str:
@@ -1192,10 +1200,44 @@ def raise_cipher_unavailable_issue(
     )
 
 
+def cipher_key_missing_issue_id(entry_id: str, device_id: str) -> str:
+    """A station's cipher-key-missing issue, by its device-registry id."""
+    return f"{ISSUE_CIPHER_KEY_MISSING}_{entry_id}_{device_id}"
+
+
+def raise_cipher_key_missing_issue(
+    hass: HomeAssistant, entry: ConfigEntry[Any], serial: str, cipher_id: int
+) -> None:
+    """One issue for a station whose cipher the eufy cloud answers for without a key.
+
+    ``CipherKeyMissingError``: records for the cipher the station named, none holding a
+    key. As :func:`raise_cipher_unavailable_issue`: not fixable, not persistent, one per
+    device, cleared when the station connects and with the entry's unload.
+    """
+    device = _station_device(hass, entry, serial)
+    if device is None:
+        _LOGGER.debug(
+            "Station %s has no registered device; no cipher-key-missing issue",
+            redact_serial(serial),
+        )
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        cipher_key_missing_issue_id(entry.entry_id, device.id),
+        is_fixable=False,
+        is_persistent=False,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key=ISSUE_CIPHER_KEY_MISSING,
+        translation_placeholders={"station": station_label(device), "cipher": str(cipher_id)},
+    )
+
+
 def raise_cipher_unavailable_issue_from(
     hass: HomeAssistant, entry: ConfigEntry[Any], station: Station
 ) -> None:
-    """The cipher-unavailable issue for ``station`` when its last error is one.
+    """The cipher-unavailable or cipher-key-missing issue for ``station`` when its last
+    error is one.
 
     For ``ConnectionChanged(CREDENTIALS_UNAVAILABLE)``, which the library emits for
     every station on each failed attempt (setup's first start included) and which
@@ -1205,6 +1247,8 @@ def raise_cipher_unavailable_issue_from(
     err = station.last_error
     if isinstance(err, CipherUnavailableError):
         raise_cipher_unavailable_issue(hass, entry, station.serial, err.cipher_id)
+    elif isinstance(err, CipherKeyMissingError):
+        raise_cipher_key_missing_issue(hass, entry, station.serial, err.cipher_id)
 
 
 def raise_credentials_refreshed_notice(
@@ -1274,8 +1318,9 @@ def raise_account_mismatch_issue(hass: HomeAssistant, entry: ConfigEntry[Any], s
 
 
 def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:
-    """Delete the entry's account-id-mismatch, cipher-unavailable, key-unusable,
-    no-devices, pending-invitations, login-limited, push-needed and skipped-device issues.
+    """Delete the entry's account-id-mismatch, cipher-unavailable, cipher-key-missing,
+    key-unusable, no-devices, pending-invitations, login-limited, push-needed and
+    skipped-device issues.
 
     Unload, the start of every setup attempt and entry removal call it, so an issue
     raised by an attempt that then failed (and so was never unloaded) does not
@@ -1287,6 +1332,7 @@ def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) ->
     prefixes = (
         account_id_mismatch_issue_id(entry.entry_id, ""),
         cipher_unavailable_issue_id(entry.entry_id, ""),
+        cipher_key_missing_issue_id(entry.entry_id, ""),
         key_unusable_issue_id(entry.entry_id, ""),
         no_devices_issue_id(entry.entry_id),
         pending_invites_issue_id(entry.entry_id),

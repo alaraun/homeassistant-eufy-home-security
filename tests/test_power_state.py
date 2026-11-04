@@ -24,8 +24,9 @@ from conftest import (
     state_of,
     wait_until,
 )
-from eufy_home_security import EufySecurity, Station, entity_unique_id
+from eufy_home_security import EufySecurity, SettingRole, Station, entity_unique_id
 from eufy_home_security.devices import Setting
+from eufy_home_security.devices.model_settings import settings_of
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation, camera_device
 from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
 from homeassistant.components.sensor import ATTR_STATE_CLASS
@@ -323,7 +324,10 @@ async def test_a_readable_setting_of_the_same_key_keeps_its_unique_id(
 
     def settings_for(self: Station, device_sn: str | None = None) -> tuple[Setting, ...]:
         return tuple(
-            dataclasses.replace(s, readable=True) if s.key == WORKING_DAYS_KEY else s
+            # A setting the app offers as a control: a diagnostic value builds no entity.
+            dataclasses.replace(s, readable=True, role=SettingRole.SETTING)
+            if s.key == WORKING_DAYS_KEY
+            else s
             for s in real(self, device_sn)
         )
 
@@ -342,8 +346,10 @@ async def test_a_readable_setting_of_the_same_key_keeps_its_unique_id(
     caplog.clear()
     await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
-    # The setting sensor (no read path in this stub, so unknown), not a second entity.
-    assert state_of(hass, entity_id) == STATE_UNKNOWN
+    # The setting sensor (a setting entity carries its section), not a second entity.
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.attributes.get("section") == settings_of("T8160")[WORKING_DAYS_KEY].section
     assert "does not generate unique IDs" not in caplog.text
 
     assert await hass.config_entries.async_unload(entry.entry_id)

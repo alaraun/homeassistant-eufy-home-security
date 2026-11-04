@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Final, override
+from typing import TYPE_CHECKING, Any, Final, override
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -35,6 +35,7 @@ from eufy_home_security import StationState, StorageMedium, SubDeviceState
 from eufy_home_security.devices import SettingKind, SettingUnit, model_for_serial
 
 from .const import (
+    ATTR_VALUE,
     BATTERY_KEY,
     BATTERY_TEMPERATURE_KEY,
     DETECTED_EVENTS_KEY,
@@ -57,7 +58,7 @@ from .const import (
 )
 from .coordinator import StationCoordinator
 from .entity import EufyDeviceEntity, EufySettingEntity, async_add_when_reported, device_block
-from .settings import SettingEntitySpec, setting_specs
+from .settings import SettingEntitySpec, capped_state, json_value, setting_specs
 from .storage import (
     EufyStorageEntity,
     StorageCoordinator,
@@ -494,7 +495,16 @@ class EufyDeviceFieldSensor(EufyDeviceEntity, SensorEntity):
 
 
 class EufySettingSensor(EufySettingEntity, SensorEntity):
-    """A readable setting with no control: read-only, or a string or code value."""
+    """A readable setting with no control: read-only, or a string or code value.
+
+    A structured value (``Setting.structured``) is never the state: the state is unknown
+    and the ``value`` attribute holds the decoded JSON, or the raw value when it does not
+    parse. A JSON object or array text of another setting is treated the same. A longer
+    text is cut to the state limit.
+    """
+
+    # Raw device JSON can be large: kept out of the recorder.
+    _unrecorded_attributes = EufySettingEntity._unrecorded_attributes | frozenset({ATTR_VALUE})
 
     def __init__(self, coordinator: StationCoordinator, spec: SettingEntitySpec) -> None:
         super().__init__(coordinator, spec)
@@ -515,14 +525,31 @@ class EufySettingSensor(EufySettingEntity, SensorEntity):
     def native_value(self) -> StateType:
         """The decoded value; an enum by its label, None for a value outside its values."""
         value = self.setting_value
-        if value is None:
-            return None
         setting = self._spec.setting
+        if value is None or setting.structured:
+            return None
         if setting.kind is SettingKind.ENUM:
             return self.option_label(value) if value in setting.values else None
         if isinstance(value, bool):
             return str(value).lower()
+        if json_value(value) is not None:
+            return None
+        if isinstance(value, str):
+            return capped_state(value)
         return value
+
+    @property
+    @override
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """The base attributes, plus ``value`` holding a structured or JSON value."""
+        attributes = super().extra_state_attributes
+        value = self.setting_value
+        decoded: object = json_value(value)
+        if decoded is None and self._spec.setting.structured:
+            decoded = value
+        if decoded is not None:
+            attributes = {**(attributes or {}), ATTR_VALUE: decoded}
+        return attributes
 
 
 class EufyStorageSensor(EufyStorageEntity, SensorEntity):

@@ -23,7 +23,14 @@ from conftest import (
     setup_entry,
     state_of,
 )
-from eufy_home_security import MODES_SECTION, EufySecurity, Station, entity_unique_id
+from eufy_home_security import (
+    MODES_SECTION,
+    EufySecurity,
+    SettingRole,
+    SettingShown,
+    Station,
+    entity_unique_id,
+)
 from eufy_home_security.devices import MODE_ACTION_FLAGS, Scope, SettingControl, SettingKind
 from eufy_home_security.devices.model_settings import (
     bundled_codes,
@@ -71,12 +78,13 @@ _CONTROL_PLATFORMS: Final = {
 def test_every_bundled_setting_maps_to_the_platform_its_control_and_access_give(
     model: str,
 ) -> None:
-    """Writable with a control: that control's platform; readable otherwise: sensor; neither: none."""
+    """Writable with a control: that control's platform; a diagnostic value or not
+    readable: none; readable otherwise: sensor."""
     for setting in settings_of(model).values():
         platform = setting_platform(setting)
         if setting.writable and setting.control is not None:
             assert platform is _CONTROL_PLATFORMS[setting.control], setting.key
-        elif not setting.readable:
+        elif not setting.readable or setting.role is SettingRole.DIAGNOSTIC:
             assert platform is None, setting.key
         elif setting.kind is SettingKind.BOOL:
             assert platform is Platform.BINARY_SENSOR, setting.key
@@ -229,14 +237,15 @@ async def test_setting_specs_yield_the_station_first_then_devices_in_paired_list
     await hass.async_block_till_done()
 
 
-async def test_controls_are_config_and_enabled_read_only_values_are_diagnostic_and_off(
+async def test_controls_are_config_statuses_on_and_other_read_only_values_diagnostic_and_off(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """Category and default enablement follow the platform; variants and settings the app
-    puts behind a warning (``advanced``) start off."""
+    """Category and default enablement follow the platform and the role: a status is on,
+    without a category on the device card; variants and settings the app puts behind a
+    warning (``advanced``) start off."""
     entry = await set_up_warm(hass, seed_warm_cache)
     registry = er.async_get(hass)
     station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
@@ -248,6 +257,7 @@ async def test_controls_are_config_and_enabled_read_only_values_are_diagnostic_a
         Platform.SENSOR,
     }
     advanced: list[str] = []
+    statuses: list[str] = []
     for spec in specs:
         unique_id = entity_unique_id(spec.device_sn or station.serial, spec.key)
         entity_id = registry.async_get_entity_id(spec.platform, DOMAIN, unique_id)
@@ -256,6 +266,12 @@ async def test_controls_are_config_and_enabled_read_only_values_are_diagnostic_a
         assert entity is not None
         if spec.is_control:
             assert entity.entity_category is EntityCategory.CONFIG, spec.key
+        elif spec.setting.role is SettingRole.STATUS:
+            statuses.append(spec.key)
+            card = spec.setting.shown is SettingShown.CARD
+            assert entity.entity_category is (None if card else EntityCategory.DIAGNOSTIC)
+            assert entity.disabled_by is None, spec.key
+            continue
         else:
             assert entity.entity_category is EntityCategory.DIAGNOSTIC, spec.key
         if spec.is_control and not spec.variant:
@@ -268,6 +284,8 @@ async def test_controls_are_config_and_enabled_read_only_values_are_diagnostic_a
             assert entity.disabled_by is er.RegistryEntryDisabler.INTEGRATION, spec.key
     # The HomeBase's working mode is the library's advanced control on this fixture.
     assert "working_mode_value" in advanced
+    # The keypad's password state and the alarm delay are statuses of a settings page.
+    assert {"hb_keypad_is_password_set", "notification_alarm_delay_value"} <= set(statuses)
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

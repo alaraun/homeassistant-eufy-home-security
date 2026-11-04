@@ -33,9 +33,11 @@ shows or what the user must be told:
   raises the station's key-rejected issue, one lost to a key eufy serves unusable
   (``CipherUnusableError``) its key-unusable issue, and a restored one clears both.
   One lost for a key the cloud does not hold (``CREDENTIALS_UNAVAILABLE``) raises the
-  station's cipher-unavailable issue, which a restored session clears too.
+  station's cipher-unavailable issue (cipher-key-missing for a keyless answer), which
+  a restored session clears too.
 - ``CloudProblem`` goes to reauth or the account's repair issue; a
-  ``CipherUnavailableError`` to the station's cipher-unavailable issue.
+  ``CipherUnavailableError`` to the station's cipher-unavailable issue, a
+  ``CipherKeyMissingError`` to its cipher-key-missing issue.
 - ``CredentialsRefreshed`` leaves a persistent notice, which a reconnect does not
   clear.
 - ``AccountMismatch`` raises the station's account-id-mismatch issue. A reconnect

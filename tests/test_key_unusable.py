@@ -1,4 +1,4 @@
-"""The key-unusable repair: eufy serves no key for the station's connection method."""
+"""The key-unusable repair: eufy serves no usable key for the station's connection method."""
 
 from __future__ import annotations
 
@@ -28,12 +28,14 @@ _RSA_VERSION = 1
 
 
 @pytest.fixture
-def unusable_key(fake_cloud: FakeCloud, fake_station: FakeStation) -> None:
-    """The station answers the RSA handshake; the cloud serves no RSA key for it.
+def no_rsa_key(fake_cloud: FakeCloud, fake_station: FakeStation) -> None:
+    """The station answers the RSA handshake with its static key; the cloud serves no
+    RSA key for it.
 
     Applied before the warm cache is seeded, so the cached credentials lack it too.
     """
     fake_station.conn_init_version = _RSA_VERSION
+    fake_station.static_key_session = True
     fake_cloud.rsa_cipher_keys.pop(fake_station.serial, None)
 
 
@@ -55,29 +57,30 @@ async def _unload(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     await hass.async_block_till_done()
 
 
-async def test_an_unusable_key_raises_one_key_unusable_issue_after_at_most_one_fetch(
+async def test_an_rsa_station_without_a_served_key_connects_under_its_static_key(
     hass: HomeAssistant,
     fake_cloud: FakeCloud,
+    fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
-    unusable_key: None,
+    no_rsa_key: None,
 ) -> None:
-    """Not fixable, names the station, no key-rejected issue; the library asks eufy for
-    the key at most once more, and that fetch leaves no "fetched again" notice."""
+    """The station comes up with at most one key fetch; no key-unusable, key-rejected or
+    "fetched again" issue: the session uses no fetched key."""
     seed_warm_cache()
     entry = add_entry(hass)
 
-    assert not await setup_entry(hass, entry)
-    assert entry.state is ConfigEntryState.SETUP_RETRY  # first-ever, none came up
+    assert await setup_entry(hass, entry)
+    assert entry.state is ConfigEntryState.LOADED
+    station = entry.runtime_data.eufy.stations[fake_station.serial]
+    assert station.connected
+    assert station.stats().static_key_session
 
-    (issue,) = _issues(hass, entry, "key_unusable").values()
-    assert not issue.is_fixable
-    assert not issue.is_persistent
-    assert issue.severity is ir.IssueSeverity.ERROR
-    assert (issue.translation_placeholders or {})["station"]
+    assert _issues(hass, entry, "key_unusable") == {}
     assert _issues(hass, entry, "key_rejected") == {}
     assert _issues(hass, entry, "credentials_refreshed") == {}
     assert _cipher_calls(fake_cloud) <= 1
+    await _unload(hass, entry)
 
 
 async def test_a_key_unusable_issue_follows_the_connection_events(
