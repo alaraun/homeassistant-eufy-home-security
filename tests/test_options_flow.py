@@ -1,4 +1,4 @@
-"""The entry's thirteen options, driven through the real options flow.
+"""The entry's fourteen options, driven through the real options flow.
 
 Each option but the recording length and the sessions per HomeBase is read once at
 setup, so the automatic reload is what applies a change.
@@ -43,6 +43,7 @@ from custom_components.eufy_home_security.const import (
     CONF_EXTRA_COUNTRIES,
     CONF_LIVE_SNAPSHOT,
     CONF_RECORD_LENGTH,
+    CONF_REFRESH_KEYFRAME,
     CONF_SCAN_REGIONS,
     CONF_SESSION_PROBE,
     CONF_STATION_SESSIONS,
@@ -50,6 +51,7 @@ from custom_components.eufy_home_security.const import (
     DEFAULT_DETECTION_HOLD_SECONDS,
     DEFAULT_EVENT_HISTORY_DAYS,
     DEFAULT_RECORD_LENGTH_SECONDS,
+    DEFAULT_REFRESH_KEYFRAME,
     DOMAIN,
     OPTIONS_SECTION_CAMERA_IMAGES,
     OPTIONS_SECTION_DETECTIONS,
@@ -84,7 +86,7 @@ def _registered(hass: HomeAssistant, domain: str, serial: str, key: str) -> str 
     return er.async_get(hass).async_get_entity_id(domain, DOMAIN, entity_unique_id(serial, key))
 
 
-async def test_the_options_form_offers_its_thirteen_options_with_their_defaults(
+async def test_the_options_form_offers_its_fourteen_options_with_their_defaults(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
@@ -96,7 +98,8 @@ async def test_the_options_form_offers_its_thirteen_options_with_their_defaults(
     and the alarm timeout 10 minutes by default.
     The live snapshot wakes a battery camera, so it is off by default too.
     The camera image is HD from the recording by default, the library's suggested
-    configuration. The event history keeps 7 days, and the form's
+    configuration. The refresh keyframe defaults to 1, the recording's first.
+    The event history keeps 7 days, and the form's
     description names the folder it is written to. Event videos are off by default
     (storage); the recording length is 30 s, HA's own camera.record default.
     """
@@ -127,6 +130,7 @@ async def test_the_options_form_offers_its_thirteen_options_with_their_defaults(
         CONF_DETECTION_HOLD,
         CONF_ALARM_TIMEOUT,
         CONF_CAMERA_IMAGE,
+        CONF_REFRESH_KEYFRAME,
         CONF_LIVE_SNAPSHOT,
         CONF_STATION_SESSIONS,
         CONF_RECORD_LENGTH,
@@ -137,11 +141,12 @@ async def test_the_options_form_offers_its_thirteen_options_with_their_defaults(
         CONF_CLOUD_PUSH,
         CONF_EXTRA_COUNTRIES,
         CONF_SCAN_REGIONS,
-    ], "the options form does not offer exactly its thirteen options, in order"
+    ], "the options form does not offer exactly its fourteen options, in order"
     (
         hold,
         timeout,
         camera_image,
+        refresh_keyframe,
         live,
         sessions,
         length,
@@ -156,6 +161,7 @@ async def test_the_options_form_offers_its_thirteen_options_with_their_defaults(
     assert hold.default() == DEFAULT_DETECTION_HOLD_SECONDS == 10
     assert timeout.default() == DEFAULT_ALARM_TIMEOUT_MINUTES == 10
     assert camera_image.default() == "hd", "the camera image does not default to HD"
+    assert refresh_keyframe.default() == DEFAULT_REFRESH_KEYFRAME == 1
     assert live.default() is False, "the live snapshot wakes battery cameras: opt-in only"
     assert probe.default() is True, (
         "the session probe is on by default: a kick-out must surface without a user action"
@@ -251,14 +257,14 @@ async def test_hold_and_timeout_outside_their_ranges_are_refused(
     await hass.async_block_till_done()
 
 
-async def test_the_saved_options_are_exactly_the_thirteen_offered(
+async def test_the_saved_options_are_exactly_the_fourteen_offered(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The save is rebuilt from the thirteen keys, five bools, five ints, a choice, a
+    """The save is rebuilt from the fourteen keys, five bools, six ints, a choice, a
     country and a country list; it reloads."""
 
     async def no_push(_eufy: EufySecurity) -> None:
@@ -275,6 +281,7 @@ async def test_the_saved_options_are_exactly_the_thirteen_offered(
             CONF_DETECTION_HOLD: 20.0,
             CONF_ALARM_TIMEOUT: 5.0,
             CONF_CAMERA_IMAGE: "hd_only",
+            CONF_REFRESH_KEYFRAME: 2.7,
             CONF_LIVE_SNAPSHOT: True,
             CONF_SESSION_PROBE: False,
             CONF_CLOUD_PUSH: True,
@@ -292,6 +299,7 @@ async def test_the_saved_options_are_exactly_the_thirteen_offered(
         CONF_DETECTION_HOLD: 20,
         CONF_ALARM_TIMEOUT: 5,
         CONF_CAMERA_IMAGE: "hd_only",
+        CONF_REFRESH_KEYFRAME: 3,
         CONF_LIVE_SNAPSHOT: True,
         CONF_SESSION_PROBE: False,
         CONF_CLOUD_PUSH: True,
@@ -306,6 +314,7 @@ async def test_the_saved_options_are_exactly_the_thirteen_offered(
     assert type(entry.options[CONF_EVENT_HISTORY_DAYS]) is int
     assert type(entry.options[CONF_STATION_SESSIONS]) is int
     assert type(entry.options[CONF_CAMERA_IMAGE]) is str
+    assert type(entry.options[CONF_REFRESH_KEYFRAME]) is int
     assert type(entry.options[CONF_LIVE_SNAPSHOT]) is bool
     assert type(entry.options[CONF_SESSION_PROBE]) is bool
     assert type(entry.options[CONF_CLOUD_PUSH]) is bool
@@ -447,6 +456,30 @@ async def test_build_client_hands_the_region_option_to_the_library(
 def _station_budget(entry: MockConfigEntry) -> int:
     budget: int = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station.max_sessions
     return budget
+
+
+async def test_the_refresh_keyframe_is_1_to_5(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Both ends inclusive; outside the range nothing is saved."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    result = await _open_options(hass, entry)
+    for value in (0, 6):
+        with pytest.raises(InvalidData):
+            await configure_options(hass, result["flow_id"], {CONF_REFRESH_KEYFRAME: value})
+        assert entry.options == {}, value
+    hass.config_entries.options.async_abort(result["flow_id"])
+
+    for value in (1, 5):
+        await _submit_options(hass, entry, {CONF_REFRESH_KEYFRAME: value})
+        assert entry.options[CONF_REFRESH_KEYFRAME] == value
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
 
 
 async def test_sessions_per_homebase_outside_the_library_range_are_refused(

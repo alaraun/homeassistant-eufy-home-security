@@ -695,12 +695,13 @@ def _option_texts(step: dict[str, Any], part: str) -> dict[str, str]:
     return {key: text for texts in step["sections"].values() for key, text in texts[part].items()}
 
 
-def test_the_options_flow_offers_exactly_its_thirteen_options() -> None:
-    """The entry's options are exactly these thirteen; a new one needs a deliberate change here.
+def test_the_options_flow_offers_exactly_its_fourteen_options() -> None:
+    """The entry's options are exactly these fourteen; a new one needs a deliberate change here.
 
     The detection hold (seconds) and the alarm safety-net timeout (minutes) default
     to 10. The live snapshot is off by default: a live keyframe wakes a battery
     camera. The camera image defaults to hd, the library's suggested configuration.
+    The refresh keyframe defaults to 1, the recording's first.
     Cloud push is off by default: it uses eufy's cloud. The login country is empty by
     default, which means Home Assistant's country, and there is no extra country (each
     costs a sign-in). The event history keeps 7
@@ -731,11 +732,13 @@ def test_the_options_flow_offers_exactly_its_thirteen_options() -> None:
         CONF_EXTRA_COUNTRIES,
         CONF_LIVE_SNAPSHOT,
         CONF_RECORD_LENGTH,
+        CONF_REFRESH_KEYFRAME,
         CONF_SCAN_REGIONS,
         CONF_SESSION_PROBE,
         CONF_STATION_SESSIONS,
         DEFAULT_EVENT_HISTORY_DAYS,
         DEFAULT_RECORD_LENGTH_SECONDS,
+        DEFAULT_REFRESH_KEYFRAME,
         OPTIONS_SECTION_MORE_COUNTRIES,
         OPTIONS_STEP_INIT,
     )
@@ -753,6 +756,7 @@ def test_the_options_flow_offers_exactly_its_thirteen_options() -> None:
         CONF_DETECTION_HOLD,
         CONF_ALARM_TIMEOUT,
         CONF_CAMERA_IMAGE,
+        CONF_REFRESH_KEYFRAME,
         CONF_LIVE_SNAPSHOT,
         CONF_STATION_SESSIONS,
         CONF_RECORD_LENGTH,
@@ -766,7 +770,7 @@ def test_the_options_flow_offers_exactly_its_thirteen_options() -> None:
     ]
     keys = [str(key) for key in OPTIONS_SCHEMA.schema]
     assert keys == expected, (
-        f"the options schema offers {keys}; this entry has exactly thirteen options, and "
+        f"the options schema offers {keys}; this entry has exactly fourteen options, and "
         f"another one added here without a decision would ship unannounced"
     )
     assert [key for keys in OPTIONS_SECTIONS.values() for key in keys] == expected, (
@@ -776,6 +780,7 @@ def test_the_options_flow_offers_exactly_its_thirteen_options() -> None:
         hold,
         timeout,
         camera_image,
+        refresh_keyframe,
         live,
         sessions,
         length,
@@ -802,6 +807,7 @@ def test_the_options_flow_offers_exactly_its_thirteen_options() -> None:
     assert camera_image.default() == "hd", (
         "the camera image does not default to hd, the library's suggested configuration"
     )
+    assert refresh_keyframe.default() == DEFAULT_REFRESH_KEYFRAME
     assert live.default() is False, "the live snapshot must be opt-in: it wakes battery cameras"
     assert probe.default() is True, (
         "the session probe is on by default: a kick-out by another eufy client must "

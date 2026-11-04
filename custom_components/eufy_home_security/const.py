@@ -54,6 +54,10 @@ class CameraImageMode(StrEnum):
 
 
 DEFAULT_CAMERA_IMAGE: Final = CameraImageMode.HD
+# 1-based keyframe selected by Refresh event image (not automatic detections).
+CONF_REFRESH_KEYFRAME: Final = "refresh_keyframe"
+DEFAULT_REFRESH_KEYFRAME: Final = 1
+MAX_REFRESH_KEYFRAME: Final = 5
 # Off by default: a camera with no detection image may ask for a live keyframe, which
 # wakes a battery camera, at most once per cooldown.
 CONF_LIVE_SNAPSHOT: Final = "live_snapshot"
