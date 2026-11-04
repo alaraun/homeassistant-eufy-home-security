@@ -24,6 +24,7 @@ from conftest import (
     SYNTHETIC,
     add_entry,
     detection_event,
+    entity_id_for,
     setup_entry,
     wait_until,
 )
@@ -39,6 +40,7 @@ from eufy_home_security import (
 )
 from eufy_home_security.testing import FakeStation
 from fake_ffmpeg import REMUX_MAGIC
+from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
@@ -48,10 +50,14 @@ from pytest_homeassistant_custom_component.common import (
 from pytest_homeassistant_custom_component.components.diagnostics import (
     get_diagnostics_for_config_entry,
 )
-from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
+from pytest_homeassistant_custom_component.typing import (
+    ClientSessionGenerator,
+    WebSocketGenerator,
+)
 
-from custom_components.eufy_home_security import history, recordings
+from custom_components.eufy_home_security import history, recordings, station_recordings
 from custom_components.eufy_home_security.const import (
+    CAMERA_KEY,
     CONF_EVENT_HISTORY_DAYS,
     CONF_EVENT_VIDEOS,
     RECORDING_DEFAULT_CLIP_SECONDS,
@@ -640,6 +646,68 @@ async def test_a_recording_cut_at_a_codec_change_is_given_up_at_once(
     stats = _manager(entry).stats(SYNTHETIC.station_sn)
     assert stats is not None
     assert (stats["failed"], stats["given_up"], stats["kept"]) == (tries, 1, 0)
+    assert _videos(hass) == []
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize(
+    ("ended_early", "frame_num", "code", "downloads"),
+    [(True, 6, "codec_change", 0), (False, 40, "failed", 1)],
+    ids=["cut-at-codec-change", "short"],
+)
+async def test_a_fetch_of_a_recording_the_sync_gave_up_at_a_codec_change_downloads_nothing(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    ended_early: bool,
+    frame_num: int,
+    code: str,
+    downloads: int,
+) -> None:
+    """The sync noted why it gave up: a request for a recording cut at a codec change
+    is refused at once; one given up for another reason is downloaded again."""
+    calls: list[int] = []
+    real = Station.async_download_recording
+
+    async def download(
+        self: Station, record: HistoryRecord, write: ClipWriter, *, wait: bool = True
+    ) -> MediaClip:
+        calls.append(record.record_id)
+        clip = await real(self, record, write, wait=wait)
+        return dataclasses.replace(clip, ended_early=ended_early)
+
+    monkeypatch.setattr(Station, "async_download_recording", download)
+    fake_station.recording_frames = 6
+    fake_station.rows = [
+        _row(7, started=datetime.now().astimezone() - timedelta(minutes=10), frame_num=frame_num)
+    ]
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage)
+    await _first_pass(hass, entry)
+    for _ in range(RECORDING_MAX_ATTEMPTS):
+        await _pass(hass, entry, RECORDING_SYNC_INTERVAL_SECONDS + 1)
+    stats = _manager(entry).stats(SYNTHETIC.station_sn)
+    assert stats is not None
+    assert stats["given_up"] == 1
+    synced = len(calls)
+
+    client = await hass_ws_client(hass)
+    camera = entity_id_for(hass, CAMERA_DOMAIN, SYNTHETIC.camera_sn, CAMERA_KEY)
+    await client.send_json_auto_id({"type": station_recordings.WS_LIST, "entity_id": camera})
+    listed = await client.receive_json()
+    assert listed["success"], listed
+    (ref,) = [r["ref"] for r in listed["result"]["recordings"]]
+    await client.send_json_auto_id(
+        {"type": station_recordings.WS_FETCH, "entity_id": camera, "ref": ref}
+    )
+    reply = await client.receive_json()
+
+    assert not reply["success"], reply
+    assert reply["error"]["code"] == code
+    assert len(calls) - synced == downloads
     assert _videos(hass) == []
     await _unload(hass, entry)
 

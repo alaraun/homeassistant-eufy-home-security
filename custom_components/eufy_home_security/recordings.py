@@ -181,8 +181,8 @@ class StoredRecordings:
     """One entry's record of the recordings stored in the history, and the one way in.
 
     Per :func:`record_key`: ``file`` (None: given up), ``folder``, ``station``,
-    ``device`` and ``started``. ``since`` is the event-videos mark: the sync lists
-    nothing before it.
+    ``device`` and ``started``; a give-up for a cut at a video-codec change also notes
+    ``cut`` True. ``since`` is the event-videos mark: the sync lists nothing before it.
     """
 
     def __init__(self, hass: HomeAssistant, entry: EufyConfigEntry, events: EventHistory) -> None:
@@ -283,14 +283,26 @@ class StoredRecordings:
         _LOGGER.debug("A stored recording resolves outside the history folder; skipped")
         return False
 
-    def give_up(self, record_id: int, station_sn: str, started: datetime) -> None:
-        """Note ``station_sn``'s recording ``record_id`` as never to be synced again."""
-        self.records[record_key(station_sn, record_id)] = {
+    def give_up(
+        self, record_id: int, station_sn: str, started: datetime, *, cut: bool = False
+    ) -> None:
+        """Note ``station_sn``'s recording ``record_id`` as never to be synced again;
+        ``cut``: its download stops at a video-codec change."""
+        record: dict[str, Any] = {
             "file": None,
             "station": station_sn,
             "started": started.isoformat(),
         }
+        if cut:
+            record["cut"] = True
+        self.records[record_key(station_sn, record_id)] = record
         self.save()
+
+    def is_cut(self, station_sn: str, record_id: int, started: datetime | None) -> bool:
+        """Whether the recording (:meth:`noted`) was given up for a download cut at a
+        video-codec change."""
+        record = self.noted(station_sn, record_id, started)
+        return record is not None and record.get("file") is None and record.get("cut") is True
 
     def prune(self) -> None:
         """Forget stored recordings whose day the retention no longer keeps."""
@@ -680,7 +692,7 @@ class RecordingManager:
             return
         sync.attempts.pop(row.record_id, None)
         sync.stats.given_up += 1
-        self._stored.give_up(row.record_id, sync.station.serial, started)
+        self._stored.give_up(row.record_id, sync.station.serial, started, cut=cut)
         if row.device_sn is not None and row.device_sn not in self._warned:
             self._warned.add(row.device_sn)
             _LOGGER.warning(

@@ -234,7 +234,8 @@ from then on is copied into the event history as an MP4:
 - Copied once: a restart or a deleted file does not copy it again. A copy that fails
   is tried again on later passes, three times in all; then one warning is logged and
   the recording stays on the HomeBase only. A recording whose video codec changes
-  partway is cut at the change on every copy, so it is not tried again.
+  partway is cut at the change on every copy, so it is not tried again; play it in the
+  eufy app.
 - The HomeBase is asked for one day of recordings at a time, oldest first. A day it
   does not list within a minute is asked again on the next pass; the days before it
   stay copied.
@@ -252,9 +253,11 @@ request (the camera card's **Station** list, over the websocket commands
 `eufy_home_security/recordings` and `eufy_home_security/recordings/fetch`). Playing
 or saving one copies it into the event history exactly as an event video: same name,
 noted as copied (the option's sync skips it), kept and deleted with the history. A
-recording still running cannot be copied until it has finished. Needs **Event
-history** above 0 days. A HomeBase 2's recordings are listed, played and saved the
-same way (the library's HomeBase 2 listing, playback and download checked on a
+recording still running cannot be copied until it has finished. A recording whose
+video codec changes partway cannot be saved: the card says so, and later requests for
+it (or one the event-videos sync gave up for this) are refused without downloading it
+again; play it in the eufy app. Needs **Event history** above 0 days. A HomeBase 2's
+recordings are listed, played and saved the same way (the library's HomeBase 2 listing, playback and download checked on a
 HomeBase 2 by a contributor; the Station list with a HomeBase 2 tested on the fake
 station only).
 
