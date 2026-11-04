@@ -4,7 +4,7 @@
 
 # Anker eufy Home Security for Home Assistant
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories)
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz/)
 [![Home Assistant](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Falaraun%2Fhomeassistant-eufy-home-security%2Fmain%2Fhacs.json&query=%24.homeassistant&label=Home%20Assistant&suffix=%2B&color=41BDF5&cacheSeconds=3600)](https://www.home-assistant.io/)
 [![Release](https://img.shields.io/github/v/release/alaraun/homeassistant-eufy-home-security)](https://github.com/alaraun/homeassistant-eufy-home-security/releases)
 [![CI](https://github.com/alaraun/homeassistant-eufy-home-security/actions/workflows/ci.yml/badge.svg)](https://github.com/alaraun/homeassistant-eufy-home-security/actions/workflows/ci.yml)
@@ -50,10 +50,11 @@ Assistant installs automatically. Library bugs that show without Home Assistant 
 
 [![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=alaraun&repository=homeassistant-eufy-home-security&category=integration)
 
-1. HACS → ⋮ → **Custom repositories** → add
-   `https://github.com/alaraun/homeassistant-eufy-home-security`, type **Integration**
-   (or use the button above).
-2. Download **Anker eufy Home Security** and restart Home Assistant.
+1. HACS → search for **Anker eufy Home Security** (or use the button above).
+2. **Download** it and restart Home Assistant.
+
+An install added as a custom repository needs no change: HACS lists it as a default
+repository and keeps updating it.
 
 Manual: download the source archive of the latest
 [release](https://github.com/alaraun/homeassistant-eufy-home-security/releases), copy its
