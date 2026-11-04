@@ -53,6 +53,8 @@ from eufy_home_security import (
     CommandUnsupportedError,
     ConnectionChanged,
     CredentialsRefreshed,
+    DetectionDelivery,
+    DetectionDeliveryReport,
     EufySecurityError,
     GuardMode,
     KeyRejectedError,
@@ -68,6 +70,7 @@ from eufy_home_security import (
     SessionReplacedError,
     SkippedDevice,
     Station,
+    StationConfig,
     UnsupportedError,
     redact,
     redact_serial,
@@ -150,6 +153,8 @@ from .const import (
     ISSUE_LOGIN_LIMITED,
     ISSUE_LOGIN_LIMITED_NO_WAIT,
     ISSUE_MEDIA_NOT_PERSISTENT,
+    ISSUE_MODE_HOLDS_DETECTIONS,
+    ISSUE_MODE_HOLDS_DETECTIONS_NOWHERE,
     ISSUE_NO_DEVICES,
     ISSUE_PENDING_INVITES,
     ISSUE_PUSH_NEEDED,
@@ -1319,8 +1324,8 @@ def raise_account_mismatch_issue(hass: HomeAssistant, entry: ConfigEntry[Any], s
 
 def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:
     """Delete the entry's account-id-mismatch, cipher-unavailable, cipher-key-missing,
-    key-unusable, no-devices, pending-invitations, login-limited, push-needed and
-    skipped-device issues.
+    key-unusable, no-devices, pending-invitations, login-limited, push-needed,
+    mode-holds-detections and skipped-device issues.
 
     Unload, the start of every setup attempt and entry removal call it, so an issue
     raised by an attempt that then failed (and so was never unloaded) does not
@@ -1338,6 +1343,7 @@ def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) ->
         pending_invites_issue_id(entry.entry_id),
         login_limited_issue_id(entry.entry_id),
         push_needed_issue_id(entry.entry_id),
+        mode_holds_detections_issue_prefix(entry.entry_id),
         *(skipped_devices_issue_id(entry.entry_id, key) for key in _SKIP_ISSUES.values()),
     )
     cancel_login_limited_expiry(hass, entry.entry_id)
@@ -1615,3 +1621,120 @@ def sync_variant_reset_issue(
 def delete_variant_reset_issue(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:
     """Delete the entry's setting-version reset issue, ignored or not."""
     ir.async_delete_issue(hass, DOMAIN, variant_reset_issue_id(entry.entry_id))
+
+
+def mode_holds_detections_issue_prefix(entry_id: str, device_id: str = "") -> str:
+    """The prefix of a station's mode-holds-detections issue ids, by its
+    device-registry id; without one, the prefix of all of the entry's."""
+    station = f"{device_id}_" if device_id else ""
+    return f"{ISSUE_MODE_HOLDS_DETECTIONS}_{entry_id}_{station}"
+
+
+def mode_holds_detections_issue_id(entry_id: str, device_id: str, mode: GuardMode | int) -> str:
+    """A station's mode-holds-detections issue for one mode, by the station's
+    device-registry id and the mode's code: an ignore covers that mode only."""
+    return f"{mode_holds_detections_issue_prefix(entry_id, device_id)}{int(mode)}"
+
+
+def _is_disarmed(mode: GuardMode | int | None) -> bool:
+    """Whether ``mode`` is Off or Disarmed; False for None or a code GuardMode lacks."""
+    try:
+        return mode is not None and GuardMode(mode).is_disarmed
+    except ValueError:
+        return False
+
+
+def _held_back(station: Station) -> tuple[list[DetectionDeliveryReport], StationConfig | None]:
+    """The reports of ``station``'s devices with detection entities that the armed
+    mode in force holds back, in paired order, and the configuration they were read
+    with. Each report's reason is logged at debug."""
+    config = station.config
+    held: list[DetectionDeliveryReport] = []
+    for serial, kind in detections.paired_device_kinds(station).items():
+        if not detections.has_detection_entities(kind):
+            continue
+        report = station.detection_delivery(serial, config=config)
+        _LOGGER.debug(
+            "Detections of %s on %s: %s (%s)",
+            redact_serial(serial),
+            redact_serial(station.serial),
+            report.delivery.value,
+            report.reason,
+        )
+        if report.delivery is DetectionDelivery.NOT_SENT_IN_MODE and not _is_disarmed(report.mode):
+            held.append(report)
+    return held, config
+
+
+def sync_mode_holds_detections_issue(
+    hass: HomeAssistant, entry: ConfigEntry[Any], stations: Iterable[Station]
+) -> None:
+    """Name, per station, the devices whose detections the armed mode in force holds back.
+
+    A device with detection entities is named while ``Station.detection_delivery``
+    reports ``NOT_SENT_IN_MODE``: its Notification action is off in the mode in force,
+    so the station sends none of its detections (library guide § Detections held back
+    by the guard mode). Off and Disarmed name no device: a station that sends nothing
+    while disarmed is no fault. One issue per station, deleted when it names no device;
+    a warning, not fixable (the remedy is in the eufy app), not persistent, and ignorable
+    for a mode kept silent on purpose. The issue id carries the mode in force, and each
+    check deletes the station's issues of every other mode: an ignore given in one mode
+    never silences another, and is lost once its mode leaves (Home Assistant drops the
+    dismissal of a deleted issue). Placeholders: the station, the mode in force,
+    the devices, and the armed modes that send any of them in the station's order; with
+    none, the ``_nowhere`` text, which names no mode.
+    """
+    for station in stations:
+        device = _station_device(hass, entry, station.serial)
+        if device is None:
+            _LOGGER.debug(
+                "Station %s has no registered device; no mode-holds-detections issue",
+                redact_serial(station.serial),
+            )
+            continue
+        held, config = _held_back(station)
+        mode = held[0].mode if held else None
+        issue_id = (
+            None
+            if mode is None
+            else mode_holds_detections_issue_id(entry.entry_id, device.id, mode)
+        )
+        prefix = mode_holds_detections_issue_prefix(entry.entry_id, device.id)
+        stale = [
+            other
+            for domain, other in ir.async_get(hass).issues
+            if domain == DOMAIN and other.startswith(prefix) and other != issue_id
+        ]
+        for other in stale:
+            ir.async_delete_issue(hass, DOMAIN, other)
+        if issue_id is None:
+            continue
+        # NOT_SENT_IN_MODE is read from a configuration, for a known mode.
+        assert config is not None and mode is not None
+        sending = {m for report in held for m in report.sending_modes if not m.is_disarmed}
+        names = []
+        for report in held:
+            row = _station_device(hass, entry, report.device_sn)
+            label = station_label(row) if row is not None else ""
+            names.append(label or redact_serial(report.device_sn))
+        placeholders = {
+            "station": station_label(device),
+            "mode": config.mode_name(mode),
+            "devices": ", ".join(names),
+        }
+        if sending:
+            placeholders["sending_modes"] = ", ".join(
+                config.mode_name(m) for m in config.mode_tables if m in sending
+            )
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=(
+                ISSUE_MODE_HOLDS_DETECTIONS if sending else ISSUE_MODE_HOLDS_DETECTIONS_NOWHERE
+            ),
+            translation_placeholders=placeholders,
+        )

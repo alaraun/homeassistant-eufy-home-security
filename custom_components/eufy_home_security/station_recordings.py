@@ -34,8 +34,9 @@ Two websocket commands and one view, registered once per Home Assistant instance
 
 Errors carry a code: ``not_found``, ``not_settled``, ``unavailable``, ``busy`` (the
 station's session budget is spent), ``account_rejected`` (the station refuses this eufy
-account, -104; the message is the sharing hint) and ``failed``. Serials, paths, record ids and refs
-are never logged.
+account, -104; the message is the sharing hint), ``codec_change`` (the download stops
+where the recording's video codec changes, on every try: not downloaded again) and
+``failed``. Serials, paths, record ids and refs are never logged.
 """
 
 from __future__ import annotations
@@ -126,6 +127,11 @@ ERR_UNAVAILABLE: Final = "unavailable"
 ERR_BUSY: Final = "busy"
 ERR_FAILED: Final = "failed"
 ERR_ACCOUNT_REJECTED: Final = "account_rejected"
+ERR_CODEC_CHANGE: Final = "codec_change"
+_CODEC_CHANGE_MESSAGE: Final = (
+    "This recording changes video format partway through, so it cannot be saved; play it"
+    " in the eufy app"
+)
 
 _REGISTERED: HassKey[bool] = HassKey(f"{DOMAIN}_station_recordings")
 
@@ -398,6 +404,8 @@ class StationRecordings:
             raise RecordingError(ERR_NOT_SETTLED, "The recording is still running")
         if not self._stored.history.enabled:
             raise RecordingError(ERR_FAILED, "Event history is off, so nothing can be saved")
+        if self._stored.is_cut(camera.station.serial, row.record_id, row.started_at):
+            raise RecordingError(ERR_CODEC_CHANGE, _CODEC_CHANGE_MESSAGE)
         if not camera.station.connected:
             raise RecordingError(ERR_UNAVAILABLE, "The HomeBase is not connected")
         self.stats.fetch_downloads += 1
@@ -425,6 +433,13 @@ class StationRecordings:
                 redact_serial(camera.device_sn),
                 type(err).__name__,
             )
+            if isinstance(err, IncompleteClipError) and err.clip.ended_early:
+                # Cut at the same change on every try: noted so no request downloads it again.
+                if row.started_at is not None:
+                    self._stored.give_up(
+                        row.record_id, camera.station.serial, row.started_at, cut=True
+                    )
+                raise RecordingError(ERR_CODEC_CHANGE, _CODEC_CHANGE_MESSAGE) from err
             raise RecordingError(ERR_FAILED, "The recording could not be saved") from err
         return await self._async_playable(saved.path)
 

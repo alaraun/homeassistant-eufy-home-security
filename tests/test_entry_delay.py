@@ -37,6 +37,7 @@ from eufy_home_security import (
     EventSource,
     GuardMode,
     GuardModeChanged,
+    GuardModeOrigin,
     PushMessageType,
     StationState,
 )
@@ -658,14 +659,23 @@ async def test_a_disarm_the_station_reports_live_ends_the_entry_delay_at_once(
 
 
 @pytest.mark.parametrize(
-    ("source", "mode", "ended"),
+    ("source", "origin", "mode", "ended"),
     [
-        (EventSource.P2P, GuardMode.DISARMED, True),
-        (EventSource.P2P, GuardMode.OFF, True),
-        (EventSource.P2P, GuardMode.HOME, False),
-        (EventSource.CLOUD, GuardMode.DISARMED, False),
+        (EventSource.P2P, GuardModeOrigin.REPORT, GuardMode.DISARMED, True),
+        (EventSource.P2P, GuardModeOrigin.REPORT, GuardMode.OFF, True),
+        (EventSource.P2P, GuardModeOrigin.REPORT, GuardMode.HOME, False),
+        (EventSource.P2P, GuardModeOrigin.PUSH, GuardMode.DISARMED, False),
+        (EventSource.CLOUD, GuardModeOrigin.REPORT, GuardMode.DISARMED, False),
+        (EventSource.CLOUD, GuardModeOrigin.PUSH, GuardMode.DISARMED, False),
     ],
-    ids=["live-disarmed", "live-off", "live-armed", "cloud-disarmed"],
+    ids=[
+        "live-disarmed",
+        "live-off",
+        "live-armed",
+        "p2p-push-disarmed",
+        "cloud-disarmed",
+        "cloud-push-disarmed",
+    ],
 )
 async def test_only_a_live_disarmed_mode_report_ends_the_entry_delay(
     hass: HomeAssistant,
@@ -673,11 +683,12 @@ async def test_only_a_live_disarmed_mode_report_ends_the_entry_delay(
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
     source: EventSource,
+    origin: GuardModeOrigin,
     mode: GuardMode,
     ended: bool,
 ) -> None:
-    """The station's own report ends pending; a cloud push's mode has no order, an armed
-    mode is no disarm."""
+    """The station's own report over P2P ends pending; a push's mode (either channel) or a
+    cloud report has no order, an armed mode is no disarm."""
     entry = await set_up_warm(hass, seed_warm_cache)
     entity_id = panel_entity_id(hass)
 
@@ -686,10 +697,55 @@ async def test_only_a_live_disarmed_mode_report_ends_the_entry_delay(
         hass,
         entry,
         GuardModeChanged(
-            station_sn=SYNTHETIC.station_sn, mode=mode, active_mode=mode, source=source
+            station_sn=SYNTHETIC.station_sn,
+            mode=mode,
+            active_mode=mode,
+            source=source,
+            origin=origin,
         ),
     )
     assert (state_of(hass, entity_id) != "pending") is ended
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize(("skew", "ended"), [(-5.0, False), (5.0, True)], ids=["older", "newer"])
+async def test_a_p2p_disarm_push_ends_the_entry_delay_only_when_ordered_after_it(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    skew: float,
+    ended: bool,
+) -> None:
+    """An authenticated P2P disarm push and its mode, in the library's order: the push's
+    event second decides, so one older than the delay leaves pending."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = panel_entity_id(hass)
+    anchor = dt_util.utcnow()
+    await _handle(hass, entry, _delay_push(anchor))
+    assert state_of(hass, entity_id) == "pending"
+
+    t_ms = int((anchor.timestamp() + skew) * 1000)
+    await _handle(
+        hass,
+        entry,
+        station_event(PushMessageType.ARMING, t_ms=t_ms, guard_mode=int(GuardMode.DISARMED)),
+    )
+    await _handle(
+        hass,
+        entry,
+        GuardModeChanged(
+            station_sn=SYNTHETIC.station_sn,
+            mode=GuardMode.DISARMED,
+            active_mode=GuardMode.DISARMED,
+            source=EventSource.P2P,
+            origin=GuardModeOrigin.PUSH,
+        ),
+    )
+    assert entry.runtime_data.coordinators[SYNTHETIC.station_sn].data.active_mode is (
+        GuardMode.DISARMED
+    )
+    assert state_of(hass, entity_id) == ("disarmed" if ended else "pending")
     await _unload(hass, entry)
 
 

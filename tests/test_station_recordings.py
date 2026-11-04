@@ -8,6 +8,7 @@ stills on its disk, and a fetched clip's MPEG-TS is remuxed by ``tests/fake_ffmp
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from collections.abc import AsyncIterator, Callable
 from datetime import date, datetime, timedelta
@@ -1061,6 +1062,50 @@ async def test_fetch_errors_name_what_failed(
     assert await code(refs[gone["record_id"]]) == "not_found"
     assert _videos(hass) == []
     assert _manager(entry).stats.fetch_failed == 3
+    await _unload(hass, entry)
+
+
+async def test_a_fetch_cut_at_a_codec_change_says_so_and_is_not_downloaded_again(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A download that stops at a video-codec change answers ``codec_change`` with its
+    own message, keeps nothing, and a second request is refused without a download."""
+    calls: list[int] = []
+    real = Station.async_download_recording
+
+    async def cut(
+        self: Station, record: HistoryRecord, write: ClipWriter, *, wait: bool = True
+    ) -> MediaClip:
+        calls.append(record.record_id)
+        clip = await real(self, record, write, wait=wait)
+        return dataclasses.replace(clip, ended_early=True)
+
+    monkeypatch.setattr(Station, "async_download_recording", cut)
+    fake_station.recording_frames = 6
+    row = _row(4)
+    fake_station.rows = [row]
+    entry = await _set_up(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    entity_id = _camera(hass)
+    ref = (await _refs(client, entity_id))[row["record_id"]]
+
+    first = await _fetch(client, entity_id, ref)
+    second = await _fetch(client, entity_id, ref)
+
+    for reply in (first, second):
+        assert not reply["success"], reply
+        assert reply["error"]["code"] == station_recordings.ERR_CODEC_CHANGE
+        assert reply["error"]["message"].startswith(
+            "This recording changes video format partway through"
+        )
+    assert calls == [row["record_id"]]
+    assert _videos(hass) == []
+    assert (_manager(entry).stats.fetch_downloads, _manager(entry).stats.fetch_failed) == (1, 1)
     await _unload(hass, entry)
 
 

@@ -91,6 +91,28 @@ entity. A detection turns on only the sensor of its own kind (a person detection
 leaves Motion off) for the **Detection hold** seconds; the event entity fires for every
 kind, so an automation for "anything detected" triggers on it.
 
+### Detections in the security mode
+
+In the eufy app each camera has a **Notification** switch per security mode (Security
+mode → the mode → the camera). With it off, the station sends none of that camera's
+detections while the mode is in force: its detection sensors and **Detection** event stay
+unchanged, and the camera still records. Turning Notification on also notifies your phone.
+Seen on HomeBase 3 stations; other stations follow the eufy app's mode settings, not tested.
+
+Each camera and doorbell has a **Detections in current mode** diagnostic sensor:
+
+| State | Meaning |
+|---|---|
+| `sent` | Notification is on for the device in the mode in force |
+| `not_sent_in_mode` | Notification is off: no detections from it while this mode is in force |
+| `unknown` | not known: no mode settings reported yet, the mode in force unknown, or a mode without per-device settings (Geofencing) |
+
+Attributes: `mode` (the mode in force) and `sending_modes` (the armed modes that send
+its detections; Disarmed is not listed). In an armed mode, `not_sent_in_mode` also
+raises a repair issue; see
+[troubleshooting.md](troubleshooting.md#no-detections-from-a-camera). Motion sensors get no
+such sensor: whether their Notification switch holds detections back is not known.
+
 ## Camera images
 
 The camera entity shows its latest detection's image.
@@ -211,7 +233,9 @@ from then on is copied into the event history as an MP4:
   uses one session of **Sessions per HomeBase** while it runs.
 - Copied once: a restart or a deleted file does not copy it again. A copy that fails
   is tried again on later passes, three times in all; then one warning is logged and
-  the recording stays on the HomeBase only.
+  the recording stays on the HomeBase only. A recording whose video codec changes
+  partway is cut at the change on every copy, so it is not tried again; play it in the
+  eufy app.
 - The HomeBase is asked for one day of recordings at a time, oldest first. A day it
   does not list within a minute is asked again on the next pass; the days before it
   stay copied.
@@ -229,9 +253,11 @@ request (the camera card's **Station** list, over the websocket commands
 `eufy_home_security/recordings` and `eufy_home_security/recordings/fetch`). Playing
 or saving one copies it into the event history exactly as an event video: same name,
 noted as copied (the option's sync skips it), kept and deleted with the history. A
-recording still running cannot be copied until it has finished. Needs **Event
-history** above 0 days. A HomeBase 2's recordings are listed, played and saved the
-same way (the library's HomeBase 2 listing, playback and download checked on a
+recording still running cannot be copied until it has finished. A recording whose
+video codec changes partway cannot be saved: the card says so, and later requests for
+it (or one the event-videos sync gave up for this) are refused without downloading it
+again; play it in the eufy app. Needs **Event history** above 0 days. A HomeBase 2's
+recordings are listed, played and saved the same way (the library's HomeBase 2 listing, playback and download checked on a
 HomeBase 2 by a contributor; the Station list with a HomeBase 2 tested on the fake
 station only).
 

@@ -250,6 +250,14 @@
         }
       }
     },
+    "mode_holds_detections": {
+      "title": "{station}: no detections from some cameras in {mode} mode",
+      "description": "In {mode} mode the station sends no detections for {devices}: their Notification action is off in this mode, so Home Assistant gets no motion or person events from them until a mode that sends them is in force ({sending_modes}). To receive them in {mode}, open the eufy app → Security mode → {mode} → each camera, and turn on Notification (this also notifies your phone). Ignore this if you keep {mode} silent on purpose."
+    },
+    "mode_holds_detections_nowhere": {
+      "title": "{station}: no detections from some cameras in {mode} mode",
+      "description": "In {mode} mode the station sends no detections for {devices}: their Notification action is off in this mode, so Home Assistant gets no motion or person events from them in any armed mode the station reports. To receive them in {mode}, open the eufy app → Security mode → {mode} → each camera, and turn on Notification (this also notifies your phone). Ignore this if you keep {mode} silent on purpose."
+    },
     "cipher_unavailable": {
       "title": "eufy has no key for {station}",
       "description": "{station} uses key number {cipher} for its local connection, but eufy holds no such key for the station's owner, so Home Assistant cannot connect to it and its entities are unavailable. Signing in again does not help. In the eufy app, on the account that set the station up, check that the station is still there and shared with the account Home Assistant uses; share it again if needed. Then reload the integration: Home Assistant asks eufy again on every reload, and on its own at most once an hour."
@@ -523,6 +531,22 @@
       },
       "recorded_events": {
         "name": "Recorded events"
+      },
+      "detection_delivery": {
+        "name": "Detections in current mode",
+        "state": {
+          "sent": "Sent",
+          "not_sent_in_mode": "Not sent in this mode",
+          "unknown": "Unknown"
+        },
+        "state_attributes": {
+          "mode": {
+            "name": "Mode"
+          },
+          "sending_modes": {
+            "name": "Modes that send"
+          }
+        }
       }
     },
     "select": {

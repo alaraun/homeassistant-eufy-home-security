@@ -111,6 +111,13 @@
       },
       "recorded_events": {
         "default": "mdi:record-rec"
+      },
+      "detection_delivery": {
+        "default": "mdi:bell-check-outline",
+        "state": {
+          "not_sent_in_mode": "mdi:bell-off-outline",
+          "unknown": "mdi:bell-outline"
+        }
       }
     },
     "siren": {

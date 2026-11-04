@@ -29,7 +29,8 @@ in `configuration.yaml` (above) for the full request trail.
 
 **⋮ → Download diagnostics** on the integration entry: session health, LAN warnings,
 storage figures, event-video copy counters (`recording_sync`), cloud push state
-(`push`), options, `models` (how the library knows each product code; see
+(`push`), whether the security mode in force sends each device's detections
+(`detection_delivery`), options, `models` (how the library knows each product code; see
 [devices.md](devices.md#other-models)) and `account_report`: every device eufy's lists
 name for the account, whether the integration serves it, its firmware, and whether
 eufy's keys for it are usable. Serials are shortened and device names removed; no key
@@ -57,6 +58,7 @@ an account where no device was found too.
 | eufy device not supported | eufy lists a device whose serial number is not only letters and digits; it is left out (a station with its paired devices) | none in Home Assistant; if the device shows in the eufy app, open an issue with the diagnostics download |
 | Camera event history is not kept | no host directory mounted at `/media` (Container) | see [usage.md](usage.md#event-history) |
 | eufy detections need cloud push | cloud push is off, and a station does not send its cameras' detections over the LAN (a standalone camera, a HomeBase 2, a model not yet checked); their detection sensors stay off | **Fix** switches cloud push on and reloads; or ignore it to leave push off; see [usage.md](usage.md#cloud-push) |
+| No detections from some cameras in a mode | the security mode in force has the **Notification** action off for the cameras it names, so the station sends none of their detections while that mode is in force; they keep recording. Not raised while disarmed | in the eufy app: Security mode → the mode → each camera → Notification on (also notifies your phone); see [usage.md](usage.md#detections-in-the-security-mode). Clears when a mode that sends them is in force or the setting changes. To keep the mode silent, ignore it: the ignore applies to that mode only, and is lost when the mode leaves and comes back (Home Assistant forgets an ignored repair once it is withdrawn), so the repair shows again then |
 | eufy cloud push is not running | cloud push is on but not receiving; detections of standalone cameras and a HomeBase 2 are late or missing | retries by itself; check internet access and the log, or switch the option off; see [usage.md](usage.md#cloud-push) |
 
 ## Setting errors
@@ -66,6 +68,18 @@ an account where no device was found too.
 | setting not applied | the device rejected the write | the value last reported |
 | setting unconfirmed | no answer in time; the write may still apply | unknown until the next update |
 | does not accept this eufy account | the station refused the request for the account it was sent under (an arm, a setting, a siren, a pan/tilt or preset command, a record action, a HomeBase card change, the camera card's Station list); trying again changes nothing. In the eufy app, check that the station is shared with this account | a setting entity the value last reported; nothing is recorded or saved |
+
+## No detections from a camera
+
+1. Its **Detections in current mode** sensor reads `not_sent_in_mode`: the security mode
+   in force holds its detections back; see
+   [usage.md](usage.md#detections-in-the-security-mode).
+2. A standalone battery camera or a camera on a HomeBase 2 needs
+   [Cloud push](usage.md#cloud-push).
+3. Check the camera's detection settings in the eufy app (motion detection on, the
+   detection types).
+4. Still nothing: open an issue with the diagnostics download (it has
+   `detection_delivery` per device) and a debug log of a detection.
 
 ## Known limitations
 
