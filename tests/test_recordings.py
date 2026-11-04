@@ -10,6 +10,7 @@ otherwise the option was switched on an hour before setup (the Store's ``since``
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import time
 from collections.abc import Callable, Iterator
@@ -585,6 +586,61 @@ async def test_an_incomplete_recording_keeps_nothing_and_is_retried(
 
     assert len(downloads) == 2
     assert len(_videos(hass)) == 1
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize(
+    ("ended_early", "frame_num", "tries", "phrase"),
+    [
+        (True, 6, 1, "after 1 attempt (cut at a video-codec change)"),
+        (False, 40, RECORDING_MAX_ATTEMPTS, "after 3 attempts (incomplete)"),
+    ],
+    ids=["cut-at-codec-change", "short"],
+)
+async def test_a_recording_cut_at_a_codec_change_is_given_up_at_once(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    ended_early: bool,
+    frame_num: int,
+    tries: int,
+    phrase: str,
+) -> None:
+    """A download cut at a codec change is final: not tried again, one warning naming
+    why; a short one is tried until the attempts run out."""
+    calls: list[int] = []
+    real = Station.async_download_recording
+
+    async def download(
+        self: Station, record: HistoryRecord, write: ClipWriter, *, wait: bool = True
+    ) -> MediaClip:
+        calls.append(record.record_id)
+        clip = await real(self, record, write, wait=wait)
+        return dataclasses.replace(clip, ended_early=ended_early)
+
+    monkeypatch.setattr(Station, "async_download_recording", download)
+    fake_station.recording_frames = 6
+    fake_station.rows = [
+        _row(7, started=datetime.now().astimezone() - timedelta(minutes=10), frame_num=frame_num)
+    ]
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage)
+    caplog.set_level(logging.WARNING)
+
+    await _first_pass(hass, entry)
+    for _ in range(RECORDING_MAX_ATTEMPTS + 1):
+        await _pass(hass, entry, RECORDING_SYNC_INTERVAL_SECONDS + 1)
+
+    assert len(calls) == tries
+    (warning,) = [r for r in caplog.records if "could not be saved" in r.getMessage()]
+    assert phrase in warning.getMessage()
+    stats = _manager(entry).stats(SYNTHETIC.station_sn)
+    assert stats is not None
+    assert (stats["failed"], stats["given_up"], stats["kept"]) == (tries, 1, 0)
+    assert _videos(hass) == []
     await _unload(hass, entry)
 
 

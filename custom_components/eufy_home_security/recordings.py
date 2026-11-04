@@ -33,7 +33,8 @@ finished and stored by ``history.EventHistory.async_save_clip``:
   the user deleted is not fetched back. A record whose start differs from the row's
   is another recording under a reused id: it does not count as stored. A download
   that fails or comes back incomplete keeps nothing and is tried again on a later
-  pass, up to three attempts.
+  pass, up to three attempts; one cut at a video-codec change (``ended_early``) is
+  cut there on every try, so it is given up at once.
 - **One path.** The sync and a fetch on request store through
   :meth:`StoredRecordings.async_store`: same names, same Store, and a second request
   for a recording being downloaded joins that download.
@@ -659,9 +660,14 @@ class RecordingManager:
         sync.stats.failed += 1
         sync.stats.last_error = type(err).__name__
         camera = redact_serial(row.device_sn)
-        reason = (
-            "incomplete" if isinstance(err, IncompleteClipError) else errors.failure_reason(err)
-        )
+        # A download cut at a video-codec change stops there again on every try.
+        cut = isinstance(err, IncompleteClipError) and err.clip.ended_early
+        if cut:
+            reason = "cut at a video-codec change"
+        elif isinstance(err, IncompleteClipError):
+            reason = "incomplete"
+        else:
+            reason = errors.failure_reason(err)
         _LOGGER.debug(
             "Recording sync: a recording of %s not stored (%s), attempt %d of %d",
             camera,
@@ -669,7 +675,7 @@ class RecordingManager:
             count,
             RECORDING_MAX_ATTEMPTS,
         )
-        if count < RECORDING_MAX_ATTEMPTS:
+        if count < RECORDING_MAX_ATTEMPTS and not cut:
             sync.attempts[row.record_id] = (count, started)
             return
         sync.attempts.pop(row.record_id, None)
@@ -678,10 +684,11 @@ class RecordingManager:
         if row.device_sn is not None and row.device_sn not in self._warned:
             self._warned.add(row.device_sn)
             _LOGGER.warning(
-                "A recording of %s could not be saved to the event history after %d "
-                "attempts (%s); it stays on the HomeBase",
+                "A recording of %s could not be saved to the event history after %d %s "
+                "(%s); it stays on the HomeBase",
                 camera,
-                RECORDING_MAX_ATTEMPTS,
+                count,
+                "attempt" if count == 1 else "attempts",
                 reason,
             )
 

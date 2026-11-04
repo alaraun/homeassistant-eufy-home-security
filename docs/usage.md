@@ -232,7 +232,8 @@ from then on is copied into the event history as an MP4:
   uses one session of **Sessions per HomeBase** while it runs.
 - Copied once: a restart or a deleted file does not copy it again. A copy that fails
   is tried again on later passes, three times in all; then one warning is logged and
-  the recording stays on the HomeBase only.
+  the recording stays on the HomeBase only. A recording whose video codec changes
+  partway is cut at the change on every copy, so it is not tried again.
 - The HomeBase is asked for one day of recordings at a time, oldest first. A day it
   does not list within a minute is asked again on the next pass; the days before it
   stay copied.
