@@ -152,6 +152,8 @@ BATTERY_TEMPERATURE_KEY: Final = "battery_temperature"
 WORKING_DAYS_KEY: Final = "working_days"
 DETECTED_EVENTS_KEY: Final = "detected_events"
 RECORDED_EVENTS_KEY: Final = "recorded_events"
+# Whether the guard mode in force lets a device's detections out (``Station.detection_delivery``).
+DETECTION_DELIVERY_KEY: Final = "detection_delivery"
 BATTERY_LOW_KEY: Final = "battery_low"
 STORAGE_PROBLEM_KEY: Final = "storage_problem"
 # Raw library values shown as attributes, never mapped to text here.
@@ -357,6 +359,10 @@ ISSUE_ACCOUNT_ID_MISMATCH: Final = "account_id_mismatch"
 ISSUE_PUSH_NOT_RUNNING: Final = "push_not_running"
 # Cloud push is off, and a served station does not push its detections over the LAN.
 ISSUE_PUSH_NEEDED: Final = "push_needed"
+# The guard mode in force holds back the detections of devices of a station.
+ISSUE_MODE_HOLDS_DETECTIONS: Final = "mode_holds_detections"
+# The same, when no armed mode the station reports sends them.
+ISSUE_MODE_HOLDS_DETECTIONS_NOWHERE: Final = "mode_holds_detections_nowhere"
 # The cloud holds no key for the cipher a station named, under the station's owner.
 ISSUE_CIPHER_UNAVAILABLE: Final = "cipher_unavailable"
 # The cloud answers for the cipher a station named, but no record carries its key.

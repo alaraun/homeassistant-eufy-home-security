@@ -18,6 +18,7 @@ from homeassistant.components.diagnostics import async_redact_data
 
 from eufy_home_security import (
     EufySecurityError,
+    GuardMode,
     Station,
     StationState,
     StorageInfo,
@@ -72,6 +73,31 @@ def _preset_figures(station: Station) -> dict[str, dict[str, Any] | None]:
                 "enabled": sorted(slot.index for slot in slots if slot.enabled),
             }
         )
+    return figures
+
+
+def _mode_key(mode: GuardMode | int) -> str | int:
+    """A mode as diagnostics name it: the code's name, or the bare code GuardMode lacks."""
+    return mode.name.lower() if isinstance(mode, GuardMode) else mode
+
+
+def _delivery_figures(station: Station) -> dict[str, dict[str, Any]]:
+    """Each paired device's ``Station.detection_delivery`` by redacted label: the grade,
+    the mode in force, the device's action mask in it and the modes that send. The
+    reason text is left out."""
+    config = station.config
+    figures: dict[str, dict[str, Any]] = {}
+    for device in station.devices:
+        serial = device.device_sn
+        if not serial:
+            continue
+        report = station.detection_delivery(serial, config=config)
+        figures[redact_serial(serial)] = {
+            "delivery": report.delivery.value,
+            "mode": None if report.mode is None else _mode_key(report.mode),
+            "action": report.action,
+            "sending_modes": [_mode_key(mode) for mode in report.sending_modes],
+        }
     return figures
 
 
@@ -153,6 +179,8 @@ async def async_get_config_entry_diagnostics(
             "events_received_by_cipher": data.router.events_received_by_cipher(station.serial),
             "storage": _storage_figures(station.storage),
             "presets": _preset_figures(station),
+            # Whether the mode in force lets each device's detections out.
+            "detection_delivery": _delivery_figures(station),
             "recording_sync": (
                 data.recordings.stats(station.serial) if data.recordings is not None else None
             ),

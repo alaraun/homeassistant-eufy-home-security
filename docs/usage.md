@@ -91,6 +91,27 @@ entity. A detection turns on only the sensor of its own kind (a person detection
 leaves Motion off) for the **Detection hold** seconds; the event entity fires for every
 kind, so an automation for "anything detected" triggers on it.
 
+### Detections in the security mode
+
+In the eufy app each camera has a **Notification** switch per security mode (Security
+mode → the mode → the camera). With it off, the station sends none of that camera's
+detections while the mode is in force: its detection sensors and **Detection** event stay
+unchanged, and the camera still records. Turning Notification on also notifies your phone.
+Seen on HomeBase 3 stations; other stations follow the eufy app's mode settings, not tested.
+
+Each camera and doorbell has a **Detections in current mode** diagnostic sensor:
+
+| State | Meaning |
+|---|---|
+| `sent` | Notification is on for the device in the mode in force |
+| `not_sent_in_mode` | Notification is off: no detections from it while this mode is in force |
+| `unknown` | not known: no mode settings reported yet, the mode in force unknown, or a mode without per-device settings (Geofencing) |
+
+Attributes: `mode` (the mode in force) and `sending_modes` (the modes that send its
+detections). In an armed mode, `not_sent_in_mode` also raises a repair issue; see
+[troubleshooting.md](troubleshooting.md#no-detections-from-a-camera). Motion sensors get no
+such sensor: whether their Notification switch holds detections back is not known.
+
 ## Camera images
 
 The camera entity shows its latest detection's image.

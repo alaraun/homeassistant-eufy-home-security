@@ -91,6 +91,11 @@ shows or what the user must be told:
   client's close at unload is never seen here (the router unsubscribes first, and
   unload deletes the issue); its close while Home Assistant stops is ignored.
 
+``GuardModeChanged``, a ``StationConfigChanged`` naming the mode tables or a mode, and
+``DevicesChanged`` also check the station's mode-holds-detections issue
+(``errors.sync_mode_holds_detections_issue``) once on the next loop turn, inside the
+consuming window.
+
 Everything else, ``ParamChanged`` included, is ignored: the poll reconciles it.
 Nothing here logs in or calls the cloud.
 """
@@ -145,6 +150,9 @@ if TYPE_CHECKING:
     from .runtime import EufyConfigEntry
     from .snapshots import SnapshotManager
     from .storage import StorageCoordinator
+
+# The ``StationConfigChanged`` fields that can change what the mode in force holds back.
+DELIVERY_FIELDS: Final = frozenset({"mode_tables", "guard_mode", "effective_mode"})
 
 # The keys of a station's received-event counters: a P2P frame's cipher, or "cloud"
 # for an event that came through no P2P frame.
@@ -207,6 +215,8 @@ class EventRouter:
         self._reload_pending = False
         # Per station serial, the pending "unavailable" mark of a lost session.
         self._pending_loss: dict[str, CALLBACK_TYPE] = {}
+        # Stations whose mode-holds-detections issue is checked on the next loop turn.
+        self._delivery_due: set[str] = set()
         # Per occurrence (dedupe key), the highest detection rank dispatched to its
         # device's entities; the oldest is forgotten first.
         self._delivered_ranks: OrderedDict[str, int] = OrderedDict()
@@ -305,6 +315,7 @@ class EventRouter:
                 coordinator.async_apply_guard_mode(
                     event.mode, event.active_mode, live=event.source is EventSource.P2P
                 )
+            self._async_check_delivery_soon(event.station_sn)
         elif isinstance(event, StationStateChanged):
             coordinator = self._coordinators.get(event.station_sn)
             # As above, a station with no coordinator is ignored. The state the
@@ -318,6 +329,8 @@ class EventRouter:
             coordinator = self._coordinators.get(event.station_sn)
             if coordinator is not None:
                 coordinator.async_apply_config_changed()
+            if event.fields & DELIVERY_FIELDS:
+                self._async_check_delivery_soon(event.station_sn)
         elif isinstance(event, StorageChanged):
             storage = self._storage.get(event.station_sn)
             # Never the set-updated-data method: it would reschedule the storage
@@ -337,6 +350,7 @@ class EventRouter:
                 len(event.moved),
             )
             self.async_reload_soon("paired devices changed")
+            self._async_check_delivery_soon(event.station_sn)
         elif isinstance(event, StationsChanged):
             # A station built or no longer listed: the setup builds from the new list
             # and removes the devices it no longer names.
@@ -393,6 +407,31 @@ class EventRouter:
             streams = runtime.streaming(self._entry)
             if self._consuming and streams is not None:
                 streams.async_apply_zoom_report(event.device_sn, event.zoom)
+
+    @callback
+    def _async_check_delivery_soon(self, station_sn: str) -> None:
+        """Check ``station_sn``'s mode-holds-detections issue on the next loop turn.
+
+        The events of one turn (a dump's state, configuration and mode) make one check
+        per station. A station this entry does not serve is ignored.
+        """
+        if station_sn not in self._coordinators:
+            return
+        if not self._delivery_due:
+            self._hass.loop.call_soon(self._async_check_delivery)
+        self._delivery_due.add(station_sn)
+
+    @callback
+    def _async_check_delivery(self) -> None:
+        """Check every due station, only inside the consuming window: setup checks
+        each station once as it opens, and unload deletes the issue as it closes."""
+        due = sorted(self._delivery_due)
+        self._delivery_due.clear()
+        if not self._consuming:
+            return
+        errors.sync_mode_holds_detections_issue(
+            self._hass, self._entry, (self._coordinators[serial].station for serial in due)
+        )
 
     @callback
     def _handle_push(self, event: PushChanged) -> None:

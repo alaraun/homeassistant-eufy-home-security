@@ -525,6 +525,8 @@ def _stand_in_coordinator(serial: str, like: Any) -> Any:
         session=SimpleNamespace(unread_dump_keys=frozenset()),
         max_sessions=like.max_sessions,
         storage=None,
+        # No configuration before a state read.
+        config=None,
     )
     # No state read yet.
     return SimpleNamespace(station=station, data=None)

@@ -31,14 +31,23 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
-from eufy_home_security import StationState, StorageMedium, SubDeviceState
+from eufy_home_security import (
+    DetectionDelivery,
+    DetectionDeliveryReport,
+    StationState,
+    StorageMedium,
+    SubDeviceState,
+    guard_mode_label,
+)
 from eufy_home_security.devices import SettingKind, SettingUnit, model_for_serial
 
+from . import detections
 from .const import (
     ATTR_VALUE,
     BATTERY_KEY,
     BATTERY_TEMPERATURE_KEY,
     DETECTED_EVENTS_KEY,
+    DETECTION_DELIVERY_KEY,
     DISK_FREE_KEY,
     DISK_SIZE_KEY,
     DISK_TEMPERATURE_KEY,
@@ -418,6 +427,11 @@ async def async_setup_entry(
                 if not (unpowered and description.key == BATTERY_KEY)
             )
         entities.extend(
+            EufyDetectionDeliverySensor(coordinator, serial)
+            for serial, kind in detections.paired_device_kinds(coordinator.station).items()
+            if detections.has_detection_entities(kind)
+        )
+        entities.extend(
             EufySettingSensor(coordinator, spec)
             for spec in setting_specs(coordinator.station)
             if spec.platform is Platform.SENSOR
@@ -492,6 +506,59 @@ class EufyDeviceFieldSensor(EufyDeviceEntity, SensorEntity):
         """The field off the device's latest block; None shows as unknown."""
         device = self.device_state
         return None if device is None else self.entity_description.read(device)
+
+
+class EufyDetectionDeliverySensor(EufyDeviceEntity, SensorEntity):
+    """Whether the guard mode in force lets the device's detections out
+    (``Station.detection_delivery``): ``sent``, ``not_sent_in_mode`` or ``unknown``.
+
+    Attributes: ``mode``, the mode in force by the station's name, and
+    ``sending_modes``, the modes whose table sends the device's detections. Coordinator
+    updates refresh it: a mode change and a configuration change both notify. Its
+    availability is the station's, not the device's block: the answer is read from
+    the station's mode tables, which also grade a device the dump leaves out.
+    """
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = DETECTION_DELIVERY_KEY
+
+    def __init__(self, coordinator: StationCoordinator, device_sn: str) -> None:
+        super().__init__(coordinator, device_sn, DETECTION_DELIVERY_KEY)
+        self._serial = device_sn
+        self._attr_options = [delivery.value for delivery in DetectionDelivery]
+
+    def _report(self) -> DetectionDeliveryReport:
+        coordinator = self.coordinator
+        return coordinator.station.detection_delivery(
+            self._serial, config=coordinator.station_config
+        )
+
+    def _mode_name(self, mode: int) -> str:
+        config = self.coordinator.station_config
+        return config.mode_name(mode) if config is not None else guard_mode_label(mode)
+
+    @property
+    @override
+    def available(self) -> bool:
+        """Available once the station has produced state."""
+        return self.coordinator.last_update_success and self.coordinator.data is not None
+
+    @property
+    @override
+    def native_value(self) -> StateType:
+        """The grade of the mode in force."""
+        return self._report().delivery.value
+
+    @property
+    @override
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """``mode`` (None when unknown) and ``sending_modes``, by the station's names."""
+        report = self._report()
+        return {
+            "mode": None if report.mode is None else self._mode_name(report.mode),
+            "sending_modes": [self._mode_name(mode) for mode in report.sending_modes],
+        }
 
 
 class EufySettingSensor(EufySettingEntity, SensorEntity):

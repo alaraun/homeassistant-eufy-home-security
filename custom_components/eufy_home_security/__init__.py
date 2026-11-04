@@ -546,6 +546,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     # Only now do the entities listen on their signals: an event before this went to
     # the fallback bus event rather than to nobody.
     router.async_start_consuming()
+    # The router checks again on each mode or table change from here on.
+    errors.sync_mode_holds_detections_issue(
+        hass, entry, (coordinator.station for coordinator in coordinators.values())
+    )
     if cloud_push:
         # Only now, so a detection it delivers reaches listening entities. In the
         # background: a start can take its whole deadline, and a failed one is
