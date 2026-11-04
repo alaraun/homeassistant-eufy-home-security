@@ -131,8 +131,9 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
     - An authenticated DELAY shows pending for ``alarm_delay`` seconds from its own
       event time (plus the grace above), then the polled mode, unless a trigger
       came. A DELAY while triggered, one whose delay already ran out, one of zero
-      seconds and one while the mode in force is a known disarmed mode show nothing. One with no ``alarm_delay`` shows pending until a
-      stop, a disarm or the timeout. While pending, a DELAY older than the running
+      seconds and one while the mode in force is a known disarmed mode show nothing.
+      One with no ``alarm_delay`` keeps a running countdown; with none running it shows
+      pending until a stop, a disarm or the timeout. While pending, a DELAY older than the running
       one or with no event time is ignored, so a replay cannot shorten or cancel
       the entry delay.
     - GCM frames carry no sequence number, so a genuine old frame can be replayed
@@ -602,8 +603,9 @@ class EufyGuardModePanel(EufyStationEntity, AlarmControlPanelEntity, RestoreEnti
         ``delay_until`` shows the delay's own end. While a countdown runs, the later of
         its end and this start's is kept. ``remaining`` None runs no countdown: pending
         ends on a stop, a disarm or the timeout, unless a countdown runs: that one is
-        kept. State is written only when the state or its attributes change. Nothing is shown while the mode in force is a known
-        disarmed mode: the station runs an entry delay only when armed.
+        kept. State is written only when the state or its attributes change. Nothing
+        is shown while the mode in force is a known disarmed mode: the station runs an
+        entry delay only when armed.
         """
         data: StationState | None = self.coordinator.data
         mode = data.active_mode if data is not None else None
