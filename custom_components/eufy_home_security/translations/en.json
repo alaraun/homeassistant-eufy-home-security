@@ -256,11 +256,11 @@
     },
     "mode_holds_detections": {
       "title": "{station}: no detections from some cameras in {mode} mode",
-      "description": "In {mode} mode the station sends no detections for {devices}: their Notification action is off in this mode, so Home Assistant gets no motion or person events from them until a mode that sends them is in force ({sending_modes}). To receive them in {mode}, open the eufy app → Security mode → {mode} → each camera, and turn on Notification (this also notifies your phone). Ignore this if you keep {mode} silent on purpose."
+      "description": "In {mode} mode the station sends no detections for {devices}: their Notification action is off in this mode, so Home Assistant gets no motion or person events from them until a mode that sends them is in force ({sending_modes}). To receive them in {mode}, open the eufy app → Security mode → {mode} → each camera, and turn on Notification (this also notifies your phone). Ignore this if you keep {mode} silent on purpose. To stop these repairs for every mode, switch off the option Repair when a security mode holds detections back (the integration → Configure)."
     },
     "mode_holds_detections_nowhere": {
       "title": "{station}: no detections from some cameras in {mode} mode",
-      "description": "In {mode} mode the station sends no detections for {devices}: their Notification action is off in this mode, so Home Assistant gets no motion or person events from them in any armed mode the station reports. To receive them in {mode}, open the eufy app → Security mode → {mode} → each camera, and turn on Notification (this also notifies your phone). Ignore this if you keep {mode} silent on purpose."
+      "description": "In {mode} mode the station sends no detections for {devices}: their Notification action is off in this mode, so Home Assistant gets no motion or person events from them in any armed mode the station reports. To receive them in {mode}, open the eufy app → Security mode → {mode} → each camera, and turn on Notification (this also notifies your phone). Ignore this if you keep {mode} silent on purpose. To stop these repairs for every mode, switch off the option Repair when a security mode holds detections back (the integration → Configure)."
     },
     "cipher_unavailable": {
       "title": "eufy has no key for {station}",
