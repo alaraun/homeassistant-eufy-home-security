@@ -94,9 +94,9 @@ class EufyStationEntity(CoordinatorEntity[StationCoordinator]):
         super().__init__(coordinator)
         serial = coordinator.station.serial
         self._attr_unique_id = entity_unique_id(serial, key)
-        # Identifiers only. Every other field of the station's device row is
-        # written once by `async_setup_entry` before the platforms are forwarded;
-        # repeating them here would make two writers for one row.
+        # Identifiers only. The station's device row is written by `async_setup_entry`
+        # before the platforms are forwarded, its firmware kept current there too;
+        # repeating fields here would make two writers for one row.
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, serial)})
 
     @property
@@ -139,10 +139,10 @@ class EufyDeviceEntity(CoordinatorEntity[StationCoordinator]):
 
     @property
     def firmware_version(self) -> str | None:
-        """The firmware this device runs: the live dump's, else the cloud's.
+        """The firmware this device runs, as the library reports it.
 
-        The station's own version falls back to the cloud inside the library; a paired
-        device's does not, and the T8910 motion sensor has only the cloud's.
+        The library falls back to the cloud record for the station and for a paired
+        device whose block names no version (the T8910 motion sensor).
         """
         data: StationState | None = self.coordinator.data
         if data is None:
@@ -151,17 +151,7 @@ class EufyDeviceEntity(CoordinatorEntity[StationCoordinator]):
         if device_sn is None:
             return data.firmware
         device = self.device_state
-        if device is None:
-            return None
-        if device.firmware is not None:
-            return device.firmware
-        # Between a newer cloud list (``Station.update_sub_devices``) and its reload,
-        # the serial can be gone from the paired list while the snapshot still has its
-        # block: unknown, rather than a lost update and a traceback per fan-out.
-        try:
-            return self.coordinator.station.sub_device(device_sn).main_sw_version
-        except UnsupportedError:
-            return None
+        return device.firmware if device is not None else None
 
     @property
     @override
