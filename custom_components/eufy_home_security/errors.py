@@ -81,6 +81,7 @@ from eufy_home_security.devices import Support
 from . import detections
 from .const import (
     CONF_COUNTRY,
+    CONF_MODE_HOLDS_DETECTIONS_REPAIR,
     DOMAIN,
     ERROR_CANNOT_CONNECT,
     ERROR_INVALID_AUTH,
@@ -1683,7 +1684,20 @@ def sync_mode_holds_detections_issue(
     dismissal of a deleted issue). Placeholders: the station, the mode in force,
     the devices, and the armed modes that send any of them in the station's order; with
     none, the ``_nowhere`` text, which names no mode.
+
+    With the entry's ``CONF_MODE_HOLDS_DETECTIONS_REPAIR`` option off, the entry's issues of
+    every station and mode are deleted, ignored ones too, and none is raised.
     """
+    if entry.options.get(CONF_MODE_HOLDS_DETECTIONS_REPAIR, True) is False:
+        prefix = mode_holds_detections_issue_prefix(entry.entry_id)
+        off = [
+            off_id
+            for domain, off_id in ir.async_get(hass).issues
+            if domain == DOMAIN and off_id.startswith(prefix)
+        ]
+        for off_id in off:
+            ir.async_delete_issue(hass, DOMAIN, off_id)
+        return
     for station in stations:
         device = _station_device(hass, entry, station.serial)
         if device is None:

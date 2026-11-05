@@ -9,6 +9,7 @@ sit in six collapsible sections.
 |---|---|---|---|
 | Detections and alarm | Detection hold (seconds) | 10 | 5–300. How long a detection sensor stays on; the HomeBase never reports a detection's end |
 | | Alarm safety-net timeout (minutes) | 10 | 1–60. Ends Triggered or Pending if the HomeBase never reports the alarm's end |
+| | Repair when a security mode holds detections back | On | The repair naming cameras whose detections the security mode in force holds back. Off removes it and raises none; each camera's **Detections in current mode** sensor still shows it. See [Detections in the security mode](#detections-in-the-security-mode) |
 | Camera images | Event image | Thumbnail, then HD | What a detection and **Refresh event image** show; see [Camera images](#camera-images) |
 | | Refresh event image keyframe | 1 | 1–5. Selects the keyframe for Refresh event image unless Event image is Thumbnail only. Later keyframes take longer and can delay image fetches for other cameras on the same HomeBase. Short recordings use their last keyframe; detection images are unchanged |
 | | Live snapshot for cameras without a detection image | Off | A camera without a detection image takes one live still, at most every 5 min. Wakes battery cameras |
@@ -113,7 +114,8 @@ Each camera and doorbell has a **Detections in current mode** diagnostic sensor:
 
 Attributes: `mode` (the mode in force) and `sending_modes` (the armed modes that send
 its detections; Disarmed is not listed). In an armed mode, `not_sent_in_mode` also
-raises a repair issue; see
+raises a repair issue, unless the option **Repair when a security mode holds detections
+back** is off; see
 [troubleshooting.md](troubleshooting.md#no-detections-from-a-camera). Motion sensors get no
 such sensor: whether their Notification switch holds detections back is not known.
 

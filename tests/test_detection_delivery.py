@@ -21,6 +21,7 @@ from conftest import (
     SYNTHETIC,
     add_motion_sensor,
     advance_to_poll,
+    configure_options,
     entity_id_for,
     set_guard_mode,
     set_up_warm,
@@ -52,6 +53,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.eufy_home_security import detections, diagnostics, errors
 from custom_components.eufy_home_security.const import (
+    CONF_MODE_HOLDS_DETECTIONS_REPAIR,
     DETECTION_DELIVERY_KEY,
     DETECTION_EVENT_KEY,
     DOMAIN,
@@ -405,8 +407,10 @@ def _report(
 _INDOOR_SN: Final = "T8417P0000000001"
 
 
-def _entry_with_devices(hass: HomeAssistant, *serials: str) -> MockConfigEntry:
-    entry = MockConfigEntry(domain=DOMAIN, title="Home")
+def _entry_with_devices(
+    hass: HomeAssistant, *serials: str, options: dict[str, Any] | None = None
+) -> MockConfigEntry:
+    entry = MockConfigEntry(domain=DOMAIN, title="Home", options=options or {})
     entry.add_to_hass(hass)
     registry = dr.async_get(hass)
     for serial in serials:
@@ -730,6 +734,81 @@ async def test_unload_deletes_the_issue_of_every_mode(hass: HomeAssistant) -> No
 
     left = [issue_id for (domain, issue_id) in ir.async_get(hass).issues if domain == DOMAIN]
     assert left == [kept]
+
+
+async def test_with_the_repair_option_off_no_issue_is_raised_and_old_ones_go(
+    hass: HomeAssistant,
+) -> None:
+    """Option off: a held camera raises nothing, and the entry's issues of every mode
+    are deleted, ignored ones too; another entry's stay."""
+    entry = _entry_with_devices(
+        hass,
+        SYNTHETIC.station_sn,
+        SYNTHETIC.camera_sn,
+        options={CONF_MODE_HOLDS_DETECTIONS_REPAIR: False},
+    )
+    station = dr.async_get(hass).async_get_device_by_identifier(
+        (DOMAIN, SYNTHETIC.station_sn), entry.entry_id
+    )
+    assert station is not None
+    other = MockConfigEntry(domain=DOMAIN, title="Other")
+    other.add_to_hass(hass)
+    ids = [
+        errors.mode_holds_detections_issue_id(entry.entry_id, station.id, mode)
+        for mode in (GuardMode.HOME, GuardMode.CUSTOM_1)
+    ]
+    kept = errors.mode_holds_detections_issue_id(other.entry_id, station.id, GuardMode.HOME)
+    for issue_id in (*ids, kept):
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=ISSUE_MODE_HOLDS_DETECTIONS,
+        )
+    ir.async_ignore_issue(hass, DOMAIN, ids[1], True)
+
+    errors.sync_mode_holds_detections_issue(hass, entry, [_held(GuardMode.HOME)])  # type: ignore[list-item]
+
+    left = [issue_id for (domain, issue_id) in ir.async_get(hass).issues if domain == DOMAIN]
+    assert left == [kept]
+
+
+@pytest.mark.parametrize("value", [True, None], ids=["on", "never_saved"])
+async def test_with_the_repair_option_on_or_unset_the_issue_is_raised(
+    hass: HomeAssistant, value: bool | None
+) -> None:
+    options = {} if value is None else {CONF_MODE_HOLDS_DETECTIONS_REPAIR: value}
+    entry = _entry_with_devices(hass, SYNTHETIC.station_sn, SYNTHETIC.camera_sn, options=options)
+
+    errors.sync_mode_holds_detections_issue(hass, entry, [_held(GuardMode.HOME)])  # type: ignore[list-item]
+
+    assert _issue(hass, entry) is not None
+
+
+async def test_turning_the_repair_option_off_and_on_through_the_form(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Saving the option off removes the issue on the reload and the sensor still reads
+    not_sent_in_mode; saving it on again raises the issue again."""
+    _hold_back_in_home(fake_station)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    assert _issue(hass, entry) is not None
+
+    for value in (False, True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await configure_options(
+            hass, result["flow_id"], {CONF_MODE_HOLDS_DETECTIONS_REPAIR: value}
+        )
+        await hass.async_block_till_done()
+        assert entry.options[CONF_MODE_HOLDS_DETECTIONS_REPAIR] is value
+        assert (_issue(hass, entry) is not None) is value, value
+        assert state_of(hass, _sensor(hass)) == DetectionDelivery.NOT_SENT_IN_MODE.value
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 @pytest.mark.parametrize("sending", [(), (GuardMode.DISARMED,)], ids=["no_mode", "only_disarmed"])
