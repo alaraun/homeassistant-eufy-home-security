@@ -5,6 +5,27 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.14](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.13...v0.4.14) (2026-11-05)
+
+
+### Features
+
+* an option turns off the repair for cameras a security mode holds back ([#172](https://github.com/alaraun/homeassistant-eufy-home-security/issues/172)) ([cf048fc](https://github.com/alaraun/homeassistant-eufy-home-security/commit/cf048fcd873e14a213a374ddbc032eb9ba8c00d0))
+* **card:** `live_on_detection` card option: timed live view when the shown camera detects something by [@ddahya](https://github.com/ddahya) in [#168](https://github.com/alaraun/homeassistant-eufy-home-security/issues/168) ([ff6b3c7](https://github.com/alaraun/homeassistant-eufy-home-security/commit/ff6b3c7e679fd5fac6e8bb1788a0d7b0f87b10f6))
+* requires Home Assistant 2026.11.0 or newer, the first release with the Marketplace ([764221c](https://github.com/alaraun/homeassistant-eufy-home-security/commit/764221cbac686842040a102861812d13eb821c70))
+
+
+### Bug Fixes
+
+* battery levels follow each model's own parameters; a smart lock that reports no level shows unknown instead of 0 % or 255 % (library 0.4.12) ([8d49cf9](https://github.com/alaraun/homeassistant-eufy-home-security/commit/8d49cf90e66f4654ea3f1d754fefad02de5d7da5))
+* device pages show the firmware the station reports, not the cloud list's older version (library 0.4.12) ([8d49cf9](https://github.com/alaraun/homeassistant-eufy-home-security/commit/8d49cf90e66f4654ea3f1d754fefad02de5d7da5))
+* **sensor:** count detected and recorded events as total increasing ([#169](https://github.com/alaraun/homeassistant-eufy-home-security/issues/169)) ([06238f2](https://github.com/alaraun/homeassistant-eufy-home-security/commit/06238f2092f13086c5590462b8fabba64a8c4c82))
+* the session to a HomeBase 3 stays up while Home Assistant is busy at boot (library 0.4.11) ([8d49cf9](https://github.com/alaraun/homeassistant-eufy-home-security/commit/8d49cf90e66f4654ea3f1d754fefad02de5d7da5))
+
+### New contributors
+
+* [@ddahya](https://github.com/ddahya) made their first contribution in [PR 168](https://github.com/alaraun/homeassistant-eufy-home-security/pull/168)
+
 ## [0.4.13](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.12...v0.4.13) (2026-11-04)
 
 
