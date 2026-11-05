@@ -92,6 +92,9 @@ entity. A detection turns on only the sensor of its own kind (a person detection
 leaves Motion off) for the **Detection hold** seconds; the event entity fires for every
 kind, so an automation for "anything detected" triggers on it.
 
+For a camera whose mode sends no detections (below), the **Recorded events** counter
+still rises with each recording: see [Automation triggers](#automation-triggers).
+
 ### Detections in the security mode
 
 In the eufy app each camera has a **Notification** switch per security mode (Security
@@ -423,7 +426,7 @@ Rows an earlier release created for such a device are removed at setup.
 | Camera | **Solar intensity** | diagnostic sensor | Raw solar input, 0 at night or without a panel; scale differs by model |
 | Camera | **Battery temperature** | diagnostic sensor, °C | |
 | Camera | **Working days** | diagnostic sensor, days | Days since the last USB charge |
-| Camera | **Detected events**, **Recorded events** | diagnostic sensors, total | Counted since the last USB charge |
+| Camera | **Detected events**, **Recorded events** | diagnostic sensors, total increasing | Counted since the last USB charge; as automation triggers see [Automation triggers](#automation-triggers) |
 | Motion sensor | **Battery low** | diagnostic binary sensor (battery) | The sensor's own low-battery flag |
 | HomeBase | **Storage problem** | diagnostic binary sensor (problem) | On when the storage status is not one the app shows as normal. Attribute `storage_status` (raw code) |
 
@@ -437,6 +440,50 @@ An entity an earlier release created for a figure the HomeBase does not report i
 HomeBase (version strings by parameter id; the subsystems are unnamed) and
 `siren_actions` on a camera (raw siren action per guard mode, keyed `away`, `home`,
 `custom_1`…).
+
+## Automation triggers
+
+One trigger per subsection; replace the entity ids with your own. To add one, open a pull
+request that edits this section.
+
+### A recording was counted
+
+The camera's **Recorded events** sensor rises when the camera records. It works in a
+security mode whose Notification switch is off, where the **Detection** event does not
+fire ([Detections in the security mode](#detections-in-the-security-mode)).
+
+```yaml
+triggers:
+  - trigger: state
+    entity_id: sensor.front_door_recorded_events
+    not_from: [unavailable, unknown]
+conditions:
+  - condition: template
+    value_template: >-
+      {{ trigger.from_state is not none and trigger.to_state is not none
+         and trigger.to_state.state | int(0) > trigger.from_state.state | int(0) }}
+actions:
+  - action: notify.notify
+    data:
+      message: >-
+        Front door recorded
+        {{ trigger.to_state.state | int(0) - trigger.from_state.state | int(0) }} event(s)
+```
+
+- `not_from` and the condition skip a restart or reload (the change to and from
+  unavailable, the entity added or removed) and the counter's reset after a USB charge.
+- The station counts a recording some seconds after it starts, and the sensor shows the
+  count at the next refresh (45 s), so the trigger fires up to about a minute after the
+  recording started. Several recordings between two refreshes fire once; `to - from` is
+  their number.
+- It carries no time, kind, picture or clip. Where the **Detection** event fires, an
+  automation on both notifies twice.
+
+### A detection was counted
+
+The same trigger on **Detected events** (`sensor.front_door_detected_events`) fires when
+the camera's detection count rises. It can rise without a recording; how often depends on
+the camera and its settings. The limits above apply.
 
 ## Device settings
 

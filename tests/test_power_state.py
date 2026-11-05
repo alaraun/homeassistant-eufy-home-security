@@ -123,8 +123,8 @@ async def test_camera_power_state_is_shown_with_attributes(
         SOLAR_INTENSITY_KEY: ("6", None, None, "measurement"),
         BATTERY_TEMPERATURE_KEY: ("21", "temperature", "°C", "measurement"),
         WORKING_DAYS_KEY: ("12", "duration", "d", "measurement"),
-        DETECTED_EVENTS_KEY: ("30", None, None, "total"),
-        RECORDED_EVENTS_KEY: ("25", None, None, "total"),
+        DETECTED_EVENTS_KEY: ("30", None, None, "total_increasing"),
+        RECORDED_EVENTS_KEY: ("25", None, None, "total_increasing"),
     }
     for key, (value, device_class, unit, state_class) in expected.items():
         entity_id = entity_id_for(hass, SENSOR_DOMAIN, camera, key)
