@@ -78,11 +78,13 @@
             "description": "The HomeBase announces a detection but never its end, and normally ends an alarm itself.",
             "data": {
               "detection_hold": "Detection hold (seconds)",
-              "alarm_timeout": "Alarm safety-net timeout (minutes)"
+              "alarm_timeout": "Alarm safety-net timeout (minutes)",
+              "mode_holds_detections_repair": "Repair when a security mode holds detections back"
             },
             "data_description": {
               "detection_hold": "5–300 s, 10 by default. A detection sensor turns off this long after the detection's own time. A detection that arrives after its hold has run out still fires its event.",
-              "alarm_timeout": "1–60 min, 10 by default. A safety net for an alarm whose end the HomeBase never reports: the panel then leaves Triggered or Pending, shows the guard mode last reported and reads it again."
+              "alarm_timeout": "1–60 min, 10 by default. A safety net for an alarm whose end the HomeBase never reports: the panel then leaves Triggered or Pending, shows the guard mode last reported and reads it again.",
+              "mode_holds_detections_repair": "On by default. A repair names the cameras whose Notification action is off in the armed security mode in force, so the station sends none of their detections. Off removes these repairs and raises none; the cameras, the modes and their notifications are unchanged, and each camera's Detections in current mode sensor still shows it."
             }
           },
           "camera_images": {

@@ -1,4 +1,4 @@
-"""The entry's fourteen options, driven through the real options flow.
+"""The entry's fifteen options, driven through the real options flow.
 
 Each option but the recording length and the sessions per HomeBase is read once at
 setup, so the automatic reload is what applies a change.
@@ -42,6 +42,7 @@ from custom_components.eufy_home_security.const import (
     CONF_EVENT_VIDEOS,
     CONF_EXTRA_COUNTRIES,
     CONF_LIVE_SNAPSHOT,
+    CONF_MODE_HOLDS_DETECTIONS_REPAIR,
     CONF_RECORD_LENGTH,
     CONF_REFRESH_KEYFRAME,
     CONF_SCAN_REGIONS,
@@ -86,7 +87,7 @@ def _registered(hass: HomeAssistant, domain: str, serial: str, key: str) -> str 
     return er.async_get(hass).async_get_entity_id(domain, DOMAIN, entity_unique_id(serial, key))
 
 
-async def test_the_options_form_offers_its_fourteen_options_with_their_defaults(
+async def test_the_options_form_offers_its_fifteen_options_with_their_defaults(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
@@ -129,6 +130,7 @@ async def test_the_options_form_offers_its_fourteen_options_with_their_defaults(
     assert [str(marker) for marker in markers] == [
         CONF_DETECTION_HOLD,
         CONF_ALARM_TIMEOUT,
+        CONF_MODE_HOLDS_DETECTIONS_REPAIR,
         CONF_CAMERA_IMAGE,
         CONF_REFRESH_KEYFRAME,
         CONF_LIVE_SNAPSHOT,
@@ -141,10 +143,11 @@ async def test_the_options_form_offers_its_fourteen_options_with_their_defaults(
         CONF_CLOUD_PUSH,
         CONF_EXTRA_COUNTRIES,
         CONF_SCAN_REGIONS,
-    ], "the options form does not offer exactly its fourteen options, in order"
+    ], "the options form does not offer exactly its fifteen options, in order"
     (
         hold,
         timeout,
+        repair,
         camera_image,
         refresh_keyframe,
         live,
@@ -160,6 +163,7 @@ async def test_the_options_form_offers_its_fourteen_options_with_their_defaults(
     ) = markers
     assert hold.default() == DEFAULT_DETECTION_HOLD_SECONDS == 10
     assert timeout.default() == DEFAULT_ALARM_TIMEOUT_MINUTES == 10
+    assert repair.default() is True, "the mode-holds-detections repair shows by default"
     assert camera_image.default() == "hd", "the camera image does not default to HD"
     assert refresh_keyframe.default() == DEFAULT_REFRESH_KEYFRAME == 1
     assert live.default() is False, "the live snapshot wakes battery cameras: opt-in only"
@@ -257,14 +261,14 @@ async def test_hold_and_timeout_outside_their_ranges_are_refused(
     await hass.async_block_till_done()
 
 
-async def test_the_saved_options_are_exactly_the_fourteen_offered(
+async def test_the_saved_options_are_exactly_the_fifteen_offered(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The save is rebuilt from the fourteen keys, five bools, six ints, a choice, a
+    """The save is rebuilt from the fifteen keys, six bools, six ints, a choice, a
     country and a country list; it reloads."""
 
     async def no_push(_eufy: EufySecurity) -> None:
@@ -280,6 +284,7 @@ async def test_the_saved_options_are_exactly_the_fourteen_offered(
         {
             CONF_DETECTION_HOLD: 20.0,
             CONF_ALARM_TIMEOUT: 5.0,
+            CONF_MODE_HOLDS_DETECTIONS_REPAIR: False,
             CONF_CAMERA_IMAGE: "hd_only",
             CONF_REFRESH_KEYFRAME: 2.7,
             CONF_LIVE_SNAPSHOT: True,
@@ -298,6 +303,7 @@ async def test_the_saved_options_are_exactly_the_fourteen_offered(
     assert entry.options == {
         CONF_DETECTION_HOLD: 20,
         CONF_ALARM_TIMEOUT: 5,
+        CONF_MODE_HOLDS_DETECTIONS_REPAIR: False,
         CONF_CAMERA_IMAGE: "hd_only",
         CONF_REFRESH_KEYFRAME: 3,
         CONF_LIVE_SNAPSHOT: True,
@@ -323,6 +329,7 @@ async def test_the_saved_options_are_exactly_the_fourteen_offered(
     assert type(entry.options[CONF_DETECTION_HOLD]) is int
     assert type(entry.options[CONF_ALARM_TIMEOUT]) is int
     assert type(entry.options[CONF_EVENT_VIDEOS]) is bool
+    assert type(entry.options[CONF_MODE_HOLDS_DETECTIONS_REPAIR]) is bool
     assert type(entry.options[CONF_RECORD_LENGTH]) is int
     assert len(built_clients) == clients_before + 1, "the entry was not reloaded"
 

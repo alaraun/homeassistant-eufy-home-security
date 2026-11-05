@@ -58,6 +58,7 @@ from .const import (
     CONF_EVENT_VIDEOS,
     CONF_EXTRA_COUNTRIES,
     CONF_LIVE_SNAPSHOT,
+    CONF_MODE_HOLDS_DETECTIONS_REPAIR,
     CONF_RECORD_LENGTH,
     CONF_REFRESH_KEYFRAME,
     CONF_SCAN_REGIONS,
@@ -142,7 +143,7 @@ def _whole(unit: UnitOfTime, low: int, high: int) -> NumberSelector:
     )
 
 
-# The entry's fourteen options, flat, in form order. Read once at setup, so a change
+# The entry's fifteen options, flat, in form order. Read once at setup, so a change
 # applies on the reload, except the recording length and the sessions per HomeBase.
 # Ranges and defaults of the sessions are the library's; an empty country means Home
 # Assistant's; each extra country is one more sign-in (a change of either country
@@ -155,6 +156,7 @@ OPTIONS_SCHEMA = vol.Schema(
         vol.Required(CONF_ALARM_TIMEOUT, default=DEFAULT_ALARM_TIMEOUT_MINUTES): _whole(
             UnitOfTime.MINUTES, MIN_ALARM_TIMEOUT_MINUTES, MAX_ALARM_TIMEOUT_MINUTES
         ),
+        vol.Required(CONF_MODE_HOLDS_DETECTIONS_REPAIR, default=True): BooleanSelector(),
         vol.Required(CONF_CAMERA_IMAGE, default=DEFAULT_CAMERA_IMAGE.value): SelectSelector(
             SelectSelectorConfig(
                 options=[mode.value for mode in CameraImageMode],
@@ -198,7 +200,11 @@ OPTIONS_SCHEMA = vol.Schema(
 # exactly one, in schema order. All start collapsed.
 OPTIONS_SECTIONS: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
-        OPTIONS_SECTION_DETECTIONS: (CONF_DETECTION_HOLD, CONF_ALARM_TIMEOUT),
+        OPTIONS_SECTION_DETECTIONS: (
+            CONF_DETECTION_HOLD,
+            CONF_ALARM_TIMEOUT,
+            CONF_MODE_HOLDS_DETECTIONS_REPAIR,
+        ),
         OPTIONS_SECTION_CAMERA_IMAGES: (
             CONF_CAMERA_IMAGE,
             CONF_REFRESH_KEYFRAME,
@@ -778,7 +784,7 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
-    """The entry's fourteen options, in six collapsible sections, stored flat.
+    """The entry's fifteen options, in six collapsible sections, stored flat.
 
     Three things worth knowing about this class:
 
@@ -797,10 +803,10 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
     """
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Show the options in their sections, and save exactly the fourteen they offer
-        flat: five bools, six ints, a choice, a country and a country list.
+        """Show the options in their sections, and save exactly the fifteen they offer
+        flat: six bools, six ints, a choice, a country and a country list.
 
-        The saved mapping is rebuilt from those fourteen keys rather than passing
+        The saved mapping is rebuilt from those fifteen keys rather than passing
         ``user_input`` through, so a submission carrying more than the schema asked
         for cannot persist anything else into the entry's options. The selectors
         have already refused a duration outside its range.
@@ -818,6 +824,7 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
                 # value stays inside it.
                 CONF_DETECTION_HOLD: int(flat[CONF_DETECTION_HOLD] + 0.5),
                 CONF_ALARM_TIMEOUT: int(flat[CONF_ALARM_TIMEOUT] + 0.5),
+                CONF_MODE_HOLDS_DETECTIONS_REPAIR: bool(flat[CONF_MODE_HOLDS_DETECTIONS_REPAIR]),
                 CONF_CAMERA_IMAGE: CameraImageMode(flat[CONF_CAMERA_IMAGE]).value,
                 CONF_REFRESH_KEYFRAME: int(flat[CONF_REFRESH_KEYFRAME] + 0.5),
                 CONF_LIVE_SNAPSHOT: bool(flat[CONF_LIVE_SNAPSHOT]),

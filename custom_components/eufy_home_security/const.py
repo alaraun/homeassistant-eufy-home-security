@@ -87,6 +87,10 @@ CONF_STATION_SESSIONS: Final = "station_sessions"
 # HomeBase, a HomeBase 2). Started after the platforms, in the background; a change reloads the
 # entry.
 CONF_CLOUD_PUSH: Final = "cloud_push"
+# On by default: the repair naming the cameras whose detections the armed mode in force
+# holds back (``errors.sync_mode_holds_detections_issue``). Off raises none and deletes
+# the entry's; the sensor and diagnostics are unchanged. A change reloads the entry.
+CONF_MODE_HOLDS_DETECTIONS_REPAIR: Final = "mode_holds_detections_repair"
 # Every device-list fetch asks every eufy cloud region (the library's ``scan_regions``),
 # off by default: a region that listed no devices is otherwise not asked again. A
 # change reloads the entry.
