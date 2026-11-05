@@ -16,6 +16,7 @@ from conftest import (
     SENSOR_SN,
     add_entry,
     add_motion_sensor,
+    advance_to_poll,
     alarm_changed,
     cloud_calls,
     set_up_warm,
@@ -25,12 +26,15 @@ from conftest import (
 from eufy_home_security import (
     AuthenticationError,
     CloudProblem,
+    CommunicationError,
     EufySecurity,
     LoginLimitedError,
     RateLimitedError,
     RefreshCooldownError,
     SessionCache,
     SessionReplacedError,
+    Station,
+    StationState,
     entity_unique_id,
 )
 from eufy_home_security.testing import (
@@ -63,6 +67,7 @@ from custom_components.eufy_home_security.const import (
     DOMAIN,
     EXC_AUTH_FAILED,
     GUARD_MODE_KEY,
+    POLL_INTERVAL_SECONDS,
 )
 
 
@@ -232,6 +237,92 @@ async def test_station_and_its_sub_devices_are_devices_under_the_station(
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+def _sw_version(hass: HomeAssistant, entry: ConfigEntry, serial: str) -> str | None:
+    device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, serial), entry.entry_id)
+    assert device is not None, serial
+    return device.sw_version
+
+
+async def test_each_device_rows_firmware_follows_what_the_station_reports(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The device registry's firmware is the station's report, not the cached cloud list.
+
+    The cloud list says the station runs 3.8.6.0 and the camera 2.0.7.6, while the
+    station's dump says 3.8.7.4 and its camera report (7013) 2.0.9: the rows show
+    the reports. The motion sensor reports no firmware, so its row keeps the cloud's.
+    A later poll with a new camera version updates the camera's row. Home Assistant
+    reports no deprecated registry call.
+    """
+    add_motion_sensor(fake_station, fake_cloud)
+    for device in fake_cloud.devices:
+        if device["device_sn"] == SYNTHETIC.station_sn:
+            device["main_sw_version"] = "3.8.6.0"
+        if device["device_sn"] == SENSOR_SN:
+            device["main_sw_version"] = "1.2.3"
+    camera_channel = 0
+    fake_station.params[camera_channel][7013] = "2.0.9"
+    entry = await set_up_warm(hass, seed_warm_cache)
+    anchor = dt_util.utcnow()
+
+    assert _sw_version(hass, entry, SYNTHETIC.station_sn) == "3.8.7.4"
+    assert _sw_version(hass, entry, SYNTHETIC.camera_sn) == "2.0.9"
+    assert _sw_version(hass, entry, SENSOR_SN) == "1.2.3"
+
+    fake_station.params[camera_channel][7013] = "2.1.0"
+    await advance_to_poll(hass, POLL_INTERVAL_SECONDS + 1, anchor=anchor)
+    await wait_until(lambda: _sw_version(hass, entry, SYNTHETIC.camera_sn) == "2.1.0", timeout=15)
+    assert not [r for r in caplog.records if r.name == "homeassistant.helpers.frame"]
+    assert _sw_version(hass, entry, SYNTHETIC.station_sn) == "3.8.7.4"
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_a_reload_with_the_station_down_keeps_the_reported_firmware(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reload whose first read fails keeps the row at the station's last report, not
+    the stale cloud list's; the tracker is gone after the unload."""
+    for device in fake_cloud.devices:
+        if device["device_sn"] == SYNTHETIC.station_sn:
+            device["main_sw_version"] = "3.8.6.0"
+    entry = await set_up_warm(hass, seed_warm_cache)
+    assert _sw_version(hass, entry, SYNTHETIC.station_sn) == "3.8.7.4"
+    reads = 0
+    real_update = Station.async_update
+    during_failed_read: list[str | None] = []
+
+    async def first_read_fails(self: Station) -> StationState:
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            during_failed_read.append(_sw_version(hass, entry, SYNTHETIC.station_sn))
+            raise CommunicationError("synthetic")
+        return await real_update(self)
+
+    monkeypatch.setattr(Station, "async_update", first_read_fails)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert during_failed_read == ["3.8.7.4"]
+    await wait_until(lambda: reads == 2, timeout=10)
+    assert _sw_version(hass, entry, SYNTHETIC.station_sn) == "3.8.7.4"
+
+    coordinator = entry.runtime_data.coordinators[SYNTHETIC.station_sn]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert not coordinator._listeners
 
 
 async def test_a_station_with_no_sub_devices_registers_only_itself(

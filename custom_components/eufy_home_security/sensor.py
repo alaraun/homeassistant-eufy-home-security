@@ -91,7 +91,7 @@ class EufyDiagnosticDescription(SensorEntityDescription):
 
 
 def _firmware(entity: EufyDeviceEntity) -> StateType:
-    """The running firmware, with the cloud fallback a sensor's version needs."""
+    """The running firmware (the library falls back to the cloud record)."""
     return entity.firmware_version
 
 

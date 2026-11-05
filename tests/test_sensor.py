@@ -174,7 +174,7 @@ async def test_camera_and_motion_sensor_diagnostics_with_the_firmware_fallback(
     await hass.async_block_till_done()
 
 
-async def test_a_device_dropped_from_the_cloud_list_reads_unknown_rather_than_raising(
+async def test_a_device_dropped_from_the_cloud_list_keeps_its_snapshot_firmware(
     hass: HomeAssistant,
     fake_station: FakeStation,
     fake_cloud: FakeCloud,
@@ -182,16 +182,15 @@ async def test_a_device_dropped_from_the_cloud_list_reads_unknown_rather_than_ra
     seed_warm_cache: Callable[..., None],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The firmware fallback reads unknown for a device the paired list dropped.
+    """A device the paired list dropped keeps the firmware of the state read before.
 
     Between a newer cloud list (``Station.update_sub_devices``) and its reload, the
     snapshot still has the device's block while ``station.sub_devices`` does not; a
-    fan-out in that window shows unknown, logs no error, and updates every other
-    entity.
+    fan-out in that window shows the block's firmware (the library's cloud fallback,
+    taken when the state was read), logs no error, and updates every other entity.
     """
     add_motion_sensor(fake_station, fake_cloud)
-    # The sensor never reports its own firmware, so the cloud's record is the only
-    # one there is: the fallback runs on every read of this entity.
+    # The sensor never reports its own firmware: its block carries the cloud's record.
     _set_cloud_firmware(fake_cloud, SENSOR_SN, "1.2.3")
     entry = await set_up_warm(hass, seed_warm_cache)
 
@@ -214,7 +213,7 @@ async def test_a_device_dropped_from_the_cloud_list_reads_unknown_rather_than_ra
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
 
-    assert state_of(hass, sensor_firmware) == STATE_UNKNOWN
+    assert state_of(hass, sensor_firmware) == "1.2.3"
     assert [record.getMessage() for record in caplog.records] == []
     # The fan-out finished: the rest of the station's entities still have their values.
     assert state_of(hass, station_firmware) == _STATION_FIRMWARE

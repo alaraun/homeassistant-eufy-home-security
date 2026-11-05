@@ -16,7 +16,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.typing import ConfigType
+from homeassistant.helpers.typing import UNDEFINED, ConfigType, UndefinedType
 
 from eufy_home_security import (
     AuthenticationError,
@@ -26,6 +26,7 @@ from eufy_home_security import (
     RateLimitedError,
     SessionReplacedError,
     Station,
+    StationState,
     async_forget_account,
     entity_unique_id,
     redact_serial,
@@ -71,6 +72,7 @@ from .const import (
     WORKING_DAYS_KEY,
 )
 from .coordinator import StationCoordinator
+from .entity import device_block
 from .events import EventRouter
 from .presets import PresetManager
 from .runtime import EufyConfigEntry
@@ -132,9 +134,16 @@ def _async_register_devices(
     deprecated since 2026.8 (helpers/device_registry.py, ``async_get_or_create``).
     Every device's ``model`` is the library's catalogued name
     (``CloudDevice.model_name``, None for a model it does not know) and ``model_id`` the
-    serial prefix (``CloudDevice.model_id``, set for every model).
+    serial prefix (``CloudDevice.model_id``, set for every model). ``sw_version`` is the
+    cloud list's for a new row only; :func:`_async_track_firmware` keeps it at the
+    station's report, which a reload with the station down must not undo.
     """
     device_registry = dr.async_get(hass)
+
+    def first_version(serial: str, cloud: str | None) -> str | None | UndefinedType:
+        known = device_registry.async_get_device_by_identifier((DOMAIN, serial), entry.entry_id)
+        return cloud if known is None else UNDEFINED
+
     for station in stations:
         parent = device_registry.async_get_or_create(
             config_entry_id=entry.entry_id,
@@ -144,7 +153,7 @@ def _async_register_devices(
             model=station.device.model_name,
             model_id=station.device.model_id,
             serial_number=station.serial,
-            sw_version=station.device.main_sw_version,
+            sw_version=first_version(station.serial, station.device.main_sw_version),
         )
         for sub in station.sub_devices:
             if not sub.device_sn:
@@ -159,9 +168,44 @@ def _async_register_devices(
                 model=sub.model_name,
                 model_id=sub.model_id,
                 serial_number=sub.device_sn,
-                sw_version=sub.main_sw_version,
+                sw_version=first_version(sub.device_sn, sub.main_sw_version),
                 via_device_id=parent.id,
             )
+
+
+@callback
+def _async_track_firmware(
+    hass: HomeAssistant, entry: EufyConfigEntry, coordinator: StationCoordinator
+) -> None:
+    """Keep the device rows' ``sw_version`` at the firmware the station reports.
+
+    The cloud list's version goes stale between list refreshes. Each state sets the
+    station's row from ``StationState.firmware`` and each paired device's row from its
+    ``SubDeviceState.firmware``. Both fall back to the cloud record in the library,
+    the source of the registration's value; a device without a block keeps its row.
+    Called once the station's first refresh ran (or failed): a station not up then
+    gets its rows from its first later state.
+    """
+    registry = dr.async_get(hass)
+    station = coordinator.station
+
+    @callback
+    def _sync() -> None:
+        data: StationState | None = coordinator.data
+        if data is None:
+            return
+        versions = {station.serial: data.firmware}
+        for sub in station.sub_devices:
+            block = device_block(data, sub.device_sn) if sub.device_sn else None
+            if block is not None:
+                versions[sub.device_sn] = block.firmware
+        for serial, version in versions.items():
+            row = registry.async_get_device_by_identifier((DOMAIN, serial), entry.entry_id)
+            if row is not None and row.sw_version != version:
+                registry.async_update_device(row.id, sw_version=version)
+
+    _sync()
+    entry.async_on_unload(coordinator.async_add_listener(_sync))
 
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -476,6 +520,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     if coordinators and not came_up and first_ever:
         # Only a brand-new entry waits for a station; a known one loads unavailable.
         raise errors.no_station_started(len(coordinators))
+
+    # After the first refreshes: a first coordinator listener arms the poll timer, which
+    # must not run while the stations start.
+    for coordinator in coordinators.values():
+        _async_track_firmware(hass, entry, coordinator)
 
     # From here on connection events drive availability. Every connection
     # event until now had its availability part ignored, so each station is caught up
