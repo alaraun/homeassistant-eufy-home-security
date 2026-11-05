@@ -1,6 +1,6 @@
-# HACS repository checks: hacs.json, manifest keys, brand icon, README, license,
-# description and topics.
-name: HACS validation
+# Marketplace catalog checks (the HACS action): hacs.json, manifest keys, brand icon,
+# README, license, description and topics.
+name: Marketplace validation
 
 on:
   push:

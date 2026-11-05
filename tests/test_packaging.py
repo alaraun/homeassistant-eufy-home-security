@@ -36,9 +36,10 @@ _SEMVER = re.compile(
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
 
-# HACS requires domain, documentation, issue_tracker, codeowners, name and
-# version for an integration (hacs.xyz/docs/publish/integration); the rest are
-# what this project adds.
+# The Marketplace catalog requires domain, documentation, issue_tracker, codeowners,
+# name and version for an integration
+# (contributors.home-assistant.io/marketplace/guides/catalog); the rest are what this
+# project adds.
 _REQUIRED_MANIFEST_KEYS = (
     "codeowners",
     "config_flow",
@@ -229,7 +230,7 @@ def test_manifest_and_hacs_json() -> None:
 
     missing = [key for key in _REQUIRED_MANIFEST_KEYS if key not in manifest]
     assert not missing, (
-        f"manifest.json is missing {missing}; Home Assistant and HACS both read "
+        f"manifest.json is missing {missing}; Home Assistant and the Marketplace both read "
         f"this file before any of this integration's code runs"
     )
 
@@ -245,7 +246,7 @@ def test_manifest_and_hacs_json() -> None:
         f"got {manifest['integration_type']!r}"
     )
     assert manifest["config_flow"] is True, (
-        "config_flow must be true — a HACS hub integration is config-entry-only "
+        "config_flow must be true — this hub integration is config-entry-only "
         "and YAML platform setup is not an option"
     )
     assert _SEMVER.match(str(manifest["version"])), (
@@ -257,7 +258,7 @@ def test_manifest_and_hacs_json() -> None:
 
     assert hacs["name"], "hacs.json must carry a name — it is the only required key"
     assert "zip_release" not in hacs, (
-        "hacs.json must not declare zip_release: HACS installs this repository "
+        "hacs.json must not declare zip_release: the Marketplace installs this repository "
         "from the release tag's source tree, and no release builds an archive"
     )
 
@@ -407,7 +408,7 @@ def test_component_tree_is_integration_only(tmp_path: Path) -> None:
 def test_hacs_and_test_harness_pin_the_same_core() -> None:
     # pytest-homeassistant-custom-component hard-pins ONE Home Assistant version
     # per release. Raising hacs.json's floor without bumping the pin means the
-    # test suite imports a different core than the one HACS gates installs on,
+    # test suite imports a different core than the one the Marketplace gates installs on,
     # so every assertion in this repository would be made against the wrong
     # platform. The mapping lives here, in one place, for that reason.
     _PHCC_RELEASE_TO_HA_SERIES = {
@@ -442,7 +443,7 @@ def test_hacs_and_test_harness_pin_the_same_core() -> None:
         f"pins pytest-homeassistant-custom-component=={phcc_version}, which "
         f"carries {_PHCC_RELEASE_TO_HA_SERIES[phcc_version]}. These must name "
         f"the same release: bump them in the same commit or the suite tests a "
-        f"different core than HACS gates on"
+        f"different core than the Marketplace gates on"
     )
 
 

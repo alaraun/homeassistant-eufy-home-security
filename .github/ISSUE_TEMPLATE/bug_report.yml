@@ -23,7 +23,7 @@ body:
     id: integration-version
     attributes:
       label: Integration version
-      description: HACS, or Settings → Devices & services → Anker eufy Home Security.
+      description: Settings → Devices & services → Anker eufy Home Security.
       placeholder: 0.1.0
     validations:
       required: true
