@@ -443,7 +443,8 @@ HomeBase (version strings by parameter id; the subsystems are unnamed) and
 
 ## Automation triggers
 
-Triggers for automations, one per use. Replace the entity ids with your own.
+One trigger per subsection; replace the entity ids with your own. To add one, open a pull
+request that edits this section.
 
 ### A recording was counted
 
@@ -469,19 +470,20 @@ actions:
         {{ trigger.to_state.state | int(0) - trigger.from_state.state | int(0) }} event(s)
 ```
 
-- `not_from` skips the return from unavailable; the condition skips the sensor's first
-  and last state (a restart, a reload of the integration) and the counter's reset after a USB charge.
-- The counter is read at the poll (45 s), so the trigger fires up to 45 s after the
-  recording started. Several recordings between two polls fire once; `to - from` is
+- `not_from` and the condition skip a restart or reload (the change to and from
+  unavailable, the entity added or removed) and the counter's reset after a USB charge.
+- The station counts a recording some seconds after it starts, and the sensor shows the
+  count at the next refresh (45 s), so the trigger fires up to about a minute after the
+  recording started. Several recordings between two refreshes fire once; `to - from` is
   their number.
 - It carries no time, kind, picture or clip. Where the **Detection** event fires, an
   automation on both notifies twice.
 
-### PIR triggered
+### A detection was counted
 
-The same trigger on **Detected events** (`sensor.front_door_detected_events`) fires for
-each count of the camera's motion sensor (PIR). Most of these the camera does not
-record: on our test cameras in Away mode about nine per recording. The limits above apply.
+The same trigger on **Detected events** (`sensor.front_door_detected_events`) fires when
+the camera's detection count rises. It can rise without a recording; how often depends on
+the camera and its settings. The limits above apply.
 
 ## Device settings
 
