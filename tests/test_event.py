@@ -1032,6 +1032,8 @@ async def test_every_station_has_one_alarm_and_one_arming_event_entity(
         ALARM_EVENT_KEY,
         ARMING_EVENT_KEY,
         DETECTION_EVENT_KEY,
+        "motion_detected",
+        "motion_recorded",
     }
     for reg in event_entries:
         assert reg.translation_key is not None

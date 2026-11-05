@@ -702,6 +702,26 @@
             }
           }
         }
+      },
+      "motion_detected": {
+        "name": "Motion Detected",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "motion": "Motion"
+            }
+          }
+        }
+      },
+      "motion_recorded": {
+        "name": "Motion Recorded",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "recorded": "Recorded"
+            }
+          }
+        }
       }
     },
     "image": {
