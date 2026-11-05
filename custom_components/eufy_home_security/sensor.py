@@ -237,19 +237,20 @@ DEVICE_FIELD_SENSORS: Final = (
         read=lambda device: device.working_days,
         battery=True,
     ),
-    # Counted since the last USB charge, which resets them.
+    # Counted since the last USB charge, which resets them: TOTAL_INCREASING books a
+    # drop as a new cycle in the statistics, not as a negative change.
     EufyDeviceFieldDescription(
         key=DETECTED_EVENTS_KEY,
         translation_key=DETECTED_EVENTS_KEY,
         entity_category=EntityCategory.DIAGNOSTIC,
-        state_class=SensorStateClass.TOTAL,
+        state_class=SensorStateClass.TOTAL_INCREASING,
         read=lambda device: device.detected_events,
     ),
     EufyDeviceFieldDescription(
         key=RECORDED_EVENTS_KEY,
         translation_key=RECORDED_EVENTS_KEY,
         entity_category=EntityCategory.DIAGNOSTIC,
-        state_class=SensorStateClass.TOTAL,
+        state_class=SensorStateClass.TOTAL_INCREASING,
         read=lambda device: device.recorded_events,
     ),
 )
