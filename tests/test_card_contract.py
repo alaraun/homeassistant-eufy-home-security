@@ -116,9 +116,16 @@ def test_the_card_is_valid_javascript() -> None:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
-    result = subprocess.run(
-        [node, "--check", str(card.CARD_FILE)], capture_output=True, text=True, check=False
-    )
+    try:
+        result = subprocess.run(
+            [node, "--check", str(card.CARD_FILE)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=50,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("node --check gave no result within 50 s")
     assert result.returncode == 0, result.stderr
 
 

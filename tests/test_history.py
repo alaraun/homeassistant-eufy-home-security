@@ -66,8 +66,14 @@ def _manager(entry: MockConfigEntry) -> SnapshotManager:
 
 
 def _files(hass: HomeAssistant) -> list[Path]:
+    """Every file under the history folder, a write's hidden temporary file included."""
     root = history.history_dir(hass)
     return sorted(path for path in root.rglob("*") if path.is_file()) if root.is_dir() else []
+
+
+def _saved(hass: HomeAssistant) -> list[Path]:
+    """The published files: a write in progress is a hidden file until its rename."""
+    return [path for path in _files(hass) if not path.name.startswith(".")]
 
 
 async def _unload(hass: HomeAssistant, entry: MockConfigEntry) -> None:
@@ -134,7 +140,7 @@ async def test_a_renamed_camera_is_saved_under_its_new_name(
     registry.async_update_device(device.id, name_by_user="Garage door")
 
     await _detect(hass, entry, fake_station, now_ms())
-    await wait_until(lambda: bool(_files(hass)))
+    await wait_until(lambda: bool(_saved(hass)))
 
     assert all(
         path.parent.name == "Garage_door" and "_Garage_door_" in path.name for path in _files(hass)
@@ -572,7 +578,7 @@ async def test_stills_of_cameras_whose_names_collide_land_in_folders_with_serial
         )
     }
 
-    await wait_until(lambda: len(_files(hass)) == len(serials))
+    await wait_until(lambda: len(_saved(hass)) == len(serials))
 
     assert _files(hass) == sorted(expected.values())
     for serial, path in expected.items():
