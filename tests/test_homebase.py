@@ -70,7 +70,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.typing import (
+from pytest_homeassistant.typing import (
     MockHAClientWebSocket,
     WebSocketGenerator,
 )

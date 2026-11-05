@@ -27,8 +27,8 @@ from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
 from homeassistant.components.camera import async_get_image
 from homeassistant.core import HomeAssistant
 from PIL import Image
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
+from pytest_homeassistant.common import MockConfigEntry
+from pytest_homeassistant.typing import ClientSessionGenerator
 
 from custom_components.eufy_home_security import small_images, still_cache
 from custom_components.eufy_home_security.const import CAMERA_KEY, LAST_EVENT_IMAGE_KEY

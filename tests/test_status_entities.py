@@ -30,7 +30,7 @@ from homeassistant.const import EntityCategory, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.eufy_home_security.const import ATTR_SECTION, ATTR_VALUE, DOMAIN
 from custom_components.eufy_home_security.sensor import EufySettingSensor
