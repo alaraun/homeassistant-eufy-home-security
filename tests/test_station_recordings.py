@@ -47,14 +47,14 @@ from homeassistant.components.http.auth import async_sign_path
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import (
+from pytest_homeassistant.common import (
     MockConfigEntry,
     async_fire_time_changed,
 )
-from pytest_homeassistant_custom_component.components.diagnostics import (
+from pytest_homeassistant.components.diagnostics import (
     get_diagnostics_for_config_entry,
 )
-from pytest_homeassistant_custom_component.typing import (
+from pytest_homeassistant.typing import (
     ClientSessionGenerator,
     MockHAClientWebSocket,
     WebSocketGenerator,

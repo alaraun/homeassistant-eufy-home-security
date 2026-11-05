@@ -51,7 +51,7 @@ from homeassistant.const import ATTR_ENTITY_ID, CONF_EMAIL, EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import (
+from pytest_homeassistant.common import (
     MockConfigEntry,
     async_fire_time_changed,
 )
@@ -124,14 +124,9 @@ def hass_config_dir(hass_tmp_config_dir: str) -> str:
 def _media_dir_per_test(hass: HomeAssistant, hass_tmp_config_dir: str) -> None:
     """A media folder per test, inside its config directory, for the event history.
 
-    The harness points ``local`` media at a directory inside its installed package.
+    The harness points ``local`` media at ``tests/testing_config/media`` in the repo.
     """
     hass.config.media_dirs = {"local": os.path.join(hass_tmp_config_dir, "media")}
-
-
-@pytest.fixture(autouse=True)
-def _custom_integrations(enable_custom_integrations: None) -> None:
-    """Let Home Assistant load ``custom_components``."""
 
 
 # A worker imports Home Assistant and collects the suite before its first test (about

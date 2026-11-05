@@ -10,20 +10,22 @@ requires-python = ">=3.14.2"
 [tool.uv]
 # A Home Assistant custom integration, never built or installed: uv manages the dev venv only.
 package = false
-# Home Assistant 2026.10.1 pins protobuf==7.36.0 (package_constraints.txt); the library
+# Home Assistant 2026.11.0 pins protobuf==7.36.0 (package_constraints.txt); the library
 # asks only protobuf>=5. Raise in lockstep with the HA pin; tests/test_library_boundary.py
 # checks it, since a plain `uv lock` keeps a locked version after the constraint is gone.
 constraint-dependencies = ["protobuf==7.36.0"]
 
 [dependency-groups]
-# pytest-homeassistant-custom-component pins one Home Assistant release (0.13.372: HA
-# 2026.10.1, what production runs); bump it with hacs.json's floor. pytest, pytest-asyncio and cryptography come
-# with it; a second floor here would fight its pins.
+# pytest-homeassistant is Home Assistant's own test package, versioned and pinned like
+# Home Assistant itself: keep it at hacs.json's floor, the release production runs.
+# pytest, pytest-asyncio and pytest-xdist come with it; a second floor here would fight
+# its pins.
 dev = [
-    # Also brings pytest-xdist and pytest-timeout, which the pytest options below use.
-    "pytest-homeassistant-custom-component==0.13.372",
+    "pytest-homeassistant==2026.11.0",
+    # The `timeout` option below; pytest-homeassistant does not bring it.
+    "pytest-timeout",
     # The test harness installs no component requirements: HA's camera component imports
-    # turbojpeg and `stream` imports PyAV. Same pins as HA 2026.10.1's manifests; test-only,
+    # turbojpeg and `stream` imports PyAV. Same pins as HA 2026.11.0's manifests; test-only,
     # Home Assistant brings both itself.
     "PyTurboJPEG==1.8.3",
     "av==19.0.0",
@@ -42,12 +44,14 @@ eufy-home-security = { path = "../python-eufy_home_security", editable = true }
 testpaths = ["tests"]
 norecursedirs = [".git", "dist", "build", ".venv"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 # Puts the repo root on sys.path, so `custom_components.eufy_home_security` imports.
 pythonpath = ["."]
 # Parallel by default: worksteal evens out the few tests that wait out a hardware
 # timeout. tests/conftest.py drops the workers for a run of a few tests. A test
 # running past `timeout` seconds fails instead of hanging the run.
-addopts = "-n auto --dist worksteal"
+# respx's own pytest plugin is off: Home Assistant installs its httpx alias first.
+addopts = "-n auto --dist worksteal -p no:respx"
 timeout = 60
 
 [tool.ruff]

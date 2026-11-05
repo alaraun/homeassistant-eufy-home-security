@@ -40,7 +40,7 @@ from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAI
 from homeassistant.components.event import DOMAIN as EVENT_DOMAIN
 from homeassistant.const import STATE_ON
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_capture_events
+from pytest_homeassistant.common import MockConfigEntry, async_capture_events
 
 from custom_components.eufy_home_security.const import (
     CONF_CAMERA_IMAGE,

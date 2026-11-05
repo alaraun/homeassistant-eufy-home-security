@@ -218,12 +218,6 @@ def _integration_only_violations(paths: list[Path]) -> list[str]:
     return violations
 
 
-def _ha_release_series(version: str) -> tuple[int, int]:
-    """(year, month) of a Home Assistant CalVer string such as '2026.9.0'."""
-    year, month = version.split(".")[:2]
-    return int(year), int(month)
-
-
 def test_manifest_and_hacs_json() -> None:
     manifest = _load_manifest()
     hacs = _load_hacs()
@@ -406,44 +400,37 @@ def test_component_tree_is_integration_only(tmp_path: Path) -> None:
 
 
 def test_hacs_and_test_harness_pin_the_same_core() -> None:
-    # pytest-homeassistant-custom-component hard-pins ONE Home Assistant version
-    # per release. Raising hacs.json's floor without bumping the pin means the
-    # test suite imports a different core than the one the Marketplace gates installs on,
-    # so every assertion in this repository would be made against the wrong
-    # platform. The mapping lives here, in one place, for that reason.
-    _PHCC_RELEASE_TO_HA_SERIES = {
-        "0.13.355": (2026, 8),
-        "0.13.365": (2026, 9),
-        "0.13.372": (2026, 10),
-    }
-
+    # pytest-homeassistant carries Home Assistant's own version and pins exactly that
+    # release. Raising hacs.json's floor without bumping the pin means the test suite
+    # imports a different core than the one the Marketplace gates installs on, so
+    # every assertion in this repository would be made against the wrong platform.
     hacs_floor = _load_hacs()["homeassistant"]
     pyproject = tomllib.loads(_PYPROJECT_PATH.read_text())
     dev_group = pyproject["dependency-groups"]["dev"]
 
     pins = [
-        entry.split("==", 1)[1]
-        for entry in dev_group
-        if entry.startswith("pytest-homeassistant-custom-component==")
+        entry.split("==", 1)[1] for entry in dev_group if entry.startswith("pytest-homeassistant==")
     ]
     assert len(pins) == 1, (
-        f"expected exactly one pinned pytest-homeassistant-custom-component in "
-        f"the dev dependency group, found {pins}"
+        f"expected exactly one pinned pytest-homeassistant in the dev dependency "
+        f"group, found {pins}"
     )
-    phcc_version = pins[0]
-
-    assert phcc_version in _PHCC_RELEASE_TO_HA_SERIES, (
-        f"pytest-homeassistant-custom-component was bumped to {phcc_version} "
-        f"without recording which Home Assistant release it pins; add it to "
-        f"_PHCC_RELEASE_TO_HA_SERIES and check hacs.json's floor against it"
+    assert not any(
+        entry.startswith("pytest-homeassistant-custom-component") for entry in dev_group
+    ), "pytest-homeassistant-custom-component supplies overlapping fixtures: drop it"
+    harness = pins[0]
+    assert re.fullmatch(r"\d+\.\d+\.\d+", harness), (
+        f"pytest-homeassistant=={harness} is a pre-release; the suite runs the "
+        f"Home Assistant release production runs"
     )
-
-    assert _ha_release_series(hacs_floor) == _PHCC_RELEASE_TO_HA_SERIES[phcc_version], (
-        f"hacs.json declares Home Assistant {hacs_floor} but the test harness "
-        f"pins pytest-homeassistant-custom-component=={phcc_version}, which "
-        f"carries {_PHCC_RELEASE_TO_HA_SERIES[phcc_version]}. These must name "
-        f"the same release: bump them in the same commit or the suite tests a "
-        f"different core than the Marketplace gates on"
+    assert "prerelease-mode" not in (_REPO_ROOT / "uv.lock").read_text(), (
+        "uv.lock was resolved with pre-releases allowed; relock without --prerelease"
+    )
+    assert harness == hacs_floor, (
+        f"hacs.json declares Home Assistant {hacs_floor} but the test harness pins "
+        f"pytest-homeassistant=={harness}. These must name the same release: bump "
+        f"them in the same commit or the suite tests a different core than the "
+        f"Marketplace gates on"
     )
 
 

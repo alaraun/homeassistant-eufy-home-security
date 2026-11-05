@@ -45,7 +45,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import ATTR_ENTITY_ID, SERVICE_ALARM_ARM_HOME
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from pytest_homeassistant.common import async_fire_time_changed
 
 from custom_components.eufy_home_security.const import CONNECTION_LOSS_GRACE_SECONDS
 

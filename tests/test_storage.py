@@ -46,7 +46,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.eufy_home_security.binary_sensor import STORAGE_BINARY_SENSORS
 from custom_components.eufy_home_security.const import (

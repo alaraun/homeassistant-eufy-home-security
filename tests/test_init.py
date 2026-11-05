@@ -55,7 +55,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
+from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.eufy_home_security import async_unload_entry, errors, runtime
 from custom_components.eufy_home_security.config_flow import EufyHomeSecurityConfigFlow
