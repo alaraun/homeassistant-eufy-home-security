@@ -22,6 +22,10 @@ entries from the conventional commits.
 * **sensor:** count detected and recorded events as total increasing ([#169](https://github.com/alaraun/homeassistant-eufy-home-security/issues/169)) ([06238f2](https://github.com/alaraun/homeassistant-eufy-home-security/commit/06238f2092f13086c5590462b8fabba64a8c4c82))
 * the session to a HomeBase 3 stays up while Home Assistant is busy at boot (library 0.4.11) ([8d49cf9](https://github.com/alaraun/homeassistant-eufy-home-security/commit/8d49cf90e66f4654ea3f1d754fefad02de5d7da5))
 
+### New contributors
+
+* [@ddahya](https://github.com/ddahya) made their first contribution in [PR 168](https://github.com/alaraun/homeassistant-eufy-home-security/pull/168)
+
 ## [0.4.13](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.12...v0.4.13) (2026-11-04)
 
 
