@@ -73,8 +73,9 @@ PLAY_KEEP_SECONDS: Final = 300.0
 PLAYLIST_WAIT_SECONDS: Final = 15.0
 # Media one play holds; past it the oldest segments go.
 PLAY_MAX_BYTES: Final = 96 * 1024 * 1024
-# The library's pacing: False sends at the station's speed, ahead of the player.
-PLAY_REALTIME: Final = False
+# The library writes at the recording's own pace: a playlist growing faster than it
+# plays makes Home Assistant's player catch up at up to twice the speed.
+PLAY_REALTIME: Final = True
 RECORDING_URL: Final = "/api/eufy_home_security/recording/{token}/{name}"
 RECORDING_VIEW_NAME: Final = f"api:{DOMAIN}:recording_hls"
 _PLAYLIST: Final = "playlist.m3u8"

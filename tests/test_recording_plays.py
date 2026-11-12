@@ -357,7 +357,7 @@ async def test_the_url_comes_with_the_first_segment_and_complete_after_the_last(
     assert _remux_threads() == []
 
 
-async def test_a_play_asks_the_library_to_wait_for_a_session_at_the_chosen_pace(
+async def test_a_play_asks_the_library_to_wait_for_a_session_and_keep_the_recordings_pace(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
     fake_station: FakeStation,
@@ -365,8 +365,8 @@ async def test_a_play_asks_the_library_to_wait_for_a_session_at_the_chosen_pace(
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``wait`` on and ``realtime`` as ``PLAY_REALTIME``, for the listed row; a clip
-    shorter than one segment still plays: one segment, then ``complete``."""
+    """``wait`` and ``realtime`` on, for the listed row; a clip shorter than one
+    segment still plays: one segment, then ``complete``."""
     player = Player(chunks=_writes(_clip(1.4))).install(monkeypatch)
     entry = await _set_up(hass, seed_warm_cache, fake_station)
     client = await hass_ws_client(hass)
@@ -374,9 +374,7 @@ async def test_a_play_asks_the_library_to_wait_for_a_session_at_the_chosen_pace(
     reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
 
     assert reply["success"], reply
-    assert player.calls == [
-        (fake_station.rows[0]["record_id"], True, recording_plays.PLAY_REALTIME)
-    ]
+    assert player.calls == [(fake_station.rows[0]["record_id"], True, True)]
     assert (await _next(client))["event"] == {"end": "complete", "duration": 1.4}
     await _unload(hass, entry)
 
