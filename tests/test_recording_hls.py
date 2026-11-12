@@ -129,15 +129,17 @@ def _source_counts(data: bytes) -> tuple[int, int]:
 @pytest.mark.parametrize(
     ("gop", "seconds", "durations"),
     [
-        # A keyframe every second: the one at exactly 2.0 s cuts.
+        # A keyframe every second: the one at 2.0 s is the first past 1.9 s and cuts.
         (15, 5.0, [2.0, 2.0, 1.0]),
-        # Every 22 frames (1.467 s): the first at or past 2.0 s is at 2.933 s.
+        # Every 22 frames (1.467 s): the first at or past 1.9 s is at 2.933 s.
         (22, 5.0, [2.933, 2.067]),
+        # Every 29 frames (1.933 s, a camera's interval just under 2 s): every keyframe cuts.
+        (29, 5.0, [1.933, 1.933, 1.133]),
         # Shorter than one segment: the whole recording is the one segment.
         (15, 1.4, [1.4]),
     ],
 )
-def test_a_segment_is_cut_at_the_first_keyframe_two_seconds_in_and_the_tail_is_published(
+def test_a_segment_is_cut_at_the_first_keyframe_1_9_seconds_in_and_the_tail_is_published(
     gop: int, seconds: float, durations: list[float]
 ) -> None:
     """Every frame of the TS is in some segment, the last ones included."""
