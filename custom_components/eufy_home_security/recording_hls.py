@@ -42,7 +42,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Shortest segment, seconds: a cut waits for the first keyframe at or past it. Below 2 s so
 # a 2 s keyframe interval (keyframes ~1.997 s apart) cuts at every keyframe, as HA's stream does.
-# Exact, so keyframes exactly 1.9 s apart cut too.
+# An exact Fraction, so the cut compares exactly with the stream's Fraction timestamps.
 SEGMENT_SECONDS: Final = Fraction(19, 10)
 HLS_MIME_TYPE: Final = "application/vnd.apple.mpegurl"
 INIT_MIME_TYPE: Final = "video/mp4"
@@ -526,7 +526,8 @@ class HlsPlaylist:
 
     Holds at most ``max_bytes`` of segments: past it the oldest leave (never the
     newest). A plain live playlist, so it may: EVENT forbids removing segments. Its
-    target duration is the longest segment seen, as a live playlist's must not change.
+    target duration is the longest EXTINF seen rounded to the nearest second, at least 1
+    (RFC 8216 4.3.3.1); it never falls.
     """
 
     def __init__(self, max_bytes: int) -> None:
@@ -552,7 +553,8 @@ class HlsPlaylist:
     def add_segment(self, segment: Segment) -> None:
         self._segments.append(segment)
         self.duration += segment.duration
-        self._target = max(self._target, math.ceil(round(segment.duration, 3)))
+        # The EXTINF value (3 decimals), half up.
+        self._target = max(self._target, math.floor(round(segment.duration, 3) + 0.5))
         self._count(len(segment.data))
         while self.held > self._max_bytes and len(self._segments) > 1:
             gone = self._segments.popleft()

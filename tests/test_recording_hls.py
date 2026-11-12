@@ -742,7 +742,7 @@ def test_the_playlist_starts_at_the_beginning_and_ends_with_endlist() -> None:
     assert playlist.render().splitlines() == [
         "#EXTM3U",
         "#EXT-X-VERSION:7",
-        "#EXT-X-TARGETDURATION:4",
+        "#EXT-X-TARGETDURATION:3",
         "#EXT-X-MEDIA-SEQUENCE:0",
         "#EXT-X-START:TIME-OFFSET=0,PRECISE=YES",
         "#EXT-X-INDEPENDENT-SEGMENTS",
@@ -760,11 +760,22 @@ def test_the_playlist_starts_at_the_beginning_and_ends_with_endlist() -> None:
 
 
 @pytest.mark.parametrize(
-    ("durations", "target"), [((), 1), ((0.3,), 1), ((2.0, 2.0004), 2), ((2.0006,), 3)]
+    ("durations", "target"),
+    [
+        ((), 1),
+        ((0.2,), 1),
+        ((2.0, 2.0004), 2),
+        ((2.4996,), 3),
+        ((1.997, 2.003), 2),
+        ((1.997, 2.003, 2.6), 3),
+        ((1.997, 2.003, 2.6, 0.5), 3),
+    ],
 )
-def test_the_target_duration_is_the_longest_segment_rounded_up(
+def test_the_target_duration_is_the_longest_extinf_rounded_to_the_nearest_second(
     durations: tuple[float, ...], target: int
 ) -> None:
+    """RFC 8216 4.3.3.1 bounds each EXTINF rounded to the nearest integer: 2 s keyframes
+    with jitter keep 2, an EXTINF of 2.500 (from 2.4996) needs 3, and it is at least 1."""
     playlist = HlsPlaylist(max_bytes=1 << 20)
     for index, duration in enumerate(durations):
         playlist.add_segment(_segment(index, duration))
@@ -773,7 +784,7 @@ def test_the_target_duration_is_the_longest_segment_rounded_up(
 
 
 def test_the_target_duration_never_falls_when_a_long_segment_leaves() -> None:
-    """A live playlist's target duration must not change: it stays the longest seen."""
+    """The target duration never falls: it stays at the longest segment seen."""
     playlist = HlsPlaylist(max_bytes=100)
     playlist.add_segment(_segment(0, 3.5, size=40))
     playlist.add_segment(_segment(1, 1.5, size=40))
