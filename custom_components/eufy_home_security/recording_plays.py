@@ -17,8 +17,8 @@ own HLS views do. Nothing is decoded, re-encoded or saved; Save is the separate
   ``{"end": "complete", "duration"}``, or ``{"end": "error", "code", "message"}``
   (``codec_change`` for a clip cut at a video-codec change). A play that ends without
   any segment is answered with the error instead.
-- **After the end** the play is served until the viewer unsubscribes or nobody asked
-  for it for ``PLAY_KEEP_SECONDS``, so the player can finish and seek back.
+- **After the end** the play is served while the viewer stays subscribed, at most
+  ``PLAY_KEEP_SECONDS`` from the end, so the player can finish and seek back.
 - **The viewer leaving** (unsubscribe, or the websocket closing) cancels the library
   call, which closes its extra session, stops the remux and frees every segment at
   once; the token answers 404 from then on.
@@ -73,8 +73,8 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# Seconds an ended play stays served without a request.
-PLAY_KEEP_SECONDS: Final = 300.0
+# Seconds an ended play stays served from its end while its viewer stays subscribed.
+PLAY_KEEP_SECONDS: Final = 1800.0
 # Seconds a playlist request waits for the first segment.
 PLAYLIST_WAIT_SECONDS: Final = 15.0
 # Media one play holds; past it the oldest segments go.
@@ -182,7 +182,6 @@ class _Play:
         self.freed = False
         # Set at the first segment, or when the play is freed.
         self.ready = asyncio.Event()
-        self.last_request = 0.0
         self.keep_timer: asyncio.TimerHandle | None = None
 
     @property
@@ -379,7 +378,7 @@ class RecordingPlays:
     @callback
     def _end(self, play: _Play, end: _End) -> None:
         """Count ``end`` and tell the viewer; a play never answered is freed, an
-        answered one stays served until ``PLAY_KEEP_SECONDS`` after its last request."""
+        answered one stays served for ``PLAY_KEEP_SECONDS`` unless its viewer leaves."""
         play.ended = True
         if end.outcome == _COMPLETE:
             self.stats.complete += 1
@@ -395,18 +394,7 @@ class RecordingPlays:
         play.connection.send_message(
             websocket_api.event_message(play.msg_id, end.event(play.playlist.duration))
         )
-        play.last_request = max(play.last_request, self._hass.loop.time())
-        self._keep(play)
-
-    @callback
-    def _keep(self, play: _Play) -> None:
-        """Free an ended play ``PLAY_KEEP_SECONDS`` after its last request."""
-        play.keep_timer = None
-        idle = self._hass.loop.time() - play.last_request
-        if idle >= PLAY_KEEP_SECONDS:
-            self._free(play)
-            return
-        play.keep_timer = self._hass.loop.call_later(PLAY_KEEP_SECONDS - idle, self._keep, play)
+        play.keep_timer = self._hass.loop.call_later(PLAY_KEEP_SECONDS, self._free, play)
 
     @callback
     def _viewer_left(self, play: _Play) -> None:
@@ -470,7 +458,6 @@ class RecordingHlsView(HomeAssistantView):
         play = _served(request.app[KEY_HASS]).plays.get(token)
         if play is None:
             return web.Response(status=HTTPStatus.NOT_FOUND)
-        play.last_request = asyncio.get_running_loop().time()
         if name == _PLAYLIST:
             if not play.ready.is_set():
                 with contextlib.suppress(TimeoutError):

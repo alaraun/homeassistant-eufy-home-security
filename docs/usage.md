@@ -273,8 +273,8 @@ request (the camera card's **Station** list, over the websocket commands
   Safari plays natively. The recording arrives at its own pace; the picture starts
   once its first piece (two to four seconds of video, up to the next keyframe) has
   arrived, from the beginning, and runs to the last frame. Seeking works within what
-  has arrived; after the end the recording stays available for seeking back until
-  the player is closed or nobody has watched it for 5 minutes. A play keeps at most
+  has arrived; after the end the recording stays available for seeking back while
+  the player stays open, for at most 30 minutes. A play keeps at most
   96 MB of video in memory; past that the oldest part can no longer be sought back
   to. Each viewer holds one HomeBase session for the recording's length: plays, live
   views and live stills share **Sessions per HomeBase**, and a play past it waits for

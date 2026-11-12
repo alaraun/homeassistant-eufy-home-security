@@ -135,7 +135,7 @@ class Player:
 
 @pytest.fixture
 def short_keep(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An ended play is kept 0.3 s after its last request."""
+    """An ended play is kept 0.3 s from its end."""
     monkeypatch.setattr(recording_plays, "PLAY_KEEP_SECONDS", 0.3)
 
 
@@ -917,7 +917,7 @@ async def test_an_unload_while_the_recording_is_looked_up_refuses_the_play(
 
 
 @pytest.mark.usefixtures("short_keep")
-async def test_an_ended_play_is_kept_until_nobody_asked_for_the_keep_time(
+async def test_an_ended_play_is_kept_for_the_keep_time_from_its_end(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
     hass_client_no_auth: ClientSessionGenerator,
@@ -926,31 +926,32 @@ async def test_an_ended_play_is_kept_until_nobody_asked_for_the_keep_time(
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every request restarts the keep time; idle for ``PLAY_KEEP_SECONDS`` the play is
-    freed (404) with no further event."""
+    """A subscribed viewer keeps the ended play served, asking for it or not, until
+    ``PLAY_KEEP_SECONDS`` after the end; requests do not extend it. Then it is freed
+    (404) with no further event."""
     Player().install(monkeypatch)
     entry = await _set_up(hass, seed_warm_cache, fake_station)
     client = await hass_ws_client(hass)
     reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
     assert (await _next(client))["event"]["end"] == "complete"
-    http = await hass_client_no_auth()
     loop = asyncio.get_running_loop()
+    ended = loop.time()
+    http = await hass_client_no_auth()
     url = reply["started"]["url"]
 
-    for _ in range(3):
-        await asyncio.sleep(0.2)
+    for _ in range(2):
+        await asyncio.sleep(0.1)
         assert (await http.get(url)).status == 200
-    asked = loop.time()
     await wait_until(lambda: _plays(entry).diagnostics()["active"] == 0)
 
-    # Freed when the keep time since the last request is up, not a keep time later.
-    assert 0.3 <= loop.time() - asked < 0.45
+    assert 0.25 <= loop.time() - ended < 0.4
     assert (await http.get(url)).status == 404
     await _nothing_more(client)
     await _unload(hass, entry)
 
 
-async def test_unsubscribing_after_the_end_frees_the_kept_play_at_once(
+@pytest.mark.parametrize("how", ["close", "unsubscribe"])
+async def test_a_viewer_leaving_after_the_end_frees_the_kept_play_at_once(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
     hass_client_no_auth: ClientSessionGenerator,
@@ -958,6 +959,7 @@ async def test_unsubscribing_after_the_end_frees_the_kept_play_at_once(
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
+    how: str,
 ) -> None:
     Player().install(monkeypatch)
     entry = await _set_up(hass, seed_warm_cache, fake_station)
@@ -967,9 +969,13 @@ async def test_unsubscribing_after_the_end_frees_the_kept_play_at_once(
     http = await hass_client_no_auth()
     assert (await http.get(reply["started"]["url"])).status == 200
 
-    await client.send_json_auto_id({"type": "unsubscribe_events", "subscription": reply["id"]})
+    if how == "close":
+        await client.close()
+        await wait_until(lambda: _plays(entry).diagnostics()["active"] == 0)
+    else:
+        await client.send_json_auto_id({"type": "unsubscribe_events", "subscription": reply["id"]})
+        assert (await _next(client))["success"]
 
-    assert (await _next(client))["success"]
     assert (await http.get(reply["started"]["url"])).status == 404
     counts = _plays(entry).diagnostics()
     assert (counts["complete"], counts["viewer_left"], counts["active"]) == (1, 0, 0)
