@@ -676,15 +676,28 @@ async def _ws_play(
 ) -> None:
     """Play one recording as HLS: its playlist URL comes as the first event, then one
     event ends the play (``recording_plays``)."""
+    msg_id: int = msg["id"]
+    left = False
+
+    @callback
+    def viewer_left() -> None:
+        nonlocal left
+        left = True
+
+    # Held from before the lookup, so a viewer that leaves during it is seen;
+    # ``async_play`` replaces it.
+    connection.subscriptions[msg_id] = viewer_left
     try:
         camera = _camera(hass, msg[ATTR_ENTITY_ID])
         if camera.station.is_standalone:
             raise RecordingError(ERR_NOT_FOUND, "A standalone camera keeps no recordings")
         row = await camera.recordings.async_playable_row(camera, msg["ref"])
+        if left:
+            return
+        await camera.recordings.plays.async_play(connection, msg_id, camera, row)
     except RecordingError as err:
-        connection.send_error(msg["id"], err.code, str(err))
-        return
-    await camera.recordings.plays.async_play(connection, msg["id"], camera, row)
+        connection.subscriptions.pop(msg_id, None)
+        connection.send_error(msg_id, err.code, str(err))
 
 
 class RecordingThumbView(HomeAssistantView):

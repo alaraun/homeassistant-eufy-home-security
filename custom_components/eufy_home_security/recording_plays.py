@@ -59,7 +59,13 @@ from .recording_hls import (
     Segment,
     TsRemuxer,
 )
-from .station_recordings import ERR_CODEC_CHANGE, ERR_FAILED, ERR_UNAVAILABLE, transfer_error
+from .station_recordings import (
+    ERR_CODEC_CHANGE,
+    ERR_FAILED,
+    ERR_UNAVAILABLE,
+    RecordingError,
+    transfer_error,
+)
 
 if TYPE_CHECKING:
     from .runtime import EufyConfigEntry
@@ -193,6 +199,7 @@ class RecordingPlays:
             hass.http.register_view(RecordingHlsView())
         self._plays: set[_Play] = set()
         self._threads: set[threading.Thread] = set()
+        self._stopped = False
         self.stats = PlayStats()
 
     def diagnostics(self) -> dict[str, Any]:
@@ -214,7 +221,10 @@ class RecordingPlays:
         row: HistoryRecord,
     ) -> None:
         """Play ``row`` for the subscription ``msg_id``; the answers follow from the
-        library's writes and the remux (see the module docstring)."""
+        library's writes and the remux (see the module docstring). Raises
+        :class:`RecordingError` once the plays are stopped."""
+        if self._stopped:
+            raise RecordingError(ERR_UNAVAILABLE, "The camera's account is not loaded")
         play = _Play(camera, row, connection, msg_id)
         self._plays.add(play)
         self._served.plays[play.token] = play
@@ -422,6 +432,7 @@ class RecordingPlays:
     async def async_stop(self) -> None:
         """End every play still running (``failed``), free every play, and wait for
         the library calls and remux threads to stop. For the entry's unload."""
+        self._stopped = True
         tasks = []
         for play in list(self._plays):
             if not play.ended:

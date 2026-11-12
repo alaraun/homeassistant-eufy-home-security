@@ -620,7 +620,11 @@ async def test_a_request_the_station_cannot_play_is_refused_before_the_library(
     running = next(r["ref"] for r in listed if not r["settled"])
 
     assert (await _play(client, _camera(hass), "v1.r.garbled"))["error"]["code"] == "not_found"
-    assert (await _play(client, _camera(hass), running))["error"]["code"] == "not_settled"
+    refused = await _play(client, _camera(hass), running)
+    assert refused["error"]["code"] == "not_settled"
+    # The refused subscription is gone: unsubscribing it finds nothing.
+    await client.send_json_auto_id({"type": "unsubscribe_events", "subscription": refused["id"]})
+    assert (await _next(client))["error"]["code"] == "not_found"
     assert (await _play(client, "camera.other", running))["error"]["code"] == "not_found"
     await client.send_json_auto_id(
         {
@@ -798,6 +802,111 @@ async def test_a_viewer_that_leaves_stops_the_play_and_frees_it_at_once(
     if how == "unsubscribe":
         await _nothing_more(client)
     await _unload(hass, entry)
+
+
+@dataclass
+class HeldLookup:
+    """``StationRecordings.async_playable_row`` finds the row, then holds it until
+    ``release`` is set."""
+
+    entered: asyncio.Event = field(default_factory=asyncio.Event)
+    release: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> HeldLookup:
+        real = station_recordings.StationRecordings.async_playable_row
+
+        async def held(
+            recordings: station_recordings.StationRecordings, camera: Any, ref: str
+        ) -> HistoryRecord:
+            row = await real(recordings, camera, ref)
+            self.entered.set()
+            await self.release.wait()
+            return row
+
+        monkeypatch.setattr(station_recordings.StationRecordings, "async_playable_row", held)
+        return self
+
+
+async def _play_handlers_done() -> None:
+    """Wait for every running ``recordings/play`` handler to return."""
+    handlers = [t for t in asyncio.all_tasks() if t.get_name() == "websocket_api.async:_ws_play"]
+    assert handlers
+    await asyncio.wait_for(asyncio.gather(*handlers), 5)
+
+
+@pytest.mark.parametrize("how", ["close", "unsubscribe", "stay"])
+async def test_a_viewer_gone_while_the_recording_is_looked_up_starts_no_play(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    how: str,
+) -> None:
+    """Closing the websocket or unsubscribing while the row is looked up: the library is
+    never asked and nothing stays served; a viewer that stays gets the play."""
+    player = Player(chunks=[], hold=True).install(monkeypatch)
+    lookup = HeldLookup().install(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+    msg_id = await _subscribe(client, _camera(hass), await _ref(client, _camera(hass)))
+    await asyncio.wait_for(lookup.entered.wait(), 5)
+
+    if how == "close":
+        await client.close()
+        await asyncio.sleep(0.1)
+    elif how == "unsubscribe":
+        await client.send_json_auto_id({"type": "unsubscribe_events", "subscription": msg_id})
+        assert (await _next(client))["success"]
+    lookup.release.set()
+    await _play_handlers_done()
+
+    if how == "stay":
+        await asyncio.wait_for(player.entered.wait(), 5)
+        assert _plays(entry).diagnostics()["active"] == 1
+    else:
+        assert not player.entered.is_set()
+        assert _plays(entry).diagnostics() | {"bytes_held_peak": 0} == {
+            "started": 0,
+            "complete": 0,
+            "viewer_left": 0,
+            "failed": {},
+            "active": 0,
+            "bytes_held_peak": 0,
+        }
+        assert recording_plays._served(hass).plays == {}
+    if how == "unsubscribe":
+        await _nothing_more(client)
+    await _unload(hass, entry)
+
+
+async def test_an_unload_while_the_recording_is_looked_up_refuses_the_play(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The entry unloads while the row is looked up: the play is refused
+    ``unavailable`` and the library is never asked."""
+    player = Player(chunks=[], hold=True).install(monkeypatch)
+    lookup = HeldLookup().install(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+    msg_id = await _subscribe(client, _camera(hass), await _ref(client, _camera(hass)))
+    await asyncio.wait_for(lookup.entered.wait(), 5)
+    plays = _plays(entry)
+
+    await _unload(hass, entry)
+    lookup.release.set()
+    reply = await _next(client)
+
+    assert (reply["id"], reply["error"]["code"]) == (msg_id, "unavailable")
+    assert not player.entered.is_set()
+    assert plays.diagnostics()["active"] == 0
+    assert recording_plays._served(hass).plays == {}
 
 
 @pytest.mark.usefixtures("short_keep")
