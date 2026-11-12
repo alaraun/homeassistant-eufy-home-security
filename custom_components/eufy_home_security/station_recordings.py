@@ -1,6 +1,6 @@
 """A HomeBase's own recordings of a camera, listed and fetched on request, for the card.
 
-Two websocket commands and one view, registered once per Home Assistant instance:
+Three websocket commands and one view, registered once per Home Assistant instance:
 
 - ``eufy_home_security/recordings`` ``{entity_id, days?, limit?, before?, day?}`` lists the
   camera's recordings on the station's disk, newest first: start, end, length, size,
@@ -27,6 +27,10 @@ Two websocket commands and one view, registered once per Home Assistant instance
   file still exists returns without a download. The station plays it off its disk: no
   camera is woken. A ``ref`` no fresh listing holds is looked up on the station
   (``Station.async_history_record_by_ref``).
+- ``eufy_home_security/recordings/play`` ``{entity_id, ref}`` (a subscription) plays one
+  settled recording straight to a viewer as fMP4 HLS made in memory and saves nothing
+  (``recording_plays.RecordingPlays``): an empty result, then the playlist URL as an
+  event, then one event ends the play.
 - ``/api/eufy_home_security/recording_thumb/<entity id>/<ref>`` serves a
   recording's still off the station's disk as ``image/jpeg``, behind Home Assistant's
   auth (the listing hands out signed paths), kept in a small in-memory LRU; 404 for a
@@ -36,7 +40,8 @@ Errors carry a code: ``not_found``, ``not_settled``, ``unavailable``, ``busy`` (
 station's session budget is spent), ``account_rejected`` (the station refuses this eufy
 account, -104; the message is the sharing hint), ``codec_change`` (the download stops
 where the recording's video codec changes, on every try: not downloaded again) and
-``failed``. Serials, paths, record ids and refs are never logged.
+``failed``. A download and a play answer a library error alike (:func:`transfer_error`).
+Serials, paths, record ids and refs are never logged.
 """
 
 from __future__ import annotations
@@ -91,6 +96,7 @@ from .history import ClipStoreError, IncompleteClipError
 from .recordings import LIST_TIMEOUT_SECONDS, StoredFile, join
 
 if TYPE_CHECKING:
+    from .recording_plays import RecordingPlays
     from .recordings import StoredRecordings
     from .runtime import EufyConfigEntry
 
@@ -98,6 +104,7 @@ _LOGGER = logging.getLogger(__name__)
 
 WS_LIST: Final = f"{DOMAIN}/recordings"
 WS_FETCH: Final = f"{DOMAIN}/recordings/fetch"
+WS_PLAY: Final = f"{DOMAIN}/recordings/play"
 THUMB_URL: Final = "/api/" + DOMAIN + "/recording_thumb/{entity_id}/{ref}"
 THUMB_VIEW_NAME: Final = f"api:{DOMAIN}:recording_thumb"
 # How long a listing or page is reused per camera and arguments.
@@ -191,10 +198,14 @@ class _Camera:
 class StationRecordings:
     """One entry's listings and fetches of its cameras' recordings on their stations."""
 
-    def __init__(self, hass: HomeAssistant, stored: StoredRecordings) -> None:
-        """``stored`` is the record of what the history holds, shared with the sync."""
+    def __init__(
+        self, hass: HomeAssistant, stored: StoredRecordings, plays: RecordingPlays
+    ) -> None:
+        """``stored`` is the record of what the history holds, shared with the sync;
+        ``plays`` runs the entry's recording plays."""
         self._hass = hass
         self._stored = stored
+        self.plays = plays
         self._listings: dict[_ListKey, tuple[float, Page]] = {}
         self._listing: dict[_ListKey, asyncio.Task[Page]] = {}
         self._thumbs: OrderedDict[tuple[str, str], bytes] = OrderedDict()
@@ -210,6 +221,7 @@ class StationRecordings:
             "cached_listings": len(self._listings),
             "cached_thumbs": len(self._thumbs),
             "cached_refs": len(self._ref_ids),
+            "plays": self.plays.diagnostics(),
         }
 
     async def async_list(self, camera: _Camera, days: int) -> list[HistoryRecord]:
@@ -411,12 +423,6 @@ class StationRecordings:
         self.stats.fetch_downloads += 1
         try:
             saved = await self._stored.async_store(camera.station, row)
-        except LiveStreamLimitError as err:
-            self.stats.fetch_failed += 1
-            raise RecordingError(ERR_BUSY, "Every session of the HomeBase is in use") from err
-        except AccountRejectedError as err:
-            self.stats.fetch_failed += 1
-            raise _account_refused(camera) from err
         # Before OSError: TimeoutError is one.
         except (EufySecurityError, TimeoutError) as err:
             self.stats.fetch_failed += 1
@@ -425,7 +431,7 @@ class StationRecordings:
                 redact_serial(camera.device_sn),
                 type(err).__name__,
             )
-            raise RecordingError(ERR_UNAVAILABLE, "The HomeBase did not play it") from err
+            raise transfer_error(camera, err) from err
         except (IncompleteClipError, ClipStoreError, OSError) as err:
             self.stats.fetch_failed += 1
             _LOGGER.debug(
@@ -442,6 +448,16 @@ class StationRecordings:
                 raise RecordingError(ERR_CODEC_CHANGE, _CODEC_CHANGE_MESSAGE) from err
             raise RecordingError(ERR_FAILED, "The recording could not be saved") from err
         return await self._async_playable(saved.path)
+
+    async def async_playable_row(self, camera: _Camera, ref: str) -> HistoryRecord:
+        """The recording ``ref`` when it can be played now: ``not_settled`` while it
+        records, ``unavailable`` while the station is away."""
+        row = await self.async_row(camera, ref)
+        if not Station.recording_settled(row):
+            raise RecordingError(ERR_NOT_SETTLED, "The recording is still running")
+        if not camera.station.connected:
+            raise RecordingError(ERR_UNAVAILABLE, "The HomeBase is not connected")
+        return row
 
     def _stored_file(
         self, camera: _Camera, record_id: int, started: datetime | None
@@ -495,6 +511,16 @@ class StationRecordings:
             while len(self._thumbs) > THUMB_CACHE_ITEMS:
                 self._thumbs.popitem(last=False)
         return still.data
+
+
+def transfer_error(camera: _Camera, err: EufySecurityError | TimeoutError) -> RecordingError:
+    """The answer to a library error of a download or a play: ``busy`` past the session
+    budget, ``account_rejected`` with the sharing hint, else ``unavailable``."""
+    if isinstance(err, LiveStreamLimitError):
+        return RecordingError(ERR_BUSY, "Every session of the HomeBase is in use")
+    if isinstance(err, AccountRejectedError):
+        return _account_refused(camera)
+    return RecordingError(ERR_UNAVAILABLE, "The HomeBase did not play it")
 
 
 def _account_refused(camera: _Camera) -> RecordingError:
@@ -637,6 +663,46 @@ async def _ws_fetch(
     connection.send_result(msg["id"], result)
 
 
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_PLAY,
+        vol.Required(ATTR_ENTITY_ID): cv.entity_id,
+        vol.Required("ref"): cv.string,
+    }
+)
+@websocket_api.async_response
+async def _ws_play(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Play one recording as HLS: its playlist URL comes as the first event, then one
+    event ends the play (``recording_plays``)."""
+    msg_id: int = msg["id"]
+    left = False
+
+    @callback
+    def viewer_left() -> None:
+        nonlocal left
+        left = True
+
+    # Held from before the lookup, so a viewer that leaves during it is seen;
+    # ``async_play`` replaces it.
+    connection.subscriptions[msg_id] = viewer_left
+    try:
+        camera = _camera(hass, msg[ATTR_ENTITY_ID])
+        if camera.station.is_standalone:
+            raise RecordingError(ERR_NOT_FOUND, "A standalone camera keeps no recordings")
+        row = await camera.recordings.async_playable_row(camera, msg["ref"])
+        if left:
+            return
+        await camera.recordings.plays.async_play(connection, msg_id, camera, row)
+    except RecordingError as err:
+        connection.send_error(msg_id, err.code, str(err))
+    finally:
+        # Still the placeholder: no play started, whatever ended the lookup.
+        if connection.subscriptions.get(msg_id) is viewer_left:
+            connection.subscriptions.pop(msg_id)
+
+
 class RecordingThumbView(HomeAssistantView):
     """Serves a recording's still off the station's disk."""
 
@@ -680,4 +746,5 @@ def async_setup(hass: HomeAssistant) -> None:
     hass.data[_REGISTERED] = True
     websocket_api.async_register_command(hass, _ws_list)
     websocket_api.async_register_command(hass, _ws_fetch)
+    websocket_api.async_register_command(hass, _ws_play)
     hass.http.register_view(RecordingThumbView())
