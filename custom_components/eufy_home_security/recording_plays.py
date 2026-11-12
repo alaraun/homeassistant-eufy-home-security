@@ -168,6 +168,8 @@ class _Play:
         self.msg_id = msg_id
         self.playlist = HlsPlaylist(PLAY_MAX_BYTES)
         self.task: asyncio.Task[None] | None = None
+        # This module cancelled the library call.
+        self.cancelled = False
         self.remuxer: TsRemuxer | None = None
         self.thread: threading.Thread | None = None
         self.remux_done = False
@@ -251,9 +253,10 @@ class RecordingPlays:
                 play.row, write, realtime=PLAY_REALTIME
             )
         except asyncio.CancelledError:
-            # Cancelled by this module, or by the entry's unload.
-            if not play.ended:
+            if not play.cancelled:
+                # Cancelled from outside (Home Assistant stopping): nothing more comes.
                 self._end(play, _STOPPED)
+                self._free(play)
             raise
         except (EufySecurityError, TimeoutError) as err:
             _LOGGER.debug(
@@ -353,8 +356,7 @@ class RecordingPlays:
             _LOGGER.error("Recording play could not be repackaged", exc_info=error)
         if error is not None:
             play.remux_error = _NOT_PLAYED
-            if play.task is not None and not play.task.done():
-                play.task.cancel()
+            self._cancel_library(play)
         play.playlist.end()
         self._settle(play)
 
@@ -420,14 +422,19 @@ class RecordingPlays:
         if play.keep_timer is not None:
             play.keep_timer.cancel()
             play.keep_timer = None
-        if play.task is not None and not play.task.done():
-            play.task.cancel()
+        self._cancel_library(play)
         if play.remuxer is not None:
             play.remuxer.abort()
         play.playlist.free()
         play.ready.set()
         self._served.plays.pop(play.token, None)
         self._plays.discard(play)
+
+    @staticmethod
+    def _cancel_library(play: _Play) -> None:
+        if play.task is not None and not play.task.done():
+            play.cancelled = True
+            play.task.cancel()
 
     async def async_stop(self) -> None:
         """End every play still running (``failed``), free every play, and wait for

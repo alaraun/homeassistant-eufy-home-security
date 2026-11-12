@@ -690,13 +690,15 @@ async def test_an_end_after_the_first_segment_is_one_error_event_after_the_tail(
 async def test_a_remux_failure_after_the_url_stops_the_library_with_an_error_event(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
+    hass_client_no_auth: ClientSessionGenerator,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The remux breaks off after its first segment while the library still plays: the
-    library is cancelled (its session freed) and the viewer gets ``failed``."""
+    library is cancelled (its session freed), the viewer gets ``failed`` and what was
+    published stays served."""
     player = Player(hold=True).install(monkeypatch)
     real_close = recording_hls.TsRemuxer._close_segment
     closes: list[int] = []
@@ -710,13 +712,18 @@ async def test_a_remux_failure_after_the_url_stops_the_library_with_an_error_eve
     monkeypatch.setattr(recording_hls.TsRemuxer, "_close_segment", close_then_break)
     entry = await _set_up(hass, seed_warm_cache, fake_station)
     client = await hass_ws_client(hass)
-    assert (await _play(client, _camera(hass), await _ref(client, _camera(hass))))["success"]
+    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
+    assert reply["success"]
 
     event = (await _next(client))["event"]
 
     assert (event["end"], event["code"]) == ("error", "failed")
     await asyncio.wait_for(player.cancelled.wait(), 5)
     await _nothing_more(client)
+    # What was published stays served, ended.
+    text, _ = await _fetch_all(await hass_client_no_auth(), reply["started"]["url"])
+    assert text.splitlines()[-1] == "#EXT-X-ENDLIST"
+    assert _plays(entry).diagnostics()["active"] == 1
     await _unload(hass, entry)
 
 
@@ -1232,18 +1239,20 @@ def test_a_second_entry_registers_no_second_view(hass: HomeAssistant) -> None:
 async def test_a_library_call_cancelled_by_home_assistant_ends_the_play(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
+    hass_client_no_auth: ClientSessionGenerator,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Home Assistant stopping cancels the entry's background tasks: the play ends
-    ``failed``."""
+    ``failed`` and is freed, its remux thread stopped and its token 404."""
     head, _ = _halves(_clip(5.0), 3.5)
     Player(chunks=head, hold=True).install(monkeypatch)
     entry = await _set_up(hass, seed_warm_cache, fake_station)
     client = await hass_ws_client(hass)
-    assert (await _play(client, _camera(hass), await _ref(client, _camera(hass))))["success"]
+    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
+    assert reply["success"]
     (library,) = [
         t for t in asyncio.all_tasks() if t.get_name() == "eufy_home_security recording play"
     ]
@@ -1252,6 +1261,11 @@ async def test_a_library_call_cancelled_by_home_assistant_ends_the_play(
     event = (await _next(client))["event"]
 
     assert (event["end"], event["code"]) == ("error", "failed")
+    await wait_until(lambda: _remux_threads() == [])
+    assert (await (await hass_client_no_auth()).get(reply["started"]["url"])).status == 404
+    counts = _plays(entry).diagnostics()
+    assert (counts["failed"], counts["active"]) == ({"failed": 1}, 0)
+    await _nothing_more(client)
     await _unload(hass, entry)
 
 
