@@ -274,11 +274,12 @@ request (the camera card's **Station** list, over the websocket commands
   once its first piece (two to four seconds of video, up to the next keyframe) has
   arrived, from the beginning, and runs to the last frame. Seeking works within what
   has arrived; after the end the recording stays available for seeking back while
-  the player stays open, for at most 30 minutes. A play keeps at most
-  96 MB of video in memory; past that the oldest part can no longer be sought back
-  to. Each viewer holds one HomeBase session for the recording's length: plays, live
-  views and live stills share **Sessions per HomeBase**, and a play past it waits for
-  a session, then fails with "every session of the HomeBase is in use". Closing the
+  the player stays open, for at most 30 minutes. A play keeps at most 96 MB of video
+  in memory; past that the oldest part can no longer be sought back to. Each viewer
+  holds one HomeBase session while the HomeBase sends the recording (usually faster
+  than it plays): plays, live views and live stills share **Sessions per HomeBase**,
+  and a play past it waits for a session, then fails with "every session of the
+  HomeBase is in use". Closing the
   player stops the HomeBase sending at once. A recording whose video codec changes
   partway plays up to the change. Tested with the fake station and with recorded
   HomeBase video in Firefox and Chrome; not yet checked with a HomeBase.
