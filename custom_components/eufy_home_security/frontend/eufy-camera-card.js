@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.12-2';
+const CARD_VERSION = '2026.11.12-3';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -141,8 +141,9 @@ const STATION_FETCH_WS = 'eufy_home_security/recordings/fetch';
 // One recording played from the station, saving nothing (Play): a subscription whose events are {url, mime_type}
 // (the integration's HLS playlist: it grows while the station sends and ends with the recording), then one
 // {end: 'complete'} or {end: 'error', code, message}, which only says that no more data comes. The playlist stays
-// served after the end until the card unsubscribes; unsubscribing ends the play and frees what arrived. A refused
-// play rejects with {code, message}. It holds one of the HomeBase's sessions while the station sends.
+// served after the end until the card unsubscribes, at most 1800 s after the end event; unsubscribing ends the play
+// and frees what arrived. A refused play rejects with {code, message}. It holds one of the HomeBase's sessions while
+// the station sends.
 const STATION_PLAY_WS = 'eufy_home_security/recordings/play';
 // Texts by the integration's error code where the card words it its own way; any other code shows its message
 const PLAY_ERRORS = {
@@ -154,12 +155,12 @@ const PLAY_LOST = 'Connection lost';
 // A hidden tab ends a station play after this long (unsubscribing frees the HomeBase session and the segments)
 const PLAY_HIDDEN_SECONDS = 60;
 const PLAY_HIDDEN = 'Stopped while the page was hidden';
-// After the end event with an error, or a websocket drop, the play's video counts as stopped once it has not moved
-// for this long (a playlist without its end mark stalls instead of ending)
+// After the end event or a websocket drop, the play's video counts as stopped once it has not moved for this long
+// while not paused (a playlist without its end mark, or one the integration no longer serves, stalls instead of ending)
 const PLAY_STALL_MS = 5000;
-// Play again replays in the player for this long after the end state, then asks anew: the integration keeps an ended
-// play 300 s after the player's last request, which comes up to ~30 s (the player's buffer) before the video ends
-const PLAY_REPLAY_MS = 240000;
+// Play again replays in the player for this long after the end event, then asks anew: the integration keeps an ended
+// play while the card is subscribed, at most 1800 s after the end event
+const PLAY_REPLAY_MS = 1700000;
 // The days back from today the integration lists station recordings for (its MAX_LIST_DAYS)
 const STATION_DAYS = 30;
 // camera entity -> false once the integration answered that the camera has no station recordings (a standalone
@@ -1007,14 +1008,15 @@ class EufyCameraCard extends HTMLElement {
   // Play: a saved recording plays its copy in the history; any other streams from the station (STATION_PLAY_WS) in
   // the picture area, with the player's controls for seeking within what arrived, and saves nothing. One play per
   // card: another one ends the running one.
-  // The play: { rid, id, url, muted, unsub, conn, onDrop,
+  // The play: { rid, id, item: the row played (kept while a refresh lists without it), url, muted, unsub, conn, onDrop,
   //   done: the end event ('complete' | 'error', emsg its text), lost: the websocket dropped, finAt: when either came,
   //   end: the end state shown ('complete' | 'error' | 'stopped', err its text, endAt when it showed),
   //   off: the subscription released, vid/vOff: the hooked <video> and its unhook,
   //   vt/vAt: the video's last position and when it last moved, hidAt: when the tab was hidden, watch: the interval }
   _playRecording(rid) {
     const h = this._hass, conn = h && h.connection;
-    const it = this._srec && this._srec.items && this._srec.items.find(x => x.rid === rid);
+    const kept = this._rplay && this._rplay.rid === rid ? this._rplay.item : null;
+    const it = (this._srec && this._srec.items && this._srec.items.find(x => x.rid === rid)) || kept;
     if (!h || !rid || !it || this._sfetch.has(rid) || !it.settled || this._open !== 'history') return;
     if (it.mcid) { this._showRecording(it); return; }
     if (!conn || typeof conn.subscribeMessage !== 'function') return;
@@ -1023,7 +1025,7 @@ class EufyCameraCard extends HTMLElement {
     if (was && was.rid === rid && !was.end) return;
     this._endPlay();
     const cam = this._camRef();
-    const p = { rid, id: it.id, url: null, muted: true, unsub: null, conn, done: null, emsg: null, lost: false, finAt: 0,
+    const p = { rid, id: it.id, item: it, url: null, muted: true, unsub: null, conn, done: null, emsg: null, lost: false, finAt: 0,
       end: null, err: null, endAt: 0, off: false, vid: null, vOff: null, vt: null, vAt: 0, hidAt: null, watch: null };
     p.onDrop = () => this._playDrop(p);
     if (typeof conn.addEventListener === 'function') conn.addEventListener('disconnected', p.onDrop);
@@ -1069,7 +1071,7 @@ class EufyCameraCard extends HTMLElement {
       el.muted = p.muted;
       el.controls = true;
       el.fitMode = 'contain';
-      const it = this._srec && this._srec.items && this._srec.items.find(x => x.id === p.id);
+      const it = p.item;
       if (it && it.thumb && !THUMB_BAD.has(it.thumb)) el.posterUrl = it.thumb;
       this._rplayer = el;
       this._vslot.appendChild(el);
@@ -1111,7 +1113,7 @@ class EufyCameraCard extends HTMLElement {
     p.vOff = () => evs.forEach(([n, f]) => v.removeEventListener(n, f));
   }
 
-  // The end state comes when the video ends (the playlist's end mark), or, after an error end or a websocket drop,
+  // The end state comes when the video ends (the playlist's end mark), or, after the end event or a websocket drop,
   // when it has not moved for PLAY_STALL_MS (paused by the viewer does not count)
   _playWatch(p) {
     if (this._rplay !== p || p.off || !this._rplayer) return;
@@ -1121,7 +1123,16 @@ class EufyCameraCard extends HTMLElement {
     if (v && v.ended) { this._playStopped(p, true); return; }
     const now = Date.now(), t = v ? v.currentTime : null;
     if (t !== p.vt || (v && v.paused)) { p.vt = t; p.vAt = now; }
-    if ((p.done === 'error' || p.lost) && now - Math.max(p.vAt, p.finAt) >= PLAY_STALL_MS) this._playStopped(p, false);
+    if (!(p.done || p.lost) || now - Math.max(p.vAt, p.finAt) < PLAY_STALL_MS) return;
+    if (p.done === 'error' || p.lost) this._playStopped(p, false); else this._playStalled(p);
+  }
+
+  // The video stalled after a complete end (the integration no longer serves the play): the recording's end state
+  // over its thumbnail, the subscription released
+  _playStalled(p) {
+    this._playRelease(p);
+    this._dropPlayer();
+    this._playOver(p, null, false);
   }
 
   // The video stopped: the end of the recording, or the error or drop that cut it short
@@ -1148,12 +1159,13 @@ class EufyCameraCard extends HTMLElement {
     if (!p.url) this._playOver(p, PLAY_LOST, true); else this._playWatch(p);
   }
 
-  // Play again: the player starts over while the play is still served; otherwise a new play
+  // Play again: the player starts over while the play is still served (PLAY_REPLAY_MS from the end event); otherwise a
+  // new play
   _playAgain() {
     const p = this._rplay;
     if (!p) return;
     const v = this._rpVideo();
-    if (!v || p.off || p.lost || Date.now() - p.endAt > PLAY_REPLAY_MS) { this._playRecording(p.rid); return; }
+    if (!v || p.off || p.lost || Date.now() - (p.finAt || p.endAt) > PLAY_REPLAY_MS) { this._playRecording(p.rid); return; }
     p.end = null;
     p.err = null;
     p.vAt = Date.now();
@@ -2834,7 +2846,9 @@ class EufyCameraCard extends HTMLElement {
     // A history picture shown in place of the still: its own chip with a close button, no live or pan/tilt controls
     const hItems = (this._hist && this._hist.items) || [];
     const sItems = (this._srec && this._srec.items) || [];
-    const vItem = this._view && !L ? (hItems.find(x => x.id === this._view) || sItems.find(x => x.id === this._view)) : null;
+    // The played row stays shown while a refresh lists without it (a row from Show more, another day)
+    const pItem = this._rplay && this._rplay.id === this._view ? this._rplay.item : null;
+    const vItem = this._view && !L ? (hItems.find(x => x.id === this._view) || sItems.find(x => x.id === this._view) || pItem) : null;
     if (this._view && !vItem && ((this._hist && this._hist.items) || String(this._view).startsWith('rec:'))) this._view = null;
     // A station play lasts as long as its recording is the item shown: closed, another item, live view or another
     // camera ends it

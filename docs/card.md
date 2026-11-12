@@ -164,14 +164,16 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   - Station rows have **Play** and **Save**. **Play** streams the recording from the HomeBase into the picture
     area and saves nothing (`Recording · <time>`, muted with an Unmute button, ✕ to close). It starts in a few
     seconds, from the beginning, and the player's own controls pause it and seek forward and backward within
-    what has arrived so far; the HomeBase usually sends faster than the video plays. While the HomeBase sends,
-    the play holds one of its sessions, the same budget live views and stills use. When the video reaches the
-    end, `End of recording` and Play again show over its last picture. For a few minutes after that, Play again
-    and seeking back with the controls replay what arrived without asking the HomeBase again; later Play again
-    starts a new play.
+    what has arrived so far. The play holds one of the HomeBase's sessions while the HomeBase sends the recording
+    (usually faster than it plays), the same budget live views and stills use. When the video reaches the end,
+    `End of recording` and Play again show over its last picture. For up to about 28 minutes after the HomeBase
+    finished sending, Play again and seeking back with the controls replay what arrived without asking the
+    HomeBase again; later Play again starts a new play. A video that stops moving after the HomeBase finished
+    sending (not paused) shows `End of recording` over the recording's picture, and Play again starts anew.
     - One recording plays per card: closing it, opening another recording or history item, starting live view,
-      switching camera or leaving the dashboard ends the play and frees what arrived. A tab hidden for more than
-      60 s ends it too (`Stopped while the page was hidden`; Play again starts it anew).
+      switching camera or leaving the dashboard ends the play and frees what arrived; refreshing the Station
+      list does not. A tab hidden for more than 60 s ends it too (`Stopped while the page was hidden`; Play
+      again starts it anew).
     - When the HomeBase stops sending early (an error, or a recording that changes its video format part-way:
       `The recording changes its video format here; Save it to watch the rest`), what arrived keeps playing and
       the message shows when the video stops. A lost connection to Home Assistant shows `Connection lost` the
