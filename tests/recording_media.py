@@ -33,7 +33,7 @@ class Part:
 
 
 def _encode_part(
-    part: Part, *, codec: str, fps: int, gop: int, audio: bool, first_frame: int
+    part: Part, *, codec: str, fps: int, gop: int, audio: bool, first_frame: int, bframes: int
 ) -> bytes:
     """One part as its own TS, frames numbered from ``first_frame`` (moving content)."""
     buffer = io.BytesIO()
@@ -44,7 +44,7 @@ def _encode_part(
     video.pix_fmt = "yuv420p"
     context = video.codec_context
     context.gop_size = gop
-    context.max_b_frames = 0
+    context.max_b_frames = bframes
     params = "repeat-headers=1"
     if codec == "libx265":
         params += f":log-level=error:keyint={gop}:min-keyint={gop}:scenecut=0"
@@ -100,8 +100,10 @@ def make_ts(
     gop: int = 15,
     audio: bool = True,
     start: int = 900_000,
+    bframes: int = 0,
 ) -> bytes:
-    """The parts joined into one TS whose first video DTS is ``start`` ticks (90 kHz)."""
+    """The parts joined into one TS whose first video DTS is ``start`` ticks (90 kHz);
+    ``bframes`` B-frames between references (H.264)."""
     out_buffer = io.BytesIO()
     out = av.open(out_buffer, mode="w", format="mpegts")
     template_video = template_audio = None
@@ -110,7 +112,9 @@ def make_ts(
     frame = 0
     last: dict[str, int] = {}
     for part in parts:
-        data = _encode_part(part, codec=codec, fps=fps, gop=gop, audio=audio, first_frame=frame)
+        data = _encode_part(
+            part, codec=codec, fps=fps, gop=gop, audio=audio, first_frame=frame, bframes=bframes
+        )
         frame += round(part.seconds * fps)
         source = av.open(io.BytesIO(data), mode="r", format="mpegts")
         if template_video is None:

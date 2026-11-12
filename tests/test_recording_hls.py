@@ -254,14 +254,23 @@ def _pts_before_dts(index: int, packet: Any) -> None:
         packet.pts -= 1
 
 
+def _leading_picture(index: int, packet: Any) -> None:
+    """A frame decoded after the first keyframe but shown before it."""
+    _library_style(index, packet)
+    if index == 1:
+        packet.pts -= 9000
+        packet.dts = packet.pts - 2000
+
+
 @pytest.mark.parametrize(
     ("edit", "kept", "first_pts"),
     [
-        (_library_style, 45, 0.0667),
+        (_library_style, 45, 0.0),
         (_lj_style, 45, 0.0),
-        (_first_without_dts, 45, 0.0667),
+        (_first_without_dts, 45, 0.0),
         (_repeated_dts, 44, 0.0),
         (_pts_before_dts, 44, 0.0),
+        (_leading_picture, 44, 0.0),
     ],
 )
 def test_a_frame_without_a_usable_dts_is_mended_or_left_out(
@@ -270,8 +279,9 @@ def test_a_frame_without_a_usable_dts_is_mended_or_left_out(
     kept: int,
     first_pts: float,
 ) -> None:
-    """A missing DTS is put one frame before the PTS and after the previous DTS; a frame
-    whose DTS does not advance or lies past its PTS is dropped, not fatal."""
+    """The first keyframe is shown at 0 whatever its DTS; a missing DTS is put one frame
+    before the PTS and after the previous DTS; a frame whose DTS does not advance or
+    lies past its PTS is dropped, not fatal."""
     real_open = av.open
 
     def edited_open(file: Any, *args: Any, **kwargs: Any) -> Any:
@@ -289,6 +299,18 @@ def test_a_frame_without_a_usable_dts_is_mended_or_left_out(
     decoded = [_decode(published.inits[0], s) for s in published.segments]
     assert sum(d.frames for d in decoded) == kept
     assert float(decoded[0].first_pts) == pytest.approx(first_pts, abs=0.001)
+    # Segments span the shown pictures: first keyframe to the end of the last frame.
+    assert sum(s.duration for s in published.segments) == pytest.approx(3.0, abs=0.001)
+
+
+def test_with_b_frames_the_last_segment_ends_with_the_last_picture_shown() -> None:
+    """The last frame decoded is not the last one shown; the tail still ends there."""
+    data = make_ts((Part(320, 240, 3.0),), gop=15, bframes=2)
+    published, result = _remux(data)
+
+    assert sum(s.duration for s in published.segments) == pytest.approx(3.0, abs=0.001)
+    assert result.video_packets == 45
+    assert sum(_decode(published.inits[0], s).frames for s in published.segments) == 45
 
 
 # ── codec tags and picture-format changes ─────────────────────────────────────

@@ -8,7 +8,8 @@ publishes an init section per picture format and one fMP4 segment per cut;
 - A segment is cut at the first video keyframe at least ``SEGMENT_SECONDS`` after its
   start, at a parameter-set change, and at the end of the input: nothing is held back.
 - Every segment shares one timeline: timestamps are moved by one offset (the first
-  keyframe's decode time goes to 0); fragments carry their own decode time.
+  keyframe is shown at 0, so a player's start at 0 has no gap to skip); fragments
+  carry their own decode time.
 - HEVC is tagged ``hvc1`` (Safari's requirement), which keeps the parameter sets in the
   init only: a change of the VPS/SPS/PPS (tracked by type and ID) starts a new init,
   a discontinuity in the playlist. H.264 stays ``avc1``.
@@ -372,11 +373,10 @@ class TsRemuxer:
             raise RemuxError(f"input broke off ({type(err).__name__})") from err
         if self._out is None:
             raise RemuxError("no video keyframe")
-        self._close_segment(self._end_dts())
+        self._close_segment(self._end_pts())
 
-    def _end_dts(self) -> int:
-        assert self._last_dts is not None
-        return self._last_dts + self._frame_ticks
+    def _end_pts(self) -> int:
+        return self._media_ticks
 
     def _video_packet(self, packet: Packet[Any]) -> None:
         if packet.pts is None:
@@ -389,13 +389,14 @@ class TsRemuxer:
             if self._last_dts is not None:
                 packet.dts = max(packet.dts, self._origin_dts(self._last_dts) + 1)
         if self._origin is None:
-            self._origin = packet.dts
+            # The first keyframe is shown at 0.
+            self._origin = packet.pts
         dts = packet.dts - self._origin
         pts = packet.pts - self._origin
-        if dts < 0 or (self._last_dts is not None and dts <= self._last_dts) or pts < dts:
+        if pts < 0 or (self._last_dts is not None and dts <= self._last_dts) or pts < dts:
             return
         if packet.is_keyframe:
-            self._keyframe(packet, dts)
+            self._keyframe(packet, pts)
         if self._last_dts is not None:
             self._frame_ticks = dts - self._last_dts
         elif packet.duration:
@@ -407,7 +408,7 @@ class TsRemuxer:
         assert self._out is not None
         self._out.mux(packet)
         self._video_packets += 1
-        self._media_ticks = dts + self._frame_ticks
+        self._media_ticks = max(self._media_ticks, pts + self._frame_ticks)
         if self._early_audio:
             for early in self._early_audio:
                 self._audio_packet(early)
@@ -417,23 +418,23 @@ class TsRemuxer:
         assert self._origin is not None
         return dts + self._origin
 
-    def _keyframe(self, packet: Packet[Any], dts: int) -> None:
+    def _keyframe(self, packet: Packet[Any], pts: int) -> None:
         """Cut before ``packet`` where due; a parameter-set change starts a new init."""
         new_format = self._new_format(bytes(packet))
         if self._out is None:
             if new_format is not None:
                 self._format = new_format
             self._init = 0
-            self._open_segment(dts)
+            self._open_segment(pts)
             return
-        due = (dts - self._segment_start) * self._time_base >= SEGMENT_SECONDS
+        due = (pts - self._segment_start) * self._time_base >= SEGMENT_SECONDS
         if new_format is None and not due:
             return
-        self._close_segment(dts)
+        self._close_segment(pts)
         if new_format is not None:
             self._format = new_format
             self._init += 1
-        self._open_segment(dts)
+        self._open_segment(pts)
 
     def _new_format(self, keyframe: bytes) -> _Format | None:
         """The format of a keyframe whose parameter sets differ from the current ones
@@ -469,9 +470,9 @@ class TsRemuxer:
             raw.stream = self._out_audio
             self._out.mux(raw)
 
-    def _open_segment(self, dts: int) -> None:
+    def _open_segment(self, pts: int) -> None:
         assert self._video is not None
-        self._segment_start = dts
+        self._segment_start = pts
         self._buffer = io.BytesIO()
         self._out = av.open(
             self._buffer,
@@ -499,7 +500,7 @@ class TsRemuxer:
             self._out_audio = self._out.add_stream_from_template(self._audio)
             self._out_audio.codec_context.extradata = self._asc
 
-    def _close_segment(self, end_dts: int) -> None:
+    def _close_segment(self, end_pts: int) -> None:
         assert self._out is not None and self._buffer is not None
         self._out.close()
         self._out = None
@@ -510,7 +511,7 @@ class TsRemuxer:
             self._init_sent = self._init
         if self._aborted.is_set():
             return
-        duration = float((end_dts - self._segment_start) * self._time_base)
+        duration = float((end_pts - self._segment_start) * self._time_base)
         self._on_segment(Segment(self._sequence, self._init, duration, media))
         self._sequence += 1
 
