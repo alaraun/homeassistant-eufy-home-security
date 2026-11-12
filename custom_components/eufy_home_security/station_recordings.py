@@ -696,8 +696,11 @@ async def _ws_play(
             return
         await camera.recordings.plays.async_play(connection, msg_id, camera, row)
     except RecordingError as err:
-        connection.subscriptions.pop(msg_id, None)
         connection.send_error(msg_id, err.code, str(err))
+    finally:
+        # Still the placeholder: no play started, whatever ended the lookup.
+        if connection.subscriptions.get(msg_id) is viewer_left:
+            connection.subscriptions.pop(msg_id)
 
 
 class RecordingThumbView(HomeAssistantView):

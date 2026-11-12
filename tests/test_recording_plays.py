@@ -916,6 +916,36 @@ async def test_an_unload_while_the_recording_is_looked_up_refuses_the_play(
     assert recording_plays._served(hass).plays == {}
 
 
+async def test_an_unexpected_error_in_the_lookup_leaves_no_subscription(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lookup that raises something other than ``RecordingError``: the error is
+    answered and the play's subscription is gone, so unsubscribing it finds nothing."""
+    player = Player(chunks=[], hold=True).install(monkeypatch)
+
+    async def broken(recordings: Any, camera: Any, ref: str) -> HistoryRecord:
+        await asyncio.sleep(0)
+        raise RuntimeError("lookup broke")
+
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+    ref = await _ref(client, _camera(hass))
+    monkeypatch.setattr(station_recordings.StationRecordings, "async_playable_row", broken)
+    msg_id = await _subscribe(client, _camera(hass), ref)
+    reply = await _next(client)
+
+    assert (reply["id"], reply["error"]["code"]) == (msg_id, "unknown_error")
+    await client.send_json_auto_id({"type": "unsubscribe_events", "subscription": msg_id})
+    assert (await _next(client))["error"]["code"] == "not_found"
+    assert not player.entered.is_set()
+    await _unload(hass, entry)
+
+
 @pytest.mark.usefixtures("short_keep")
 async def test_an_ended_play_is_kept_for_the_keep_time_from_its_end(
     hass: HomeAssistant,
