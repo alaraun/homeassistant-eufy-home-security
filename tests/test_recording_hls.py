@@ -127,23 +127,25 @@ def _source_counts(data: bytes) -> tuple[int, int]:
 
 
 @pytest.mark.parametrize(
-    ("gop", "seconds", "durations"),
+    ("fps", "gop", "seconds", "durations"),
     [
         # A keyframe every second: the one at 2.0 s is the first past 1.9 s and cuts.
-        (15, 5.0, [2.0, 2.0, 1.0]),
+        (15, 15, 5.0, [2.0, 2.0, 1.0]),
         # Every 22 frames (1.467 s): the first at or past 1.9 s is at 2.933 s.
-        (22, 5.0, [2.933, 2.067]),
+        (15, 22, 5.0, [2.933, 2.067]),
         # Every 29 frames (1.933 s, a camera's interval just under 2 s): every keyframe cuts.
-        (29, 5.0, [1.933, 1.933, 1.133]),
+        (15, 29, 5.0, [1.933, 1.933, 1.133]),
+        # Exactly 1.9 s apart: every keyframe cuts.
+        (10, 19, 5.0, [1.9, 1.9, 1.2]),
         # Shorter than one segment: the whole recording is the one segment.
-        (15, 1.4, [1.4]),
+        (15, 15, 1.4, [1.4]),
     ],
 )
 def test_a_segment_is_cut_at_the_first_keyframe_1_9_seconds_in_and_the_tail_is_published(
-    gop: int, seconds: float, durations: list[float]
+    fps: int, gop: int, seconds: float, durations: list[float]
 ) -> None:
     """Every frame of the TS is in some segment, the last ones included."""
-    data = make_ts((Part(320, 240, seconds),), gop=gop)
+    data = make_ts((Part(320, 240, seconds),), fps=fps, gop=gop)
     published, result = _remux(data)
 
     assert [round(s.duration, 3) for s in published.segments] == durations
@@ -315,6 +317,67 @@ def test_with_b_frames_the_last_segment_ends_with_the_last_picture_shown() -> No
     assert sum(_decode(published.inits[0], s).frames for s in published.segments) == 45
 
 
+def _fragment_times(segment: Segment, track: int = 1) -> tuple[int, int]:
+    """``(earliest presentation time, first decode time)`` of ``track`` in a segment,
+    in its timescale, from ``tfdt`` and ``trun`` as an MSE player reads them."""
+    data = segment.data
+    for kind, at, size in _boxes(data):
+        if kind != b"moof":
+            continue
+        for kind2, at2, size2 in _boxes(data, at + 8, at + size):
+            if kind2 != b"traf":
+                continue
+            track_id, base, default_duration = 0, 0, 0
+            times: list[int] = []
+            for kind3, at3, _size3 in _boxes(data, at2 + 8, at2 + size2):
+                body = at3 + 8
+                flags = int.from_bytes(data[body + 1 : body + 4], "big")
+                if kind3 == b"tfhd":
+                    track_id = struct.unpack(">I", data[body + 4 : body + 8])[0]
+                    field_at = body + 8 + (8 if flags & 0x1 else 0) + (4 if flags & 0x2 else 0)
+                    if flags & 0x8:
+                        default_duration = struct.unpack(">I", data[field_at : field_at + 4])[0]
+                elif kind3 == b"tfdt":
+                    wide = data[body] == 1
+                    base = struct.unpack(
+                        ">Q" if wide else ">I", data[body + 4 : body + (12 if wide else 8)]
+                    )[0]
+                elif kind3 == b"trun":
+                    signed = data[body] == 1
+                    count = struct.unpack(">I", data[body + 4 : body + 8])[0]
+                    field_at = body + 8 + (4 if flags & 0x1 else 0) + (4 if flags & 0x4 else 0)
+                    decode = base
+                    for _ in range(count):
+                        duration, offset = default_duration, 0
+                        if flags & 0x100:
+                            duration = struct.unpack(">I", data[field_at : field_at + 4])[0]
+                            field_at += 4
+                        field_at += (4 if flags & 0x200 else 0) + (4 if flags & 0x400 else 0)
+                        if flags & 0x800:
+                            offset = struct.unpack(
+                                ">i" if signed else ">I", data[field_at : field_at + 4]
+                            )[0]
+                            field_at += 4
+                        times.append(decode + offset)
+                        decode += duration
+            if track_id == track:
+                return min(times), base
+    raise AssertionError("no fragment of the track")
+
+
+def test_with_b_frames_every_fragment_starts_where_the_ones_before_end() -> None:
+    """Read as a player does (``tfdt`` + ``trun``): the first keyframe is shown at 0 and
+    each segment's earliest picture at the sum of the durations before it."""
+    data = make_ts((Part(320, 240, 5.0),), gop=15, bframes=2)
+    published, _ = _remux(data)
+
+    starts = [_fragment_times(s)[0] for s in published.segments]
+    ends = [round(sum(s.duration for s in published.segments[:i]) * 90000) for i in range(3)]
+
+    assert len(published.segments) == 3
+    assert starts == ends
+
+
 # ── codec tags and picture-format changes ─────────────────────────────────────
 
 
@@ -443,6 +506,40 @@ def test_an_abort_while_a_segment_is_published_stops_it() -> None:
     remuxer.run()
 
     assert published.order == ["init0"]
+
+
+def _audio_ahead(data: bytes, count: int) -> bytes:
+    """``data`` with its first ``count`` audio TS packets moved ahead of every video
+    packet (a station that sends sound before the picture)."""
+    packets = [data[i : i + 188] for i in range(0, len(data), 188)]
+    pid = [((p[1] & 0x1F) << 8) | p[2] for p in packets]
+    video_pid, audio_pid = 0x100, 0x101
+    moved = [i for i, p in enumerate(pid) if p == audio_pid][:count]
+    first_video = pid.index(video_pid)
+    assert len(moved) == count and moved[0] > first_video
+    rest = [p for i, p in enumerate(packets) if i not in set(moved)]
+    at = rest.index(packets[first_video])
+    return b"".join(rest[:at] + [packets[i] for i in moved] + rest[at:])
+
+
+def test_audio_ahead_of_the_first_keyframe_is_kept_up_to_the_cap() -> None:
+    """The first ``_EARLY_AUDIO_MAX`` audio packets before the first keyframe go into
+    the first segment; later ones before it are dropped."""
+    data = _audio_ahead(make_ts((Part(320, 240, 10.0),), gop=15), 100)
+    container = av.open(io.BytesIO(data), mode="r", format="mpegts")
+    order = [(p.stream.type, p.dts) for p in container.demux() if p.size and p.dts is not None]
+    container.close()
+    first_video = next(i for i, (kind, _) in enumerate(order) if kind == "video")
+    origin = order[first_video][1]
+    early = [dts for _, dts in order[:first_video]]
+    later = [dts for kind, dts in order[first_video:] if kind == "audio"]
+    kept = [d for d in early[: recording_hls._EARLY_AUDIO_MAX] if d >= origin]
+    assert len(early) > recording_hls._EARLY_AUDIO_MAX + 10
+
+    published, _ = _remux(data)
+
+    audio = sum(_decode(published.inits[0], s).audio_frames for s in published.segments)
+    assert audio == len(kept) + len([d for d in later if d >= origin])
 
 
 def test_video_without_a_keyframe_is_a_remux_error() -> None:

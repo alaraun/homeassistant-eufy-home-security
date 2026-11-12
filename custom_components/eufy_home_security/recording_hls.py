@@ -42,7 +42,8 @@ _LOGGER = logging.getLogger(__name__)
 
 # Shortest segment, seconds: a cut waits for the first keyframe at or past it. Below 2 s so
 # a 2 s keyframe interval (keyframes ~1.997 s apart) cuts at every keyframe, as HA's stream does.
-SEGMENT_SECONDS: Final = 1.9
+# Exact, so keyframes exactly 1.9 s apart cut too.
+SEGMENT_SECONDS: Final = Fraction(19, 10)
 HLS_MIME_TYPE: Final = "application/vnd.apple.mpegurl"
 INIT_MIME_TYPE: Final = "video/mp4"
 SEGMENT_MIME_TYPE: Final = "video/iso.segment"

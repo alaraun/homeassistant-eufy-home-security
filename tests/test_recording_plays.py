@@ -1176,6 +1176,47 @@ async def test_an_unload_ends_every_play_and_waits_for_the_remux(
         assert (await http.get(reply["started"]["url"])).status == 404
 
 
+async def test_an_unload_ends_a_play_whose_remux_still_publishes_after_the_library(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    hass_client_no_auth: ClientSessionGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The library has returned and the remux is still on its tail (no end event yet):
+    an unload tells the viewer ``failed`` and frees the play."""
+    real_run = recording_hls.TsRemuxer.run
+
+    def held_run(self: recording_hls.TsRemuxer) -> recording_hls.RemuxResult:
+        result = real_run(self)
+        # Held until the unload aborts it.
+        self._aborted.wait(10)
+        return result
+
+    monkeypatch.setattr(recording_hls.TsRemuxer, "run", held_run)
+    player = Player().install(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
+    assert reply["success"]
+    await wait_until(lambda: player.returned == 1)
+    await _nothing_more(client)
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+    event = await _next(client)
+    assert (event["id"], event["event"]["end"], event["event"]["code"]) == (
+        reply["id"],
+        "error",
+        "failed",
+    )
+    assert _remux_threads() == []
+    assert (await (await hass_client_no_auth()).get(reply["started"]["url"])).status == 404
+    await _nothing_more(client)
+
+
 async def test_an_unload_waits_for_the_library_and_a_slow_remux_thread(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
