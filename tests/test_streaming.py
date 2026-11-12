@@ -172,12 +172,12 @@ async def _set_up_with_other_camera(
     return await set_up_warm(hass, seed)
 
 
-def _stream_routes(hass: HomeAssistant) -> tuple[int, int]:
-    """How many routes of the running app serve the live and the recording view's path."""
-    canonical = [str(resource.canonical) for resource in hass.http.app.router.resources()]
-    return (
-        canonical.count("/api/eufy_home_security/stream/{device_sn}"),
-        canonical.count("/api/eufy_home_security/stream/recording/{play_id}"),
+def _stream_routes(hass: HomeAssistant) -> int:
+    """How many routes of the running app serve the stream view's path."""
+    return sum(
+        1
+        for resource in hass.http.app.router.resources()
+        if str(resource.canonical).startswith("/api/eufy_home_security/stream/")
     )
 
 
@@ -1144,17 +1144,16 @@ async def test_the_view_is_registered_once_per_instance_not_once_per_entry(
     seed_warm_cache: Callable[..., None],
     hass_client_no_auth: ClientSessionGenerator,
 ) -> None:
-    """register_view has no unregister, so a second account must not add a route to
-    either view."""
+    """register_view has no unregister, so a second account must not add a route."""
     entry = await set_up_warm(hass, seed_warm_cache)
-    assert _stream_routes(hass) == (1, 1)
+    assert _stream_routes(hass) == 1
 
     other_email = "second@example.com"
     seed_warm_cache(email=other_email)
     second = add_entry(hass, email=other_email)
     assert await setup_entry(hass, second)
 
-    assert _stream_routes(hass) == (1, 1)
+    assert _stream_routes(hass) == 1
     assert entry.state is ConfigEntryState.LOADED
     assert second.state is ConfigEntryState.LOADED
 
@@ -1278,203 +1277,6 @@ def test_the_secret_differs_per_instance() -> None:
     first, second = streaming.StreamRegistry(), streaming.StreamRegistry()
     assert first.secret != second.secret
     assert len(first.secret) >= 32
-
-
-# ── a recording play's source ─────────────────────────────────────────────────
-
-
-class _PlaySource:
-    """A recording play's bytes as the view reads them: ``chunks``, then the end unless
-    ``hold``; more can be queued with :meth:`put`."""
-
-    def __init__(self, chunks: list[bytes], *, hold: bool = False) -> None:
-        self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
-        for chunk in chunks:
-            self._queue.put_nowait(chunk)
-        if not hold:
-            self._queue.put_nowait(None)
-        self.claims = 0
-        self.left = asyncio.Event()
-
-    def put(self, chunk: bytes) -> None:
-        self._queue.put_nowait(chunk)
-
-    def claim(self) -> bool:
-        self.claims += 1
-        return self.claims == 1
-
-    async def read(self) -> bytes | None:
-        return await self._queue.get()
-
-    def reader_left(self) -> None:
-        self.left.set()
-
-
-def _play_path(hass: HomeAssistant, play_id: str) -> str:
-    parts = urlparse(streaming.recording_url(hass, play_id))
-    return f"{parts.path}?{parts.query}"
-
-
-async def test_a_recording_play_is_served_once_to_its_end_and_never_again(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    hass_client_no_auth: ClientSessionGenerator,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The first GET gets every chunk as MPEG-TS and the end; any later GET is 410 and
-    an unknown play 404. The URL is loopback with the run secret, ``https`` when Home
-    Assistant's server speaks TLS."""
-    entry = await set_up_warm(hass, seed_warm_cache)
-    client = await hass_client_no_auth()
-    source = _PlaySource([b"\x47" * TS_PACKET, b"\x47" * TS_PACKET])
-    streaming.stream_registry(hass).plays["play-1"] = source
-
-    response = await client.get(_play_path(hass, "play-1"))
-
-    assert response.status == 200
-    assert response.content_type == "video/mp2t"
-    assert await response.read() == b"\x47" * TS_PACKET * 2
-    assert (await client.get(_play_path(hass, "play-1"))).status == 410
-    assert source.claims == 2
-    assert (await client.get(_play_path(hass, "play-2"))).status == 404
-    assert not source.left.is_set()
-    url = urlparse(streaming.recording_url(hass, "play-1"))
-    assert (url.scheme, url.hostname, url.path) == (
-        "http",
-        "127.0.0.1",
-        "/api/eufy_home_security/stream/recording/play-1",
-    )
-    assert hass.config.api is not None
-    monkeypatch.setattr(hass.config.api, "use_ssl", True)
-    assert streaming.recording_url(hass, "play-1").startswith("https://127.0.0.1:")
-    del streaming.stream_registry(hass).plays["play-1"]
-    await _unload(hass, entry)
-
-
-@pytest.mark.parametrize(
-    ("query", "headers"),
-    [
-        ("", {}),
-        ("?auth=wrong", {}),
-        (None, {"X-Real-IP": "203.0.113.7"}),
-        (None, {"Forwarded": "for=203.0.113.7"}),
-    ],
-    ids=["no-secret", "wrong-secret", "x-real-ip", "forwarded"],
-)
-async def test_a_recording_play_request_without_the_secret_or_through_a_proxy_is_403(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    hass_client_no_auth: ClientSessionGenerator,
-    query: str | None,
-    headers: dict[str, str],
-) -> None:
-    """The live view's rules: the play is not claimed, so its one read stays unused."""
-    entry = await set_up_warm(hass, seed_warm_cache)
-    client = await hass_client_no_auth()
-    source = _PlaySource([b"\x47" * TS_PACKET])
-    streaming.stream_registry(hass).plays["play-1"] = source
-    path = _play_path(hass, "play-1")
-    if query is not None:
-        path = path.partition("?")[0] + query
-
-    response = await client.get(path, headers=headers)
-
-    assert response.status == 403
-    assert source.claims == 0
-    del streaming.stream_registry(hass).plays["play-1"]
-    await _unload(hass, entry)
-
-
-async def test_a_recording_play_request_from_another_host_is_403(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-) -> None:
-    """The socket peer decides, as for a live stream."""
-    entry = await set_up_warm(hass, seed_warm_cache)
-    registry = streaming.stream_registry(hass)
-    source = _PlaySource([b"\x47" * TS_PACKET])
-    registry.plays["play-1"] = source
-    parts = urlparse(streaming.recording_url(hass, "play-1"))
-    request = make_mocked_request(
-        "GET", f"{parts.path}?{parts.query}", transport=_Peer("192.0.2.10")
-    )
-
-    response = await streaming.RecordingPlayView(registry).get(request, "play-1")
-
-    assert response.status == 403
-    assert source.claims == 0
-    del registry.plays["play-1"]
-    await _unload(hass, entry)
-
-
-async def test_a_recording_play_reader_that_goes_away_is_reported(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    hass_client_no_auth: ClientSessionGenerator,
-) -> None:
-    """A reader that leaves before the end is reported to the play, which stops it."""
-    entry = await set_up_warm(hass, seed_warm_cache)
-    client = await hass_client_no_auth()
-    source = _PlaySource([b"\x47" * TS_PACKET], hold=True)
-    streaming.stream_registry(hass).plays["play-1"] = source
-    response = await client.get(_play_path(hass, "play-1"))
-    assert await response.content.readexactly(TS_PACKET) == b"\x47" * TS_PACKET
-
-    response.close()
-    async with asyncio.timeout(5):
-        while not source.left.is_set():
-            # A write to the closed connection fails, if the server has not cancelled
-            # the request already.
-            source.put(b"\x47" * TS_PACKET)
-            await asyncio.sleep(0.02)
-
-    del streaming.stream_registry(hass).plays["play-1"]
-    await _unload(hass, entry)
-
-
-@pytest.mark.parametrize("how", ["reset", "cancelled"])
-async def test_a_recording_play_reader_lost_mid_write_or_by_a_cancel_is_reported(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    how: str,
-) -> None:
-    """A write to a reset connection, and a cancel while waiting for the next chunk,
-    both report the reader gone; the cancel propagates."""
-    entry = await set_up_warm(hass, seed_warm_cache)
-    registry = streaming.stream_registry(hass)
-    source = _PlaySource([b"\x47" * TS_PACKET], hold=True)
-    registry.plays["play-1"] = source
-    parts = urlparse(streaming.recording_url(hass, "play-1"))
-    request = make_mocked_request(
-        "GET", f"{parts.path}?{parts.query}", transport=_Peer("127.0.0.1")
-    )
-    writer: Any = request.writer
-    if how == "reset":
-        writer.write.side_effect = ConnectionResetError
-
-    task = asyncio.create_task(streaming.RecordingPlayView(registry).get(request, "play-1"))
-    await wait_until(lambda: writer.write.call_count > 0)
-    if how == "reset":
-        await task
-    else:
-        await asyncio.sleep(0.05)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
-    assert source.left.is_set()
-    del registry.plays["play-1"]
-    await _unload(hass, entry)
 
 
 @pytest.mark.parametrize("streaming_yet", [False, True], ids=["opening", "writing"])
