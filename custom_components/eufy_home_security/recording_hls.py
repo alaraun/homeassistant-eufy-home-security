@@ -524,7 +524,8 @@ class HlsPlaylist:
     """One play's published inits and segments and its media playlist.
 
     Holds at most ``max_bytes`` of segments: past it the oldest leave (never the
-    newest), and the playlist stops calling itself an EVENT playlist.
+    newest). A plain live playlist, so it may: EVENT forbids removing segments. Its
+    target duration is the longest segment seen, as a live playlist's must not change.
     """
 
     def __init__(self, max_bytes: int) -> None:
@@ -536,6 +537,7 @@ class HlsPlaylist:
         self.held = 0
         self.peak = 0
         self.duration = 0.0
+        self._target = 1
 
     @property
     def segments(self) -> int:
@@ -549,6 +551,7 @@ class HlsPlaylist:
     def add_segment(self, segment: Segment) -> None:
         self._segments.append(segment)
         self.duration += segment.duration
+        self._target = max(self._target, math.ceil(round(segment.duration, 3)))
         self._count(len(segment.data))
         while self.held > self._max_bytes and len(self._segments) > 1:
             gone = self._segments.popleft()
@@ -589,18 +592,15 @@ class HlsPlaylist:
     def render(self) -> str:
         """The media playlist; URIs are relative to it."""
         segments = list(self._segments)
-        target = max([1, *(math.ceil(round(s.duration, 3)) for s in segments)])
         lines = [
             "#EXTM3U",
             "#EXT-X-VERSION:7",
-            f"#EXT-X-TARGETDURATION:{target}",
+            f"#EXT-X-TARGETDURATION:{self._target}",
             f"#EXT-X-MEDIA-SEQUENCE:{segments[0].sequence if segments else 0}",
         ]
         if segments and segments[0].init:
             # One discontinuity per init change before the window.
             lines.append(f"#EXT-X-DISCONTINUITY-SEQUENCE:{segments[0].init}")
-        if not self.dropped:
-            lines.append("#EXT-X-PLAYLIST-TYPE:EVENT")
         lines += ["#EXT-X-START:TIME-OFFSET=0,PRECISE=YES", "#EXT-X-INDEPENDENT-SEGMENTS"]
         previous: int | None = None
         for segment in segments:

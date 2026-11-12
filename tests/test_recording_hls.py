@@ -647,7 +647,6 @@ def test_the_playlist_starts_at_the_beginning_and_ends_with_endlist() -> None:
         "#EXT-X-VERSION:7",
         "#EXT-X-TARGETDURATION:4",
         "#EXT-X-MEDIA-SEQUENCE:0",
-        "#EXT-X-PLAYLIST-TYPE:EVENT",
         "#EXT-X-START:TIME-OFFSET=0,PRECISE=YES",
         "#EXT-X-INDEPENDENT-SEGMENTS",
         '#EXT-X-MAP:URI="init0.mp4"',
@@ -676,6 +675,20 @@ def test_the_target_duration_is_the_longest_segment_rounded_up(
     assert f"#EXT-X-TARGETDURATION:{target}" in playlist.render().splitlines()
 
 
+def test_the_target_duration_never_falls_when_a_long_segment_leaves() -> None:
+    """A live playlist's target duration must not change: it stays the longest seen."""
+    playlist = HlsPlaylist(max_bytes=100)
+    playlist.add_segment(_segment(0, 3.5, size=40))
+    playlist.add_segment(_segment(1, 1.5, size=40))
+    assert "#EXT-X-TARGETDURATION:4" in playlist.render().splitlines()
+
+    playlist.add_segment(_segment(2, 1.5, size=40))
+    playlist.add_segment(_segment(3, 2.0, size=40))
+
+    assert playlist.segment(0) is None
+    assert "#EXT-X-TARGETDURATION:4" in playlist.render().splitlines()
+
+
 def test_a_new_init_is_a_discontinuity_with_its_own_map() -> None:
     playlist = HlsPlaylist(max_bytes=1 << 20)
     playlist.add_init(0, b"a")
@@ -700,8 +713,9 @@ def test_a_new_init_is_a_discontinuity_with_its_own_map() -> None:
 def test_past_the_memory_cap_the_oldest_segments_leave_and_the_window_slides(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The playlist drops its EVENT type, counts the media sequence and the
-    discontinuities before its window, and frees an init no listed segment uses."""
+    """The playlist (never typed EVENT, which forbids removing segments) counts the
+    media sequence and the discontinuities before its window, and frees an init no
+    listed segment uses."""
     caplog.set_level(logging.DEBUG, logger=recording_hls.__name__)
     playlist = HlsPlaylist(max_bytes=400)
     playlist.add_init(0, bytes(20))
@@ -711,7 +725,6 @@ def test_past_the_memory_cap_the_oldest_segments_leave_and_the_window_slides(
     # Exactly at the cap: nothing leaves.
     playlist.add_segment(_segment(3, init=1, size=90))
     assert (playlist.segments, playlist.dropped, playlist.held) == (4, 0, 400)
-    assert "#EXT-X-PLAYLIST-TYPE:EVENT" in playlist.render()
 
     playlist.add_segment(_segment(4, init=1, size=90))
 
@@ -722,7 +735,6 @@ def test_past_the_memory_cap_the_oldest_segments_leave_and_the_window_slides(
     assert playlist.segment(1) == bytes(90)
     assert playlist.segment(5) is None
     lines = playlist.render().splitlines()
-    assert "#EXT-X-PLAYLIST-TYPE:EVENT" not in lines
     assert "#EXT-X-MEDIA-SEQUENCE:1" in lines
     assert lines.count("#EXT-X-DISCONTINUITY") == 1
 
