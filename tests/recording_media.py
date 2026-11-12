@@ -141,3 +141,34 @@ def make_ts(
         source.close()
     out.close()
     return out_buffer.getvalue()
+
+
+def split_at(data: bytes, seconds: float) -> int:
+    """The byte offset of the first video frame ``seconds`` or more into ``data``."""
+    container = av.open(io.BytesIO(data), mode="r", format="mpegts")
+    first: int | None = None
+    offset = len(data)
+    for packet in container.demux(container.streams.video[0]):
+        if not packet.size or packet.pts is None or packet.pos is None:
+            continue
+        first = packet.pts if first is None else first
+        if (packet.pts - first) * TICKS >= seconds:
+            offset = packet.pos
+            break
+    container.close()
+    return offset
+
+
+def audio_only(data: bytes) -> bytes:
+    """The audio of a TS, as a TS of its own."""
+    source = av.open(io.BytesIO(data), mode="r", format="mpegts")
+    buffer = io.BytesIO()
+    out = av.open(buffer, mode="w", format="mpegts")
+    audio = out.add_stream_from_template(source.streams.audio[0])
+    for packet in source.demux(source.streams.audio[0]):
+        if packet.size:
+            packet.stream = audio
+            out.mux(packet)
+    out.close()
+    source.close()
+    return buffer.getvalue()

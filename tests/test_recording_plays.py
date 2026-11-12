@@ -1,23 +1,24 @@
 """A station recording played straight to a viewer (``recording_plays.py``).
 
 The websocket subscription ``eufy_home_security/recordings/play`` on Home Assistant's
-test client, the library's ``FakeStation`` behind it, and Home Assistant's ``Stream``
-replaced by :class:`FakeStream`, which records what the play does with it. Where a test
-needs the stream worker's side, it reads the play's loopback URL itself through the real
-view. ``Station.async_play_recording`` is scripted by :class:`Player` where a test needs
-a library outcome at a chosen moment; one test plays through the real library.
+test client, the library's ``FakeStation`` behind it, and the real remux and HLS view.
+``Station.async_play_recording`` is scripted by :class:`Player`, which writes real
+MPEG-TS made by ``recording_media.make_ts``; one test plays through the real library.
 """
 
 from __future__ import annotations
 
 import asyncio
-import logging
-from collections.abc import Callable, Mapping
+import io
+import re
+import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Final
-from urllib.parse import urlparse
 
+import av
 import pytest
 from conftest import SYNTHETIC, add_entry, entity_id_for, setup_entry, wait_until
 from eufy_home_security import (
@@ -32,9 +33,7 @@ from eufy_home_security import (
 )
 from eufy_home_security.testing import FakeStation
 from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
-from homeassistant.components.camera import DynamicStreamSettings
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant.common import MockConfigEntry
 from pytest_homeassistant.components.diagnostics import get_diagnostics_for_config_entry
@@ -43,97 +42,33 @@ from pytest_homeassistant.typing import (
     MockHAClientWebSocket,
     WebSocketGenerator,
 )
+from recording_media import Part, audio_only, make_ts, split_at
 
-from custom_components.eufy_home_security import recording_plays, station_recordings, streaming
+from custom_components.eufy_home_security import recording_hls, recording_plays, station_recordings
 from custom_components.eufy_home_security.const import CAMERA_KEY
 
 _DAY_FACTOR: Final = 100_000
 _ROW_TIME: Final = "%Y-%m-%d %H:%M:%S"
-# One MPEG-TS packet's worth of bytes, sync byte first.
-TS_CHUNK: Final = b"\x47" + b"\x00" * 187
-HLS_URL: Final = "/api/hls/test-token/master_playlist.m3u8"
+_URL: Final = re.compile(r"/api/eufy_home_security/recording/([0-9a-f]{32})/playlist\.m3u8")
+HLS_MIME: Final = "application/vnd.apple.mpegurl"
 # The playback command the station gets for a play, and the download command.
 RECORD_VIEW: Final = 1025
 RECORDING_COMMANDS: Final = (1024, RECORD_VIEW)
 
 
-class FakeStream:
-    """Stands in for Home Assistant's ``Stream``: records the source, provider, start and stops."""
-
-    def __init__(self, source: str, options: Mapping[str, Any], label: str | None) -> None:
-        self.source = source
-        self.options = dict(options)
-        self.label = label
-        self.providers: list[str] = []
-        self.started = False
-        self.stops = 0
-        # Held open by the test: ``start`` waits for it.
-        self.start_gate: asyncio.Event | None = None
-        self.starting = asyncio.Event()
-        # Seconds ``stop`` takes, as joining the worker thread does.
-        self.stop_delay = 0.0
-
-    def add_provider(self, fmt: str, timeout: int | None = None) -> object:
-        self.providers.append(fmt)
-        return object()
-
-    async def start(self) -> None:
-        self.starting.set()
-        if self.start_gate is not None:
-            await self.start_gate.wait()
-        self.started = True
-
-    def endpoint_url(self, fmt: str) -> str:
-        # As Home Assistant's: a stopped Stream has no outputs.
-        if fmt not in self.providers:
-            raise ValueError(f"Stream is not configured for format '{fmt}'")
-        return HLS_URL
-
-    async def stop(self) -> None:
-        self.providers = []
-        if self.stop_delay:
-            await asyncio.sleep(self.stop_delay)
-        self.stops += 1
+def _clip(seconds: float = 5.0, **kwargs: Any) -> bytes:
+    """A recording's TS: 320x240 H.264 at 15 fps, a keyframe every second, AAC."""
+    return make_ts((Part(320, 240, seconds),), **kwargs)
 
 
-@pytest.fixture
-def start_gate() -> asyncio.Event | None:
-    """The gate every FakeStream's start waits for; None: starts at once."""
-    return None
+def _halves(data: bytes, seconds: float) -> tuple[list[bytes], list[bytes]]:
+    """``data`` cut at the first frame ``seconds`` in, each part in 18.8 kB writes."""
+    cut = split_at(data, seconds)
+    return _writes(data[:cut]), _writes(data[cut:])
 
 
-@pytest.fixture
-def streams(monkeypatch: pytest.MonkeyPatch, start_gate: asyncio.Event | None) -> list[FakeStream]:
-    """Every Stream a play creates, in order."""
-    made: list[FakeStream] = []
-
-    def create(
-        hass: HomeAssistant,
-        source: str,
-        options: Mapping[str, Any],
-        dynamic: DynamicStreamSettings,
-        stream_label: str | None = None,
-    ) -> FakeStream:
-        assert isinstance(dynamic, DynamicStreamSettings)
-        stream = FakeStream(source, options, stream_label)
-        stream.start_gate = start_gate
-        made.append(stream)
-        return stream
-
-    monkeypatch.setattr(recording_plays, "create_stream", create)
-    return made
-
-
-@pytest.fixture
-def short_grace(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The Stream outlives a play's end by a twentieth of a second."""
-    monkeypatch.setattr(recording_plays, "PLAY_END_GRACE", 0.05)
-
-
-@pytest.fixture
-def short_attach(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A play nobody reads ends after a fifth of a second."""
-    monkeypatch.setattr(recording_plays, "PLAY_ATTACH_TIMEOUT", 0.2)
+def _writes(data: bytes, size: int = 18_800) -> list[bytes]:
+    return [data[i : i + size] for i in range(0, len(data), size)]
 
 
 @dataclass
@@ -145,7 +80,7 @@ class Player:
     as given).
     """
 
-    chunks: list[bytes] = field(default_factory=lambda: [TS_CHUNK, TS_CHUNK])
+    chunks: list[bytes] = field(default_factory=lambda: _writes(_clip()))
     release: asyncio.Event | None = None
     then: list[bytes] = field(default_factory=list)
     error: Exception | None = None
@@ -155,7 +90,6 @@ class Player:
     cancelled: asyncio.Event = field(default_factory=asyncio.Event)
     entered: asyncio.Event = field(default_factory=asyncio.Event)
     returned: int = 0
-    duration_s: float = 1.0
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> Player:
         async def play(
@@ -175,7 +109,6 @@ class Player:
                     await self.release.wait()
                 for chunk in self.then:
                     await write(chunk)
-                    await asyncio.sleep(0.02)
                 if self.error is not None:
                     raise self.error
                 if self.hold:
@@ -188,16 +121,28 @@ class Player:
                 video_frames=1,
                 audio_frames=0,
                 keyframes=1,
-                bytes_written=sum(len(c) for c in self.chunks),
-                duration_s=self.duration_s,
-                width=1,
-                height=1,
+                bytes_written=sum(len(c) for c in self.chunks + self.then),
+                duration_s=1.0,
+                width=320,
+                height=240,
                 resizes=0,
                 ended_early=self.ended_early,
             )
 
         monkeypatch.setattr(Station, "async_play_recording", play)
         return self
+
+
+@pytest.fixture
+def short_keep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An ended play is kept 0.3 s after its last request."""
+    monkeypatch.setattr(recording_plays, "PLAY_KEEP_SECONDS", 0.3)
+
+
+@pytest.fixture
+def short_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A playlist request waits 0.2 s for the first segment."""
+    monkeypatch.setattr(recording_plays, "PLAYLIST_WAIT_SECONDS", 0.2)
 
 
 def _row(counter: int, *, ago: timedelta = timedelta(minutes=10)) -> dict[str, Any]:
@@ -241,12 +186,26 @@ async def _ref(client: MockHAClientWebSocket, entity_id: str) -> str:
     return ref
 
 
+async def _subscribe(client: MockHAClientWebSocket, entity_id: str, ref: str) -> int:
+    """Send a play request; its message id."""
+    request: dict[str, Any] = {
+        "type": station_recordings.WS_PLAY,
+        "entity_id": entity_id,
+        "ref": ref,
+    }
+    await client.send_json_auto_id(request)
+    msg_id: int = request["id"]
+    return msg_id
+
+
 async def _play(client: MockHAClientWebSocket, entity_id: str, ref: str) -> dict[str, Any]:
     """Subscribe a play; its answer: the error, or the empty result with the first
     event's payload under ``started`` (it follows the result at once)."""
-    await client.send_json_auto_id(
-        {"type": station_recordings.WS_PLAY, "entity_id": entity_id, "ref": ref}
-    )
+    await _subscribe(client, entity_id, ref)
+    return await _answer(client)
+
+
+async def _answer(client: MockHAClientWebSocket) -> dict[str, Any]:
     reply = await _next(client)
     if reply["success"]:
         assert reply["result"] is None
@@ -257,7 +216,7 @@ async def _play(client: MockHAClientWebSocket, entity_id: str, ref: str) -> dict
 
 
 async def _next(client: MockHAClientWebSocket) -> dict[str, Any]:
-    reply: dict[str, Any] = await asyncio.wait_for(client.receive_json(), 5)
+    reply: dict[str, Any] = await asyncio.wait_for(client.receive_json(), 10)
     return reply
 
 
@@ -267,10 +226,46 @@ async def _nothing_more(client: MockHAClientWebSocket) -> None:
     assert (await _next(client))["type"] == "pong"
 
 
-def _source_path(stream: FakeStream) -> str:
-    """The play's loopback URL as the test client asks it (path and secret query)."""
-    parts = urlparse(stream.source)
-    return f"{parts.path}?{parts.query}"
+def _base(url: str) -> str:
+    return url.rsplit("/", 1)[0]
+
+
+async def _get(http: Any, url: str) -> tuple[int, bytes, Any]:
+    response = await http.get(url)
+    return response.status, await response.read(), response.headers
+
+
+async def _fetch_all(http: Any, url: str) -> tuple[str, dict[str, bytes]]:
+    """The playlist and every file it names."""
+    status, body, _ = await _get(http, url)
+    assert status == 200
+    text = body.decode()
+    files: dict[str, bytes] = {}
+    for name in re.findall(r"(init\d+\.mp4|seg\d+\.m4s)", text):
+        status, files[name], _ = await _get(http, f"{_base(url)}/{name}")
+        assert status == 200, name
+    return text, files
+
+
+def _frames(text: str, files: dict[str, bytes]) -> int:
+    """Video frames the playlist's segments decode to, each with its own init."""
+    init = b""
+    frames = 0
+    for line in text.splitlines():
+        if match := re.match(r'#EXT-X-MAP:URI="(init\d+\.mp4)"', line):
+            init = files[match.group(1)]
+        elif line.startswith("seg"):
+            container = av.open(io.BytesIO(init + files[line]), mode="r")
+            frames += sum(1 for _ in container.decode(container.streams.video[0]))
+            container.close()
+    return frames
+
+
+def _video_frames(data: bytes) -> int:
+    container = av.open(io.BytesIO(data), mode="r", format="mpegts")
+    count = sum(1 for p in container.demux(container.streams.video[0]) if p.size)
+    container.close()
+    return count
 
 
 async def _unload(hass: HomeAssistant, entry: MockConfigEntry) -> None:
@@ -278,149 +273,159 @@ async def _unload(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     await hass.async_block_till_done()
 
 
+def _remux_threads() -> list[threading.Thread]:
+    return [t for t in threading.enumerate() if t.name == recording_plays._REMUX_THREAD]
+
+
 # ── a play from start to end ──────────────────────────────────────────────────
 
 
-async def test_a_play_answers_the_hls_url_and_ends_complete_after_the_stream_stops(
+async def test_the_url_comes_with_the_first_segment_and_complete_after_the_last(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
     hass_client_no_auth: ClientSessionGenerator,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Through the real library: one Stream on the loopback URL with the run secret, an
-    HLS provider, the plays' one label, started; an empty result, then the HLS URL as
-    the first event. The worker's GET gets the recording's MPEG-TS to its end; the one
-    event ``complete`` with the played length comes at once, while the Stream still
-    runs; a second GET is 410; after the grace the Stream is stopped and the id is
-    unknown (404)."""
-    # Long enough for the second GET to land inside the grace.
-    monkeypatch.setattr(recording_plays, "PLAY_END_GRACE", 0.5)
+    """Under 2 s of media there is no segment and no answer; past the first cut the
+    empty result and the playlist URL come; ``complete`` with the played length comes
+    only when the remux has published the tail, and the playlist then ends with
+    ``#EXT-X-ENDLIST`` and decodes to every frame, without any credential."""
+    data = _clip(5.0)
+    head, tail = _halves(data, 1.5)
+    release = asyncio.Event()
+    Player(chunks=head, release=release, then=tail).install(monkeypatch)
+    # The remux holds its end until the test lets it go.
+    remux_end = threading.Event()
+    real_run = recording_hls.TsRemuxer.run
+
+    def held_run(self: recording_hls.TsRemuxer) -> recording_hls.RemuxResult:
+        result = real_run(self)
+        remux_end.wait(10)
+        return result
+
+    monkeypatch.setattr(recording_hls.TsRemuxer, "run", held_run)
     entry = await _set_up(hass, seed_warm_cache, fake_station)
     client = await hass_ws_client(hass)
-    entity_id = _camera(hass)
+    msg_id = await _subscribe(client, _camera(hass), await _ref(client, _camera(hass)))
+    await asyncio.sleep(0.3)
+    await _nothing_more(client)
 
-    reply = await _play(client, entity_id, await _ref(client, entity_id))
+    release.set()
+    reply = await _answer(client)
+
+    assert reply["id"] == msg_id
+    assert reply["started"]["mime_type"] == HLS_MIME
+    url = reply["started"]["url"]
+    assert _URL.fullmatch(url)
+    http = await hass_client_no_auth()
+    await asyncio.sleep(0.3)
+    await _nothing_more(client)
+    status, body, headers = await _get(http, url)
+    assert (status, headers["Content-Type"], headers["Cache-Control"]) == (
+        200,
+        HLS_MIME,
+        "no-cache",
+    )
+    assert "#EXT-X-ENDLIST" not in body.decode()
+
+    remux_end.set()
+    event = await _next(client)
+
+    assert (event["id"], event["type"]) == (msg_id, "event")
+    assert event["event"] == {"end": "complete", "duration": 5.0}
+    text, files = await _fetch_all(http, url)
+    assert text.splitlines()[-1] == "#EXT-X-ENDLIST"
+    assert "#EXT-X-START:TIME-OFFSET=0,PRECISE=YES" in text
+    assert re.findall(r"#EXTINF:([\d.]+),", text) == ["2.000", "2.000", "1.000"]
+    assert _frames(text, files) == _video_frames(data)
+    _, _, init_headers = await _get(http, f"{_base(url)}/init0.mp4")
+    _, _, seg_headers = await _get(http, f"{_base(url)}/seg0.m4s")
+    assert (init_headers["Content-Type"], seg_headers["Content-Type"]) == (
+        "video/mp4",
+        "video/iso.segment",
+    )
+    assert "immutable" in seg_headers["Cache-Control"]
+    counts = _plays(entry).diagnostics()
+    assert (counts["started"], counts["complete"], counts["active"]) == (1, 1, 1)
+    assert _plays(entry)._threads == set()
+    assert counts["bytes_held_peak"] == sum(len(b) for b in files.values())
+    await _nothing_more(client)
+    await _unload(hass, entry)
+    assert _remux_threads() == []
+
+
+async def test_a_play_asks_the_library_to_wait_for_a_session_at_the_chosen_pace(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``wait`` on and ``realtime`` as ``PLAY_REALTIME``, for the listed row; a clip
+    shorter than one segment still plays: one segment, then ``complete``."""
+    player = Player(chunks=_writes(_clip(1.4))).install(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+
+    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
 
     assert reply["success"], reply
-    assert reply["started"] == {"url": HLS_URL, "mime_type": "application/vnd.apple.mpegurl"}
-    (stream,) = streams
-    source = urlparse(stream.source)
-    assert (source.scheme, source.hostname, source.port) == (
-        "http",
-        "127.0.0.1",
-        hass.http.server_port,
-    )
-    assert source.path.startswith("/api/eufy_home_security/stream/recording/")
-    assert source.query == f"auth={streaming.stream_registry(hass).secret}"
-    assert (stream.options, stream.providers, stream.started) == ({}, ["hls"], True)
-    assert stream.label == "eufy_home_security_recording"
+    assert player.calls == [
+        (fake_station.rows[0]["record_id"], True, recording_plays.PLAY_REALTIME)
+    ]
+    assert (await _next(client))["event"] == {"end": "complete", "duration": 1.4}
+    await _unload(hass, entry)
 
-    http = await hass_client_no_auth()
-    response = await http.get(_source_path(stream))
-    assert response.status == 200
-    assert response.content_type == "video/mp2t"
-    body = await response.read()
-    assert body[:1] == b"\x47"
-    assert len(body) % 188 == 0
-    event = await _next(client)
-    assert (event["id"], event["type"], event["event"]["end"]) == (reply["id"], "event", "complete")
-    assert event["event"]["duration"] > 0
-    assert stream.stops == 0
-    again = await http.get(_source_path(stream))
-    assert again.status == 410
 
-    await wait_until(lambda: stream.stops == 1)
+async def test_the_real_library_plays_through_the_fake_station(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The station gets the playback command, never the download one. The fake
+    station's frames are no real video, so the remux refuses them: ``failed``."""
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+
+    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
+
+    assert reply["error"] == {"code": "failed", "message": "The recording could not be played"}
     assert [o["cmd"] for o in fake_station.received if o.get("cmd") in RECORDING_COMMANDS] == [
         RECORD_VIEW
     ]
-    await wait_until(lambda: _plays(entry).diagnostics()["active"] == 0)
-    assert (await http.get(_source_path(stream))).status == 404
-    await _nothing_more(client)
-    assert _plays(entry).diagnostics() == {
-        "started": 1,
-        "complete": 1,
-        "viewer_left": 0,
-        "failed": {},
-        "active": 0,
-    }
+    await wait_until(lambda: _remux_threads() == [])
+    counts = _plays(entry).diagnostics()
+    assert (counts["started"], counts["failed"], counts["active"]) == (1, {"failed": 1}, 0)
     await _unload(hass, entry)
 
 
-@pytest.mark.usefixtures("short_grace")
-async def test_a_play_asks_the_library_to_wait_for_a_session_and_keep_the_recordings_pace(
+async def test_a_size_change_is_served_as_a_second_init_after_a_discontinuity(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
+    hass_client_no_auth: ClientSessionGenerator,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``wait`` and ``realtime`` on, for the listed row; a recording shorter than the
-    answer's way out still gets its result and URL first, then ``complete`` with the
-    clip's length, or the record's when the clip has none."""
-    player = Player().install(monkeypatch)
+    data = make_ts((Part(320, 240, 3.5), Part(352, 288, 3.5)), codec="libx265")
+    Player(chunks=_writes(data)).install(monkeypatch)
     entry = await _set_up(hass, seed_warm_cache, fake_station)
     client = await hass_ws_client(hass)
-    ref = await _ref(client, _camera(hass))
+    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
+    assert (await _next(client))["event"]["end"] == "complete"
 
-    reply = await _play(client, _camera(hass), ref)
+    text, files = await _fetch_all(await hass_client_no_auth(), reply["started"]["url"])
 
-    assert reply["success"], reply
-    assert player.calls == [(fake_station.rows[0]["record_id"], True, True)]
-    assert (await _next(client))["event"] == {"end": "complete", "duration": 1.0}
-    player.duration_s = 0.0
-    assert (await _play(client, _camera(hass), ref))["success"]
-    assert (await _next(client))["event"] == {"end": "complete", "duration": 10.0}
-    await _unload(hass, entry)
-
-
-@pytest.mark.parametrize(
-    ("error", "ended_early", "end"),
-    [
-        (None, False, "complete"),
-        (DeviceTimeoutError("silent"), False, "unavailable"),
-        (None, True, "codec_change"),
-        (RuntimeError("unexpected"), False, "failed"),
-    ],
-    ids=["complete", "library-error", "codec-change", "unexpected-error"],
-)
-async def test_the_stream_outlives_the_recordings_end_by_the_grace(
-    hass: HomeAssistant,
-    hass_ws_client: WebSocketGenerator,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
-    monkeypatch: pytest.MonkeyPatch,
-    error: Exception | None,
-    ended_early: bool,
-    end: str,
-) -> None:
-    """The end event goes out at once, while the Stream runs on; the Stream is stopped
-    ``PLAY_END_GRACE`` after the library returns or raises, not before, so the player
-    still fetches what arrived."""
-    monkeypatch.setattr(recording_plays, "PLAY_END_GRACE", 0.4)
-    release = asyncio.Event()
-    Player(release=release, error=error, ended_early=ended_early).install(monkeypatch)
-    entry = await _set_up(hass, seed_warm_cache, fake_station)
-    client = await hass_ws_client(hass)
-    assert (await _play(client, _camera(hass), await _ref(client, _camera(hass))))["success"]
-    (stream,) = streams
-    loop = asyncio.get_running_loop()
-
-    release.set()
-    ended = loop.time()
-    event = await _next(client)
-
-    assert (event["event"].get("code", "complete"), stream.stops) == (end, 0)
-    assert loop.time() - ended < 0.4
-    await wait_until(lambda: stream.stops == 1)
-    assert loop.time() - ended >= 0.4
+    assert text.count("#EXT-X-DISCONTINUITY\n") == 1
+    assert sorted(n for n in files if n.startswith("init")) == ["init0.mp4", "init1.mp4"]
+    assert _frames(text, files) == _video_frames(data)
     await _unload(hass, entry)
 
 
@@ -442,13 +447,12 @@ async def test_an_error_before_the_first_bytes_is_the_fetch_answer(
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
     monkeypatch: pytest.MonkeyPatch,
     error: Exception,
     code: str,
 ) -> None:
     """The subscription is refused with the code and message a fetch gives for the same
-    library error, no Stream is created, and the failure is counted by its code."""
+    library error, no remux thread starts, and the failure is counted by its code."""
     entry = await _set_up(hass, seed_warm_cache, fake_station)
     client = await hass_ws_client(hass)
     ref = await _ref(client, _camera(hass))
@@ -468,8 +472,9 @@ async def test_an_error_before_the_first_bytes_is_the_fetch_answer(
     assert not reply["success"], reply
     assert reply["error"] == fetched["error"]
     assert reply["error"]["code"] == code
-    assert streams == []
-    assert _plays(entry).diagnostics()["failed"] == {code: 1}
+    assert _remux_threads() == []
+    counts = _plays(entry).diagnostics()
+    assert (counts["failed"], counts["active"]) == ({code: 1}, 0)
     await _nothing_more(client)
     await _unload(hass, entry)
 
@@ -480,7 +485,6 @@ async def test_a_busy_play_says_every_session_is_in_use(
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Past the session budget: ``busy``, the HomeBase's sessions named."""
@@ -503,7 +507,6 @@ async def test_a_play_that_writes_nothing_answers_unavailable(
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A library call that returns without a byte is the station not playing it."""
@@ -513,8 +516,66 @@ async def test_a_play_that_writes_nothing_answers_unavailable(
 
     reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
 
-    assert reply["error"]["code"] == "unavailable"
-    assert streams == []
+    assert reply["error"] == {"code": "unavailable", "message": "The HomeBase did not play it"}
+    assert _plays(entry).diagnostics()["active"] == 0
+    # The refused subscription is gone: unsubscribing it finds nothing.
+    await client.send_json_auto_id({"type": "unsubscribe_events", "subscription": reply["id"]})
+    assert (await _next(client))["error"]["code"] == "not_found"
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize(
+    ("chunks", "error"),
+    [
+        ([b"\x47" + bytes(187)] * 40, None),
+        ([b"not a transport stream" * 1000], None),
+        ([b"\x47" + bytes(187)] * 40, DeviceTimeoutError("silent")),
+    ],
+    ids=["no-video", "no-ts", "no-video-then-library-error"],
+)
+async def test_a_play_with_nothing_to_show_is_refused(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    chunks: list[bytes],
+    error: Exception | None,
+) -> None:
+    """Bytes without a video segment: ``failed`` (or the library's own error when it
+    raised), never a URL; the remux thread is gone."""
+    Player(chunks=chunks, error=error).install(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+
+    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
+
+    assert reply["error"]["code"] == ("unavailable" if error else "failed")
+    await wait_until(lambda: _remux_threads() == [])
+    await _nothing_more(client)
+    await _unload(hass, entry)
+
+
+async def test_input_the_remux_cannot_read_stops_the_library(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The remux gives up (a TS without video) while the library still plays: the
+    library is cancelled and the subscription refused ``failed``."""
+    player = Player(chunks=[audio_only(_clip(2.0))], hold=True).install(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+
+    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
+
+    assert reply["error"] == {"code": "failed", "message": "The recording could not be played"}
+    await asyncio.wait_for(player.cancelled.wait(), 5)
+    assert _plays(entry).diagnostics()["failed"] == {"failed": 1}
     await _unload(hass, entry)
 
 
@@ -524,7 +585,6 @@ async def test_a_play_while_the_station_is_away_is_unavailable(
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A listed recording of a station that has dropped is not asked for."""
@@ -548,7 +608,6 @@ async def test_a_request_the_station_cannot_play_is_refused_before_the_library(
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A ref the library did not issue is ``not_found``, a recording still running
@@ -575,58 +634,58 @@ async def test_a_request_the_station_cannot_play_is_refused_before_the_library(
     )
     assert (await _next(client))["error"]["code"] == "invalid_format"
     assert player.calls == []
-    assert streams == []
     assert _plays(entry).diagnostics()["started"] == 0
     await _unload(hass, entry)
 
 
-@pytest.mark.usefixtures("short_grace")
 @pytest.mark.parametrize(
     ("error", "ended_early", "code"),
     [
         (DeviceTimeoutError("silent"), False, "unavailable"),
         (None, True, "codec_change"),
+        (RuntimeError("unexpected"), False, "failed"),
     ],
-    ids=["library-error", "codec-change"],
+    ids=["library-error", "codec-change", "unexpected-error"],
 )
-async def test_an_end_after_the_first_bytes_is_one_error_event(
+async def test_an_end_after_the_first_segment_is_one_error_event_after_the_tail(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
     hass_client_no_auth: ClientSessionGenerator,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
     monkeypatch: pytest.MonkeyPatch,
     error: Exception | None,
     ended_early: bool,
     code: str,
 ) -> None:
-    """A library error after the result, or a clip cut at a codec change, ends the HTTP
-    response after what arrived, sends one ``error`` event and stops the Stream."""
+    """A library error after the URL, or a clip cut at a codec change, publishes what
+    arrived (its tail included, with ``#EXT-X-ENDLIST``) and sends one ``error`` event;
+    the play stays served."""
+    data = _clip(5.0)
+    head, _ = _halves(data, 3.5)
     release = asyncio.Event()
-    Player(error=error, ended_early=ended_early, release=release).install(monkeypatch)
+    Player(chunks=head, error=error, ended_early=ended_early, release=release).install(monkeypatch)
     entry = await _set_up(hass, seed_warm_cache, fake_station)
     client = await hass_ws_client(hass)
-    assert (await _play(client, _camera(hass), await _ref(client, _camera(hass))))["success"]
-    (stream,) = streams
-    http = await hass_client_no_auth()
-    response = await http.get(_source_path(stream))
+    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
+    assert reply["success"]
 
     release.set()
     event = (await _next(client))["event"]
 
-    assert await response.read() == TS_CHUNK * 2
-    assert event["end"] == "error"
-    assert event["code"] == code
+    assert (event["end"], event["code"]) == ("error", code)
     assert event["message"]
-    await wait_until(lambda: stream.stops == 1)
+    text, _ = await _fetch_all(await hass_client_no_auth(), reply["started"]["url"])
+    assert text.splitlines()[-1] == "#EXT-X-ENDLIST"
+    # Cut before the frame at 3.533 s.
+    assert re.findall(r"#EXTINF:([\d.]+),", text) == ["2.000", "1.533"]
     await _nothing_more(client)
     assert _plays(entry).diagnostics()["failed"] == {code: 1}
     await _unload(hass, entry)
 
 
-async def test_a_play_without_home_assistants_stream_fails_and_stops_the_library(
+async def test_a_remux_failure_after_the_url_stops_the_library_with_an_error_event(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
     fake_station: FakeStation,
@@ -634,149 +693,19 @@ async def test_a_play_without_home_assistants_stream_fails_and_stops_the_library
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A Stream that cannot be created answers ``failed`` and cancels the play."""
+    """The remux breaks off after its first segment while the library still plays: the
+    library is cancelled (its session freed) and the viewer gets ``failed``."""
     player = Player(hold=True).install(monkeypatch)
+    real_close = recording_hls.TsRemuxer._close_segment
+    closes: list[int] = []
 
-    def unavailable(*_args: Any, **_kwargs: Any) -> Any:
-        raise HomeAssistantError("Stream integration is not set up.")
+    def close_then_break(self: recording_hls.TsRemuxer, end_dts: int) -> None:
+        closes.append(end_dts)
+        if len(closes) > 1:
+            raise recording_hls.RemuxError("broke off")
+        real_close(self, end_dts)
 
-    monkeypatch.setattr(recording_plays, "create_stream", unavailable)
-    entry = await _set_up(hass, seed_warm_cache, fake_station)
-    client = await hass_ws_client(hass)
-
-    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
-
-    assert reply["error"]["code"] == "failed"
-    await asyncio.wait_for(player.cancelled.wait(), 5)
-    assert _plays(entry).diagnostics()["active"] == 0
-    await _unload(hass, entry)
-
-
-# ── the viewer leaves, or nobody reads ────────────────────────────────────────
-
-
-async def test_unsubscribing_cancels_the_library_and_stops_the_stream_with_no_event(
-    hass: HomeAssistant,
-    hass_ws_client: WebSocketGenerator,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The card closes the player: the play is cancelled, the Stream stopped at once,
-    no event; counted as the viewer leaving."""
-    player = Player(hold=True).install(monkeypatch)
-    entry = await _set_up(hass, seed_warm_cache, fake_station)
-    client = await hass_ws_client(hass)
-    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
-    (stream,) = streams
-
-    await client.send_json_auto_id({"type": "unsubscribe_events", "subscription": reply["id"]})
-
-    assert (await _next(client))["success"]
-    await asyncio.wait_for(player.cancelled.wait(), 5)
-    await wait_until(lambda: stream.stops == 1)
-    await _nothing_more(client)
-    counts = _plays(entry).diagnostics()
-    assert (counts["viewer_left"], counts["active"], counts["failed"]) == (1, 0, {})
-    await _unload(hass, entry)
-
-
-async def test_unsubscribing_during_the_grace_stops_the_stream_at_once(
-    hass: HomeAssistant,
-    hass_ws_client: WebSocketGenerator,
-    hass_client_no_auth: ClientSessionGenerator,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The recording has ended (its event sent) and the Stream waits out its grace: the
-    source is gone for a first reader too (410), and an unsubscribe stops the Stream
-    now, with no further event."""
-    monkeypatch.setattr(recording_plays, "PLAY_END_GRACE", 60.0)
-    release = asyncio.Event()
-    player = Player(release=release).install(monkeypatch)
-    entry = await _set_up(hass, seed_warm_cache, fake_station)
-    client = await hass_ws_client(hass)
-    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
-    (stream,) = streams
-    release.set()
-    assert (await _next(client))["event"]["end"] == "complete"
-    await asyncio.sleep(0.1)
-    assert (player.returned, stream.stops) == (1, 0)
-    assert (await (await hass_client_no_auth()).get(_source_path(stream))).status == 410
-
-    await client.send_json_auto_id({"type": "unsubscribe_events", "subscription": reply["id"]})
-
-    assert (await _next(client))["success"]
-    await wait_until(lambda: stream.stops == 1)
-    await _nothing_more(client)
-    await _unload(hass, entry)
-
-
-@pytest.mark.parametrize(
-    ("first_bytes", "how"),
-    [(True, "close"), (False, "close"), (False, "unsubscribe")],
-    ids=["playing-closed", "starting-closed", "starting-unsubscribed"],
-)
-async def test_a_viewer_that_leaves_cancels_its_play(
-    hass: HomeAssistant,
-    hass_ws_client: WebSocketGenerator,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
-    monkeypatch: pytest.MonkeyPatch,
-    first_bytes: bool,
-    how: str,
-) -> None:
-    """Home Assistant unsubscribes a closed connection: a play that has answered stops
-    its Stream; one still waiting for its first bytes never creates one, and one
-    unsubscribed before its result gets no answer after the unsubscribe's."""
-    player = Player(chunks=[TS_CHUNK] if first_bytes else [], hold=True).install(monkeypatch)
-    entry = await _set_up(hass, seed_warm_cache, fake_station)
-    client = await hass_ws_client(hass)
-    ref = await _ref(client, _camera(hass))
-    request = {"type": station_recordings.WS_PLAY, "entity_id": _camera(hass), "ref": ref}
-    await client.send_json_auto_id(request)
-    if first_bytes:
-        assert (await _next(client))["success"]
-    else:
-        await asyncio.wait_for(player.entered.wait(), 5)
-
-    if how == "close":
-        await client.close()
-    else:
-        await client.send_json_auto_id(
-            {"type": "unsubscribe_events", "subscription": request["id"]}
-        )
-        assert (await _next(client))["success"]
-
-    await asyncio.wait_for(player.cancelled.wait(), 5)
-    await wait_until(lambda: _plays(entry).diagnostics()["active"] == 0)
-    assert [s.stops for s in streams] == ([1] if first_bytes else [])
-    assert _plays(entry).diagnostics()["viewer_left"] == 1
-    if how == "unsubscribe":
-        await _nothing_more(client)
-    await _unload(hass, entry)
-
-
-@pytest.mark.usefixtures("short_attach")
-async def test_a_play_nobody_reads_ends_after_the_attach_timeout(
-    hass: HomeAssistant,
-    hass_ws_client: WebSocketGenerator,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The Stream never reads the source: the play is cancelled, its Stream stopped,
-    and the subscription ends ``failed``."""
-    player = Player(hold=True).install(monkeypatch)
+    monkeypatch.setattr(recording_hls.TsRemuxer, "_close_segment", close_then_break)
     entry = await _set_up(hass, seed_warm_cache, fake_station)
     client = await hass_ws_client(hass)
     assert (await _play(client, _camera(hass), await _ref(client, _camera(hass))))["success"]
@@ -784,77 +713,413 @@ async def test_a_play_nobody_reads_ends_after_the_attach_timeout(
     event = (await _next(client))["event"]
 
     assert (event["end"], event["code"]) == ("error", "failed")
-    assert player.cancelled.is_set()
-    await wait_until(lambda: streams[0].stops == 1)
+    await asyncio.wait_for(player.cancelled.wait(), 5)
+    await _nothing_more(client)
     await _unload(hass, entry)
 
 
-@pytest.mark.usefixtures("short_attach")
-async def test_a_play_that_is_read_in_time_is_not_timed_out(
+async def test_what_the_remux_posts_after_the_play_is_freed_is_dropped(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
-    hass_client_no_auth: ClientSessionGenerator,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Once the Stream reads the source, the attach timeout no longer ends the play."""
-    player = Player(hold=True).install(monkeypatch)
+    """An init, a segment or the remux's end queued on the event loop before the viewer
+    left neither answers the gone subscription nor holds bytes."""
+    head, _ = _halves(_clip(5.0), 1.0)
+    Player(chunks=head, hold=True).install(monkeypatch)
     entry = await _set_up(hass, seed_warm_cache, fake_station)
     client = await hass_ws_client(hass)
-    assert (await _play(client, _camera(hass), await _ref(client, _camera(hass))))["success"]
-    http = await hass_client_no_auth()
-    response = await http.get(_source_path(streams[0]))
-    assert await response.content.readexactly(len(TS_CHUNK)) == TS_CHUNK
-    # A second reader of a running play is refused.
-    assert (await http.get(_source_path(streams[0]))).status == 410
+    msg_id = await _subscribe(client, _camera(hass), await _ref(client, _camera(hass)))
+    await wait_until(lambda: bool(recording_plays._served(hass).plays))
+    (play,) = recording_plays._served(hass).plays.values()
+    await client.send_json_auto_id({"type": "unsubscribe_events", "subscription": msg_id})
+    assert (await _next(client))["success"]
+    plays = _plays(entry)
+    await wait_until(lambda: plays._threads == set())
 
-    await asyncio.sleep(0.4)
+    plays._on_init(play, 0, b"init")
+    plays._on_segment(play, recording_hls.Segment(0, 0, 2.0, b"segment"))
+    plays._on_remux_done(play, None, recording_hls.RemuxError("aborted"))
 
-    assert not player.cancelled.is_set()
-    assert streams[0].stops == 0
     await _nothing_more(client)
-    response.close()
+    assert (play.playlist.held, play.playlist.segments, play.answered) == (0, 0, False)
+    assert plays.diagnostics()["failed"] == {}
     await _unload(hass, entry)
 
 
-@pytest.mark.usefixtures("short_attach")
-@pytest.mark.parametrize("start_gate", [asyncio.Event()])
-async def test_a_source_read_while_the_stream_starts_is_not_timed_out(
+# ── the viewer leaves; the ended play is kept ─────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("answered", "how"),
+    [(True, "close"), (True, "unsubscribe"), (False, "close"), (False, "unsubscribe")],
+    ids=["playing-closed", "playing-unsubscribed", "starting-closed", "starting-unsubscribed"],
+)
+async def test_a_viewer_that_leaves_stops_the_play_and_frees_it_at_once(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
     hass_client_no_auth: ClientSessionGenerator,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
-    start_gate: asyncio.Event,
+    monkeypatch: pytest.MonkeyPatch,
+    answered: bool,
+    how: str,
+) -> None:
+    """Unsubscribing or closing the websocket cancels the library and the remux, the
+    token answers 404 at once, no event follows; counted as the viewer leaving."""
+    head, _ = _halves(_clip(5.0), 3.5 if answered else 1.0)
+    player = Player(chunks=head, hold=True).install(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+    msg_id = await _subscribe(client, _camera(hass), await _ref(client, _camera(hass)))
+    url = None
+    if answered:
+        url = (await _answer(client))["started"]["url"]
+    else:
+        await asyncio.wait_for(player.entered.wait(), 5)
+    (play,) = recording_plays._served(hass).plays.values()
+
+    if how == "close":
+        await client.close()
+    else:
+        await client.send_json_auto_id({"type": "unsubscribe_events", "subscription": msg_id})
+        assert (await _next(client))["success"]
+
+    await asyncio.wait_for(player.cancelled.wait(), 5)
+    counts = _plays(entry).diagnostics()
+    assert (counts["viewer_left"], counts["active"], counts["failed"]) == (1, 0, {})
+    assert recording_plays._served(hass).plays == {}
+    assert play.playlist.held == 0
+    if url is not None:
+        assert (await (await hass_client_no_auth()).get(url)).status == 404
+    await wait_until(lambda: _remux_threads() == [])
+    if how == "unsubscribe":
+        await _nothing_more(client)
+    await _unload(hass, entry)
+
+
+@pytest.mark.usefixtures("short_keep")
+async def test_an_ended_play_is_kept_until_nobody_asked_for_the_keep_time(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    hass_client_no_auth: ClientSessionGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The stream worker may read before ``start`` returns: no attach timeout then."""
-    player = Player(hold=True).install(monkeypatch)
+    """Every request restarts the keep time; idle for ``PLAY_KEEP_SECONDS`` the play is
+    freed (404) with no further event."""
+    Player().install(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
+    assert (await _next(client))["event"]["end"] == "complete"
+    http = await hass_client_no_auth()
+    loop = asyncio.get_running_loop()
+    url = reply["started"]["url"]
+
+    for _ in range(3):
+        await asyncio.sleep(0.2)
+        assert (await http.get(url)).status == 200
+    asked = loop.time()
+    await wait_until(lambda: _plays(entry).diagnostics()["active"] == 0)
+
+    # Freed when the keep time since the last request is up, not a keep time later.
+    assert 0.3 <= loop.time() - asked < 0.45
+    assert (await http.get(url)).status == 404
+    await _nothing_more(client)
+    await _unload(hass, entry)
+
+
+async def test_unsubscribing_after_the_end_frees_the_kept_play_at_once(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    hass_client_no_auth: ClientSessionGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    Player().install(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
+    assert (await _next(client))["event"]["end"] == "complete"
+    http = await hass_client_no_auth()
+    assert (await http.get(reply["started"]["url"])).status == 200
+
+    await client.send_json_auto_id({"type": "unsubscribe_events", "subscription": reply["id"]})
+
+    assert (await _next(client))["success"]
+    assert (await http.get(reply["started"]["url"])).status == 404
+    counts = _plays(entry).diagnostics()
+    assert (counts["complete"], counts["viewer_left"], counts["active"]) == (1, 0, 0)
+    await _unload(hass, entry)
+
+
+# ── the HLS view ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.usefixtures("short_wait")
+async def test_a_playlist_asked_before_the_first_segment_waits_for_it(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    hass_client_no_auth: ClientSessionGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Asked early (a native player given the URL ahead), the playlist answers when the
+    first segment comes, or 404 after ``PLAYLIST_WAIT_SECONDS``; a play freed while a
+    request waits answers it 404 at once."""
+    head, tail = _halves(_clip(5.0), 1.0)
+    release = asyncio.Event()
+    Player(chunks=head, release=release, then=tail, hold=True).install(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+    msg_id = await _subscribe(client, _camera(hass), await _ref(client, _camera(hass)))
+    await wait_until(lambda: _plays(entry).diagnostics()["active"] == 1)
+    (token,) = recording_plays._served(hass).plays
+    url = recording_plays.RECORDING_URL.format(token=token, name="playlist.m3u8")
+    http = await hass_client_no_auth()
+    loop = asyncio.get_running_loop()
+
+    asked = loop.time()
+    assert (await http.get(url)).status == 404
+    assert loop.time() - asked >= 0.2
+
+    monkeypatch.setattr(recording_plays, "PLAYLIST_WAIT_SECONDS", 10.0)
+    waiting = hass.async_create_task(http.get(url))
+    await asyncio.sleep(0.1)
+    release.set()
+    response = await asyncio.wait_for(waiting, 5)
+    assert response.status == 200
+    assert "seg0.m4s" in await response.text()
+    assert (await _answer(client))["started"]["url"] == url
+
+    await client.send_json_auto_id({"type": "unsubscribe_events", "subscription": msg_id})
+    assert (await _next(client))["success"]
+    await _unload(hass, entry)
+
+
+async def test_a_wait_ends_with_404_when_the_play_is_freed(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    hass_client_no_auth: ClientSessionGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    head, _ = _halves(_clip(5.0), 1.0)
+    Player(chunks=head, hold=True).install(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+    msg_id = await _subscribe(client, _camera(hass), await _ref(client, _camera(hass)))
+    await wait_until(lambda: _plays(entry).diagnostics()["active"] == 1)
+    (token,) = recording_plays._served(hass).plays
+    http = await hass_client_no_auth()
+    waiting = hass.async_create_task(
+        http.get(recording_plays.RECORDING_URL.format(token=token, name="playlist.m3u8"))
+    )
+    await asyncio.sleep(0.1)
+    loop = asyncio.get_running_loop()
+    left = loop.time()
+
+    await client.send_json_auto_id({"type": "unsubscribe_events", "subscription": msg_id})
+
+    assert (await asyncio.wait_for(waiting, 5)).status == 404
+    assert loop.time() - left < 1.0
+    await _unload(hass, entry)
+
+
+async def test_the_view_answers_404_for_unknown_tokens_and_files(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    hass_client_no_auth: ClientSessionGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    Player().install(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
+    assert (await _next(client))["event"]["end"] == "complete"
+    http = await hass_client_no_auth()
+    base = _base(reply["started"]["url"])
+
+    statuses = [
+        (await http.get(f"{base}/{name}")).status
+        for name in ("init0.mp4", "seg2.m4s", "init1.mp4", "seg3.m4s", "seg0.mp4", "x.m3u8")
+    ]
+    unknown = (await http.get(f"/api/eufy_home_security/recording/{'0' * 32}/seg0.m4s")).status
+
+    assert statuses == [200, 200, 404, 404, 404, 404]
+    assert unknown == 404
+    await _unload(hass, entry)
+
+
+async def test_past_the_memory_cap_the_playlist_slides(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    hass_client_no_auth: ClientSessionGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A play holds at most ``PLAY_MAX_BYTES``: the oldest segments leave the
+    playlist, the newest stays, and the peak is in the diagnostics."""
+    monkeypatch.setattr(recording_plays, "PLAY_MAX_BYTES", 40_000)
+    Player(chunks=_writes(_clip(9.0))).install(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
+    assert (await _next(client))["event"] == {"end": "complete", "duration": 9.0}
+
+    text, files = await _fetch_all(await hass_client_no_auth(), reply["started"]["url"])
+
+    assert "#EXT-X-PLAYLIST-TYPE:EVENT" not in text
+    assert "#EXT-X-MEDIA-SEQUENCE:0" not in text
+    assert "seg4.m4s" in files
+    held = sum(len(b) for b in files.values())
+    assert held <= 40_000
+    assert _plays(entry).diagnostics()["bytes_held_peak"] > 40_000
+    await _unload(hass, entry)
+
+
+# ── unload, Home Assistant stopping, diagnostics ──────────────────────────────
+
+
+async def test_an_unload_ends_every_play_and_waits_for_the_remux(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    hass_client_no_auth: ClientSessionGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A playing play is told ``failed``, one still starting is refused ``failed``, a
+    kept one gets nothing more; the library is cancelled, every token answers 404 and
+    no remux thread is left when the unload returns."""
+    head, _ = _halves(_clip(5.0), 3.5)
+    player = Player(chunks=head, hold=True).install(monkeypatch)
     entry = await _set_up(hass, seed_warm_cache, fake_station)
     client = await hass_ws_client(hass)
     ref = await _ref(client, _camera(hass))
-    http = await hass_client_no_auth()
-    await client.send_json_auto_id(
-        {"type": station_recordings.WS_PLAY, "entity_id": _camera(hass), "ref": ref}
-    )
-    await wait_until(lambda: bool(streams) and streams[0].starting.is_set())
-    response = await http.get(_source_path(streams[0]))
-    assert await response.content.readexactly(len(TS_CHUNK)) == TS_CHUNK
+    playing = await _play(client, _camera(hass), ref)
+    player.hold = False
+    player.chunks = _writes(_clip(1.4))
+    kept = await _play(client, _camera(hass), ref)
+    assert (await _next(client))["event"]["end"] == "complete"
+    player.chunks, player.hold = [], True
+    starting = await _subscribe(client, _camera(hass), ref)
+    await wait_until(lambda: _plays(entry).diagnostics()["active"] == 3)
 
-    start_gate.set()
-    assert (await _next(client))["success"]
-    assert (await _next(client))["event"]["url"] == HLS_URL
-    await asyncio.sleep(0.4)
+    assert await hass.config_entries.async_unload(entry.entry_id)
 
-    assert not player.cancelled.is_set()
+    assert _remux_threads() == []
+    assert player.cancelled.is_set()
+    answers = {}
+    for _ in range(2):
+        message = await _next(client)
+        answers[message["id"]] = message
+    assert answers[playing["id"]]["event"]["code"] == "failed"
+    assert answers[starting]["error"]["code"] == "failed"
     await _nothing_more(client)
-    response.close()
+    http = await hass_client_no_auth()
+    for reply in (playing, kept):
+        assert (await http.get(reply["started"]["url"])).status == 404
+
+
+async def test_an_unload_waits_for_the_library_and_a_slow_remux_thread(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The unload returns only once every library call is done and every remux thread,
+    even one slow to stop, has ended."""
+    real_run = recording_hls.TsRemuxer.run
+
+    def slow_run(self: recording_hls.TsRemuxer) -> recording_hls.RemuxResult:
+        result = real_run(self)
+        time.sleep(0.3)
+        return result
+
+    monkeypatch.setattr(recording_hls.TsRemuxer, "run", slow_run)
+    head, _ = _halves(_clip(5.0), 3.5)
+    player = Player(chunks=head, hold=True).install(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+    ref = await _ref(client, _camera(hass))
+    assert (await _play(client, _camera(hass), ref))["success"]
+    player.chunks = []
+    await _subscribe(client, _camera(hass), ref)
+    await wait_until(lambda: _plays(entry).diagnostics()["active"] == 2)
+    libraries = [
+        t for t in asyncio.all_tasks() if t.get_name() == "eufy_home_security recording play"
+    ]
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+    assert len(libraries) == 2
+    assert all(t.done() for t in libraries)
+    assert _remux_threads() == []
+
+
+async def test_stopping_the_plays_returns_once_the_library_calls_are_done(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A play still waiting for its first bytes has no remux thread to wait for; its
+    library call is still over when ``async_stop`` returns, before the client closes."""
+    player = Player(chunks=[], hold=True).install(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    client = await hass_ws_client(hass)
+    await _subscribe(client, _camera(hass), await _ref(client, _camera(hass)))
+    await asyncio.wait_for(player.entered.wait(), 5)
+    (library,) = [
+        t for t in asyncio.all_tasks() if t.get_name() == "eufy_home_security recording play"
+    ]
+
+    await _plays(entry).async_stop()
+
+    assert library.done()
+    assert player.cancelled.is_set()
     await _unload(hass, entry)
+
+
+def test_a_second_entry_registers_no_second_view(hass: HomeAssistant) -> None:
+    """The view is registered once per Home Assistant instance."""
+    entry = MockConfigEntry(domain="eufy_home_security")
+    registered: list[object] = []
+
+    class Http:
+        def register_view(self, view: object) -> None:
+            registered.append(view)
+
+    hass.http = Http()  # type: ignore[assignment]
+    recording_plays.RecordingPlays(hass, entry)
+    recording_plays.RecordingPlays(hass, entry)
+
+    assert len(registered) == 1
+    assert isinstance(registered[0], recording_plays.RecordingHlsView)
 
 
 async def test_a_library_call_cancelled_by_home_assistant_ends_the_play(
@@ -863,12 +1128,12 @@ async def test_a_library_call_cancelled_by_home_assistant_ends_the_play(
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Home Assistant stopping cancels the entry's background tasks: the play ends
-    ``failed`` and its Stream stops."""
-    Player(hold=True).install(monkeypatch)
+    ``failed``."""
+    head, _ = _halves(_clip(5.0), 3.5)
+    Player(chunks=head, hold=True).install(monkeypatch)
     entry = await _set_up(hass, seed_warm_cache, fake_station)
     client = await hass_ws_client(hass)
     assert (await _play(client, _camera(hass), await _ref(client, _camera(hass))))["success"]
@@ -880,186 +1145,7 @@ async def test_a_library_call_cancelled_by_home_assistant_ends_the_play(
     event = (await _next(client))["event"]
 
     assert (event["end"], event["code"]) == ("error", "failed")
-    await wait_until(lambda: streams[0].stops == 1)
     await _unload(hass, entry)
-
-
-async def test_a_reader_that_goes_away_cancels_the_play(
-    hass: HomeAssistant,
-    hass_ws_client: WebSocketGenerator,
-    hass_client_no_auth: ClientSessionGenerator,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The Stream's worker drops the source mid-play: the library is cancelled, the
-    Stream stopped, and the subscription ends ``failed``."""
-    release = asyncio.Event()
-    # Frames keep coming after the reader left, so the view notices at a write if the
-    # server does not cancel it first.
-    player = Player(chunks=[TS_CHUNK], release=release, then=[TS_CHUNK] * 50, hold=True)
-    player.install(monkeypatch)
-    entry = await _set_up(hass, seed_warm_cache, fake_station)
-    client = await hass_ws_client(hass)
-    assert (await _play(client, _camera(hass), await _ref(client, _camera(hass))))["success"]
-    http = await hass_client_no_auth()
-    response = await http.get(_source_path(streams[0]))
-    assert await response.content.readexactly(len(TS_CHUNK)) == TS_CHUNK
-
-    response.close()
-    release.set()
-    event = (await _next(client))["event"]
-
-    assert player.cancelled.is_set()
-    assert (event["end"], event["code"]) == ("error", "failed")
-    await wait_until(lambda: streams[0].stops == 1)
-    await _unload(hass, entry)
-
-
-# ── unload, diagnostics ───────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize("start_gate", [asyncio.Event()])
-async def test_an_unload_while_the_stream_starts_answers_failed(
-    hass: HomeAssistant,
-    hass_ws_client: WebSocketGenerator,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
-    start_gate: asyncio.Event,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An end that comes while the Stream starts wins: the subscription gets the
-    ``failed`` error, never a URL of a Stream already stopped."""
-    player = Player(hold=True).install(monkeypatch)
-    entry = await _set_up(hass, seed_warm_cache, fake_station)
-    client = await hass_ws_client(hass)
-    ref = await _ref(client, _camera(hass))
-    await client.send_json_auto_id(
-        {"type": station_recordings.WS_PLAY, "entity_id": _camera(hass), "ref": ref}
-    )
-    await wait_until(lambda: bool(streams) and streams[0].starting.is_set())
-
-    unloading = hass.async_create_task(hass.config_entries.async_unload(entry.entry_id))
-    await wait_until(player.cancelled.is_set)
-    start_gate.set()
-    await unloading
-
-    reply = await _next(client)
-    assert (reply["success"], reply["error"]["code"]) == (False, "failed")
-    assert streams[0].stops == 1
-    await _nothing_more(client)
-
-
-async def test_an_unload_ends_every_play_and_stops_its_stream(
-    hass: HomeAssistant,
-    hass_ws_client: WebSocketGenerator,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A playing play and one in its grace (``complete`` sent) both end at once: the
-    library cancelled, the playing one told ``failed``, each Stream stopped by the time
-    the unload returns."""
-    monkeypatch.setattr(recording_plays, "PLAY_END_GRACE", 60.0)
-    player = Player(hold=True).install(monkeypatch)
-    entry = await _set_up(hass, seed_warm_cache, fake_station)
-    client = await hass_ws_client(hass)
-    ref = await _ref(client, _camera(hass))
-    playing = await _play(client, _camera(hass), ref)
-    player.hold = False
-    assert (await _play(client, _camera(hass), ref))["success"]
-    assert (await _next(client))["event"]["end"] == "complete"
-    await asyncio.sleep(0.1)
-    assert [s.stops for s in streams] == [0, 0]
-    for stream in streams:
-        stream.stop_delay = 0.2
-
-    assert await hass.config_entries.async_unload(entry.entry_id)
-
-    # Every Stream has stopped by the time the unload returns.
-    assert [s.stops for s in streams] == [1, 1]
-
-    event = await _next(client)
-    assert player.cancelled.is_set()
-    assert event["id"] == playing["id"]
-    assert (event["event"]["end"], event["event"]["code"]) == ("error", "failed")
-    await _nothing_more(client)
-
-
-def _worker_error(stream: FakeStream) -> None:
-    """The line Home Assistant's stream worker logs when the play's source ends."""
-    logging.getLogger(recording_plays.STREAM_LOGGER).error(
-        "Error from stream worker: %s",
-        f"Error demuxing stream (Input/output error, {stream.source})",
-    )
-
-
-def _logged(caplog: pytest.LogCaptureFixture) -> int:
-    return sum(1 for r in caplog.records if r.name == recording_plays.STREAM_LOGGER)
-
-
-async def test_the_worker_error_at_an_ended_plays_end_is_dropped_until_its_stream_stops(
-    hass: HomeAssistant,
-    hass_ws_client: WebSocketGenerator,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Once a play has ended complete, the stream worker's error naming it is dropped;
-    the same line of a play still running, and another line naming the ended one, are
-    logged. After the Stream stops the line is logged again, and the filter leaves with
-    the last entry."""
-    caplog.set_level(logging.ERROR, logger=recording_plays.STREAM_LOGGER)
-    monkeypatch.setattr(recording_plays, "PLAY_END_GRACE", 60.0)
-    release = asyncio.Event()
-    player = Player(release=release).install(monkeypatch)
-    entry = await _set_up(hass, seed_warm_cache, fake_station)
-    client = await hass_ws_client(hass)
-    ref = await _ref(client, _camera(hass))
-    ended = await _play(client, _camera(hass), ref)
-    release.set()
-    assert (await _next(client))["event"]["end"] == "complete"
-    player.release, player.hold = None, True
-    assert (await _play(client, _camera(hass), ref))["success"]
-    done, running = streams
-
-    _worker_error(done)
-    assert _logged(caplog) == 0
-    _worker_error(running)
-    logging.getLogger(recording_plays.STREAM_LOGGER).error("Stream %s stalled", done.source)
-    assert _logged(caplog) == 2
-
-    await client.send_json_auto_id({"type": "unsubscribe_events", "subscription": ended["id"]})
-    assert (await _next(client))["success"]
-    await wait_until(lambda: done.stops == 1)
-    _worker_error(done)
-    assert _logged(caplog) == 3
-
-    await _unload(hass, entry)
-    assert not logging.getLogger(recording_plays.STREAM_LOGGER).filters
-
-
-def test_the_log_filter_stays_until_its_last_user_lets_go(hass: HomeAssistant) -> None:
-    """Two entries share one filter; the first unload leaves it in place."""
-    logger = logging.getLogger(recording_plays.STREAM_LOGGER)
-    first = recording_plays._hold_filter(hass)
-    second = recording_plays._hold_filter(hass)
-    assert first is second
-    assert logger.filters == [first]
-
-    recording_plays._release_filter(hass, first)
-    assert logger.filters == [first]
-    recording_plays._release_filter(hass, second)
-    assert logger.filters == []
 
 
 async def test_diagnostics_count_the_plays_by_outcome(
@@ -1069,31 +1155,40 @@ async def test_diagnostics_count_the_plays_by_outcome(
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
-    streams: list[FakeStream],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Under ``station_recordings``: started, complete, viewer left, failed by code and
-    the plays running; no ref or play id."""
+    """Under ``station_recordings``: started, complete, viewer left, failed by code, the
+    plays served and the most bytes one held; no ref or token."""
     assert await async_setup_component(hass, "diagnostics", {})
-    player = Player(hold=True).install(monkeypatch)
+    head, _ = _halves(_clip(5.0), 3.5)
+    player = Player(chunks=head, hold=True).install(monkeypatch)
     entry = await _set_up(hass, seed_warm_cache, fake_station)
     client = await hass_ws_client(hass)
     ref = await _ref(client, _camera(hass))
     left = await _play(client, _camera(hass), ref)
     await client.send_json_auto_id({"type": "unsubscribe_events", "subscription": left["id"]})
     assert (await _next(client))["success"]
+    running = await _play(client, _camera(hass), ref)
+    player.hold, player.chunks = False, _writes(_clip(1.4))
     assert (await _play(client, _camera(hass), ref))["success"]
+    assert (await _next(client))["event"]["end"] == "complete"
     player.error, player.chunks = LiveStreamLimitError("spent", limit=1), []
     assert (await _play(client, _camera(hass), ref))["error"]["code"] == "busy"
 
     data = await get_diagnostics_for_config_entry(hass, hass_client, entry)
 
-    assert data["station_recordings"]["plays"] == {
-        "started": 3,
-        "complete": 0,
+    plays = data["station_recordings"]["plays"]
+    assert plays == {
+        "started": 4,
+        "complete": 1,
         "viewer_left": 1,
         "failed": {"busy": 1},
-        "active": 1,
+        "active": 2,
+        "bytes_held_peak": plays["bytes_held_peak"],
     }
+    assert plays["bytes_held_peak"] > 0
     assert ref not in str(data)
+    assert _URL.fullmatch(running["started"]["url"])
+    token = _URL.fullmatch(running["started"]["url"]).group(1)  # type: ignore[union-attr]
+    assert token not in str(data)
     await _unload(hass, entry)

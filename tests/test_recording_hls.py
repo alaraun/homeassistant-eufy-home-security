@@ -16,7 +16,7 @@ from typing import Any
 
 import av
 import pytest
-from recording_media import Part, make_ts
+from recording_media import Part, audio_only, make_ts
 
 from custom_components.eufy_home_security import recording_hls
 from custom_components.eufy_home_security.recording_hls import (
@@ -384,20 +384,8 @@ def test_keyframes_that_repeat_the_same_sets_start_no_new_init(
 
 
 def test_a_ts_without_video_is_a_remux_error() -> None:
-    data = make_ts((Part(320, 240, 2.0),))
-    container = av.open(io.BytesIO(data), mode="r", format="mpegts")
-    buffer = io.BytesIO()
-    out = av.open(buffer, mode="w", format="mpegts")
-    audio = out.add_stream_from_template(container.streams.audio[0])
-    for packet in container.demux(container.streams.audio[0]):
-        if packet.size:
-            packet.stream = audio
-            out.mux(packet)
-    out.close()
-    container.close()
-
     with pytest.raises(RemuxError, match="no video"):
-        _remux(buffer.getvalue())
+        _remux(audio_only(make_ts((Part(320, 240, 2.0),))))
 
 
 @pytest.mark.parametrize("data", [b"", b"not a transport stream" * 400])

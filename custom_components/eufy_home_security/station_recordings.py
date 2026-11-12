@@ -28,9 +28,9 @@ Three websocket commands and one view, registered once per Home Assistant instan
   camera is woken. A ``ref`` no fresh listing holds is looked up on the station
   (``Station.async_history_record_by_ref``).
 - ``eufy_home_security/recordings/play`` ``{entity_id, ref}`` (a subscription) plays one
-  settled recording straight to a viewer through Home Assistant's stream component
-  and saves nothing (``recording_plays.RecordingPlays``): the result is an HLS URL, then
-  one event ends the play.
+  settled recording straight to a viewer as fMP4 HLS made in memory and saves nothing
+  (``recording_plays.RecordingPlays``): an empty result, then the playlist URL as an
+  event, then one event ends the play.
 - ``/api/eufy_home_security/recording_thumb/<entity id>/<ref>`` serves a
   recording's still off the station's disk as ``image/jpeg``, behind Home Assistant's
   auth (the listing hands out signed paths), kept in a small in-memory LRU; 404 for a
@@ -674,8 +674,8 @@ async def _ws_fetch(
 async def _ws_play(
     hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
 ) -> None:
-    """Play one recording through Home Assistant's stream: the result is its HLS URL,
-    then one event ends the play (``recording_plays``)."""
+    """Play one recording as HLS: its playlist URL comes as the first event, then one
+    event ends the play (``recording_plays``)."""
     try:
         camera = _camera(hass, msg[ATTR_ENTITY_ID])
         if camera.station.is_standalone:

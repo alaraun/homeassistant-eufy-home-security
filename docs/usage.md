@@ -267,18 +267,22 @@ request (the camera card's **Station** list, over the websocket commands
 `eufy_home_security/recordings`, `eufy_home_security/recordings/play` and
 `eufy_home_security/recordings/fetch`). Each can be played or saved:
 
-- **Play** streams the recording to the viewer through Home Assistant's stream
-  component (HLS, like a live view) and saves nothing. The picture starts after a few
-  seconds and runs forward at the recording's own pace; there is no seeking back.
-  Each viewer holds one HomeBase session for the recording's length: plays, live views
-  and live stills share **Sessions per HomeBase**, and a play past it waits for a
-  session, then fails with "every session of the HomeBase is in use". Closing the
-  player stops the HomeBase sending at once. A recording whose video codec changes
-  partway plays up to the change. The picture runs some seconds behind the HomeBase,
-  so it goes on for a few seconds after the card is told the recording has ended. The
-  last second of a recording is not shown, and a recording of only a few seconds may
-  not start at all (Home Assistant's stream needs two HLS segments). Tested on the
-  fake station; not yet checked with a HomeBase.
+- **Play** streams the recording to the viewer and saves nothing. Home Assistant
+  repackages the recording's video and sound into HLS in memory (no re-encoding,
+  nothing written to disk), which the card plays with Home Assistant's own player and
+  Safari plays natively. The picture starts once the first two seconds of the
+  recording have arrived, from its beginning, and runs to its last frame. Seeking
+  works within what has arrived; after the end the recording stays available for
+  seeking back until the player is closed or nobody has watched it for 5 minutes. A
+  play keeps at most 96 MB of video in memory; past that the oldest part can no longer
+  be sought back to. Each viewer holds one HomeBase session while the HomeBase sends:
+  plays, live views and live stills share **Sessions per HomeBase**, and a play past
+  it waits for a session, then fails with "every session of the HomeBase is in use".
+  The HomeBase sends faster than the recording runs, so its session is free again
+  before the picture reaches the end. Closing the player stops the HomeBase sending
+  at once. A recording whose video codec changes partway plays up to the change.
+  Tested on the fake station and with recorded HomeBase video; not yet checked with a
+  HomeBase.
 - **Save** copies it into the event history exactly as an event video: same name,
   noted as copied (the option's sync skips it), kept and deleted with the history. A
   recording whose video codec changes partway cannot be saved: the card says so, and
