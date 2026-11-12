@@ -1062,7 +1062,8 @@ async def test_the_view_answers_404_for_unknown_tokens_and_files(
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    Player().install(monkeypatch)
+    # Twelve segments, seg0 to seg11.
+    Player(chunks=_writes(_clip(23.0))).install(monkeypatch)
     entry = await _set_up(hass, seed_warm_cache, fake_station)
     client = await hass_ws_client(hass)
     reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
@@ -1070,13 +1071,27 @@ async def test_the_view_answers_404_for_unknown_tokens_and_files(
     http = await hass_client_no_auth()
     base = _base(reply["started"]["url"])
 
-    statuses = [
-        (await http.get(f"{base}/{name}")).status
-        for name in ("init0.mp4", "seg2.m4s", "init1.mp4", "seg3.m4s", "seg0.mp4", "x.m3u8")
-    ]
+    names = {
+        "init0.mp4": 200,
+        "seg2.m4s": 200,
+        "seg10.m4s": 200,
+        "init1.mp4": 404,
+        "seg12.m4s": 404,
+        "seg0.mp4": 404,
+        "x.m3u8": 404,
+        # One spelling per file: ASCII digits, no leading zero.
+        "seg\u0660.m4s": 404,
+        "init\u0660.mp4": 404,
+        "seg\u0662.m4s": 404,
+        "seg1\u0660.m4s": 404,
+        "seg00.m4s": 404,
+        "seg02.m4s": 404,
+        "init00.mp4": 404,
+    }
+    statuses = {name: (await http.get(f"{base}/{name}")).status for name in names}
     unknown = (await http.get(f"/api/eufy_home_security/recording/{'0' * 32}/seg0.m4s")).status
 
-    assert statuses == [200, 200, 404, 404, 404, 404]
+    assert statuses == names
     assert unknown == 404
     await _unload(hass, entry)
 

@@ -85,8 +85,9 @@ PLAY_REALTIME: Final = True
 RECORDING_URL: Final = "/api/eufy_home_security/recording/{token}/{name}"
 RECORDING_VIEW_NAME: Final = f"api:{DOMAIN}:recording_hls"
 _PLAYLIST: Final = "playlist.m3u8"
-_INIT: Final = re.compile(r"init(\d{1,6})\.mp4")
-_SEGMENT: Final = re.compile(r"seg(\d{1,9})\.m4s")
+# One spelling per file: ASCII digits, no leading zero.
+_INIT: Final = re.compile(r"init(0|[1-9][0-9]{0,5})\.mp4", re.ASCII)
+_SEGMENT: Final = re.compile(r"seg(0|[1-9][0-9]{0,8})\.m4s", re.ASCII)
 # A token's file never changes; the token is freed, not reused.
 _IMMUTABLE: Final = "max-age=3600, immutable"
 _REMUX_THREAD: Final = f"{DOMAIN}_recording_remux"
