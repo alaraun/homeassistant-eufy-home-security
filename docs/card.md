@@ -161,9 +161,28 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     picker's Clear goes back to the newest.
   - Station asks the HomeBase a week of days per page, back as far as **Event history** reaches (30 days at
     most); `Show more` goes on from where the page stopped.
-  - Station rows have **Play** and **Save**: both copy the recording from the HomeBase into the history folder
-    (5–10 s each, one at a time); Play then plays it. Both keep working on a row while the list stays open,
-    also on a HomeBase 2. A standalone camera has no Station sub-tab.
+  - Station rows have **Play** and **Save**. **Play** streams the recording from the HomeBase into the picture
+    area and saves nothing (`Recording · <time>`, muted with an Unmute button, ✕ to close). It starts in a few
+    seconds, from the beginning, and the player's own controls pause it and seek forward and backward within
+    what has arrived so far. The play holds one of the HomeBase's sessions while the HomeBase sends the recording
+    (usually faster than it plays), the same budget live views and stills use. When the video reaches the end,
+    `End of recording` and Play again show over its last picture. For up to about 28 minutes after the HomeBase
+    finished sending, Play again and seeking back with the controls replay what arrived without asking the
+    HomeBase again; later Play again starts a new play. A video that stops moving for 5 s after the HomeBase
+    finished sending (not paused, not seeking) keeps waiting while Home Assistant still serves the play; once it
+    no longer does, `End of recording` shows over the recording's picture, and Play again starts anew.
+    - One recording plays per card: closing it, opening another recording or history item, starting live view,
+      switching camera or leaving the dashboard ends the play and frees what arrived; refreshing the Station
+      list does not. A tab hidden for more than 60 s ends it too (`Stopped while the page was hidden`; Play
+      again starts it anew).
+    - When the HomeBase stops sending early (an error, or a recording that changes its video format part-way:
+      `The recording changes its video format here; Save it to watch the rest`), what arrived keeps playing and
+      the message shows when the video stops. A lost connection to Home Assistant shows `Connection lost` the
+      same way. With every session in use Play shows `All sessions to the HomeBase are in use`.
+    - A recording already saved plays its copy from the history instead.
+  - **Save** copies the recording from the HomeBase into the history folder (5–10 s, one at a time) and marks the
+    row Saved; it then plays from there and stays in the history. Play and Save keep working on a row while the
+    list stays open, also on a HomeBase 2. A standalone camera has no Station sub-tab.
   - Files come from the integration's history in HA's media folder (`Media › eufy_home_security › <camera name>`).
     A missing folder (history off, or nothing saved yet) reads as empty.
 - **Settings:** the camera device's settings (its `select`, `number` and `switch` entities), so a new camera
@@ -206,7 +225,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
 
 - **Immediate:** pan/tilt, zoom and go-to-preset (`eufy_home_security.pan_tilt`, `.zoom`, `.goto_preset`), Record
   (`eufy_home_security.record`), Stop recording (`eufy_home_security.stop_recording`), Save view and Replace (`eufy_home_security.save_preset`, then the picture over
-  the websocket command `eufy_home_security/preset_image`) and the Station Play/Save. Pan/tilt steps run one at a time; up to 3 presses wait
+  the websocket command `eufy_home_security/preset_image`), the Station Play (websocket subscription
+  `eufy_home_security/recordings/play`) and Save (`eufy_home_security/recordings/fetch`). Pan/tilt steps run one at a time; up to 3 presses wait
   their turn.
 - **Live view buttons** (`live_buttons`): immediate on the second press.
 - **Staged:** settings, `New still` and `Refresh event image`. ✕ / Set appear in the header; Set sends one write
