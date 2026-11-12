@@ -168,8 +168,9 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     (usually faster than it plays), the same budget live views and stills use. When the video reaches the end,
     `End of recording` and Play again show over its last picture. For up to about 28 minutes after the HomeBase
     finished sending, Play again and seeking back with the controls replay what arrived without asking the
-    HomeBase again; later Play again starts a new play. A video that stops moving after the HomeBase finished
-    sending (not paused) shows `End of recording` over the recording's picture, and Play again starts anew.
+    HomeBase again; later Play again starts a new play. A video that stops moving for 5 s after the HomeBase
+    finished sending (not paused, not seeking) keeps waiting while Home Assistant still serves the play; once it
+    no longer does, `End of recording` shows over the recording's picture, and Play again starts anew.
     - One recording plays per card: closing it, opening another recording or history item, starting live view,
       switching camera or leaving the dashboard ends the play and frees what arrived; refreshing the Station
       list does not. A tab hidden for more than 60 s ends it too (`Stopped while the page was hidden`; Play

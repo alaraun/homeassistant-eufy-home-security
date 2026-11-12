@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.12-3';
+const CARD_VERSION = '2026.11.12-4';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -156,7 +156,9 @@ const PLAY_LOST = 'Connection lost';
 const PLAY_HIDDEN_SECONDS = 60;
 const PLAY_HIDDEN = 'Stopped while the page was hidden';
 // After the end event or a websocket drop, the play's video counts as stopped once it has not moved for this long
-// while not paused (a playlist without its end mark, or one the integration no longer serves, stalls instead of ending)
+// while not paused (a playlist without its end mark, or one the integration no longer serves, stalls instead of ending).
+// After a complete end it is not counted while seeking, and a stall ends the play only once its playlist answers 404/410
+// (any other answer, or none within this long, waits another PLAY_STALL_MS)
 const PLAY_STALL_MS = 5000;
 // Play again replays in the player for this long after the end event, then asks anew: the integration keeps an ended
 // play while the card is subscribed, at most 1800 s after the end event
@@ -1012,7 +1014,8 @@ class EufyCameraCard extends HTMLElement {
   //   done: the end event ('complete' | 'error', emsg its text), lost: the websocket dropped, finAt: when either came,
   //   end: the end state shown ('complete' | 'error' | 'stopped', err its text, endAt when it showed),
   //   off: the subscription released, vid/vOff: the hooked <video> and its unhook,
-  //   vt/vAt: the video's last position and when it last moved, hidAt: when the tab was hidden, watch: the interval }
+  //   vt/vAt: the video's last position and when it last moved, hidAt: when the tab was hidden, watch: the interval,
+  //   chk: a playlist check in flight }
   _playRecording(rid) {
     const h = this._hass, conn = h && h.connection;
     const kept = this._rplay && this._rplay.rid === rid ? this._rplay.item : null;
@@ -1026,7 +1029,7 @@ class EufyCameraCard extends HTMLElement {
     this._endPlay();
     const cam = this._camRef();
     const p = { rid, id: it.id, item: it, url: null, muted: true, unsub: null, conn, done: null, emsg: null, lost: false, finAt: 0,
-      end: null, err: null, endAt: 0, off: false, vid: null, vOff: null, vt: null, vAt: 0, hidAt: null, watch: null };
+      end: null, err: null, endAt: 0, off: false, vid: null, vOff: null, vt: null, vAt: 0, hidAt: null, watch: null, chk: false };
     p.onDrop = () => this._playDrop(p);
     if (typeof conn.addEventListener === 'function') conn.addEventListener('disconnected', p.onDrop);
     this._rplay = p;
@@ -1114,21 +1117,41 @@ class EufyCameraCard extends HTMLElement {
   }
 
   // The end state comes when the video ends (the playlist's end mark), or, after the end event or a websocket drop,
-  // when it has not moved for PLAY_STALL_MS (paused by the viewer does not count)
+  // when it has not moved for PLAY_STALL_MS (paused by the viewer does not count; seeking after a complete end
+  // neither); after a complete end the playlist is checked first (_playCheck)
   _playWatch(p) {
     if (this._rplay !== p || p.off || !this._rplayer) return;
     const v = this._rpVideo();
     if (v !== p.vid) this._playHook(p, v);
     if (p.end) return;
     if (v && v.ended) { this._playStopped(p, true); return; }
+    const served = p.done === 'complete' && !p.lost;
     const now = Date.now(), t = v ? v.currentTime : null;
-    if (t !== p.vt || (v && v.paused)) { p.vt = t; p.vAt = now; }
+    if (t !== p.vt || (v && (v.paused || (served && v.seeking)))) { p.vt = t; p.vAt = now; }
     if (!(p.done || p.lost) || now - Math.max(p.vAt, p.finAt) < PLAY_STALL_MS) return;
-    if (p.done === 'error' || p.lost) this._playStopped(p, false); else this._playStalled(p);
+    if (served) this._playCheck(p); else this._playStopped(p, false);
   }
 
-  // The video stalled after a complete end (the integration no longer serves the play): the recording's end state
-  // over its thumbnail, the subscription released
+  // A stall after a complete end: one request for the playlist; 404/410 (the integration freed the play) ends it,
+  // anything else (served, a network error, no answer within PLAY_STALL_MS) waits another PLAY_STALL_MS
+  _playCheck(p) {
+    if (p.chk) return;
+    p.chk = true;
+    const h = this._hass;
+    const url = h && typeof h.hassUrl === 'function' ? h.hassUrl(p.url) : p.url;
+    let tm = null;
+    const late = new Promise((res) => { tm = setTimeout(() => res(false), PLAY_STALL_MS); });
+    const ask = Promise.resolve().then(() => fetch(url, { cache: 'no-store' })).then((r) => r.status === 404 || r.status === 410, () => false);
+    Promise.race([ask, late]).then((gone) => {
+      clearTimeout(tm);
+      p.chk = false;
+      if (this._rplay !== p || p.off || p.end) return;
+      if (gone) this._playStalled(p); else p.vAt = Date.now();
+    });
+  }
+
+  // The playlist is no longer served after a complete end: the recording's end state over its thumbnail, the
+  // subscription released
   _playStalled(p) {
     this._playRelease(p);
     this._dropPlayer();
