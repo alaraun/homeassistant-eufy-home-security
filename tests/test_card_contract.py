@@ -234,14 +234,48 @@ def test_the_station_list_fields_the_card_sends_are_accepted() -> None:
 
 
 def test_the_station_fetch_fields_the_card_sends_are_the_commands_schema() -> None:
-    """Play and Save send ``STATION_FETCH_WS`` with exactly the fields its schema takes:
-    the camera and the library's ``ref`` of the row."""
+    """Save sends ``STATION_FETCH_WS`` with exactly the fields its schema takes: the camera
+    and the library's ``ref`` of the row."""
     literal = re.search(r"\{ type: STATION_FETCH_WS, ([^}]*) \}", _SOURCE)
     assert literal, "the card's station fetch request"
     sent = set(re.findall(r"(\w+):", literal.group(1)))
     schema = getattr(station_recordings._ws_fetch, "_ws_schema")  # noqa: B009
     accepted = {str(key) for key in schema.schema} - {"type", "id"}
     assert sent == accepted == {"entity_id", "ref"}
+
+
+def test_the_station_play_command_the_card_subscribes_to_is_registered() -> None:
+    """Play subscribes to ``STATION_PLAY_WS``; the integration must register that type.
+
+    Fails until the integration's play command is merged with the card.
+    """
+    assert _names_ws("STATION_PLAY_WS") == "eufy_home_security/recordings/play"
+    assert _names_ws("STATION_PLAY_WS") in _registered_ws_types()
+
+
+def test_the_station_play_is_a_subscription_with_the_fetch_fields() -> None:
+    """Play sends the fields fetch takes (camera and ``ref``) as a subscription that a
+    websocket reconnect does not start again."""
+    literal = re.search(r"\{ type: STATION_PLAY_WS, ([^}]*) \}", _SOURCE)
+    assert literal, "the card's station play request"
+    sent = set(re.findall(r"(\w+):", literal.group(1)))
+    schema = getattr(station_recordings._ws_fetch, "_ws_schema")  # noqa: B009
+    assert sent == {str(key) for key in schema.schema} - {"type", "id"} == {"entity_id", "ref"}
+    call = re.search(
+        r"subscribeMessage\([^;]*\{ type: STATION_PLAY_WS, [^}]*\}, \{ ([^}]*) \}\)", _SOURCE
+    )
+    assert call, "Play goes through hass.connection.subscribeMessage"
+    assert call.group(1) == "resubscribe: false"
+    assert not re.search(r"callWS\(\{ type: STATION_PLAY_WS", _SOURCE)
+
+
+def test_the_play_error_codes_the_card_words_are_the_integrations() -> None:
+    """``PLAY_ERRORS`` keys are error codes the station recording commands send."""
+    named = set(re.findall(r"(?:^|[{,]\s*)([a-z_]+):", _block("PLAY_ERRORS"), re.MULTILINE))
+    assert named
+    codes = {v for k, v in vars(station_recordings).items() if k.startswith("ERR_")}
+    unknown = sorted(named - codes)
+    assert not unknown, f"the card words error codes the integration does not send: {unknown}"
 
 
 def test_the_preset_picture_the_card_sends_fits_the_command() -> None:
