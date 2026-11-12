@@ -35,6 +35,10 @@ arbitration that makes a live view release the station session's media slot.
 The view is registered once per Home Assistant instance, because ``register_view`` has
 no unregister; it holds no per-entry state and looks the broadcast up at request time,
 so a serial whose entry has unloaded is a clean 404.
+
+A second view on the same rules (:class:`RecordingPlayView`) serves a station recording
+played for a viewer (``recording_plays``) to Home Assistant's stream component, once
+per play.
 """
 
 from __future__ import annotations
@@ -48,7 +52,7 @@ import secrets
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from http import HTTPStatus
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlencode
 
 from aiohttp import ClientConnectionResetError, web
@@ -74,6 +78,8 @@ from .const import (
     STREAM_AUTH_PARAM,
     STREAM_CONTENT_TYPE,
     STREAM_FORWARDING_HEADERS,
+    STREAM_RECORDING_URL_PATH,
+    STREAM_RECORDING_VIEW_NAME,
     STREAM_URL_PATH,
     STREAM_VIEW_NAME,
     STREAM_YIELD_TIMEOUT_SECONDS,
@@ -107,6 +113,20 @@ def make_broadcast(
     )
 
 
+class RecordingSource(Protocol):
+    """One recording play's MPEG-TS, as :class:`RecordingPlayView` reads it."""
+
+    def claim(self) -> bool:
+        """Take the source for one request; False once a request has taken it or the
+        play is ending."""
+
+    async def read(self) -> bytes | None:
+        """The next chunk; None at the end of the play."""
+
+    def reader_left(self) -> None:
+        """The reader went away before the end."""
+
+
 @dataclass(slots=True)
 class StreamRegistry:
     """The live broadcasts of this Home Assistant instance, by camera serial.
@@ -118,6 +138,8 @@ class StreamRegistry:
     """
 
     broadcasts: dict[str, StreamBroadcast] = field(default_factory=dict)
+    # The recording plays of every entry, by play id (``recording_plays``).
+    plays: dict[str, RecordingSource] = field(default_factory=dict)
     view_registered: bool = False
     # The stream URL's secret: random per Home Assistant run, never stored or logged.
     secret: str = field(default_factory=lambda: secrets.token_urlsafe(32))
@@ -162,13 +184,11 @@ def stream_registry(hass: HomeAssistant) -> StreamRegistry:
     return registry
 
 
-class EufyStreamView(HomeAssistantView):
-    """Serves one camera's muxed MPEG-TS to whoever connects, for as long as they read."""
+class _LoopbackView(HomeAssistantView):
+    """A view only Home Assistant's own stream readers on this host may use."""
 
-    url = STREAM_URL_PATH
-    name = STREAM_VIEW_NAME
-    # go2rtc and the stream component dial this URL with no HA credentials, so HA's
-    # auth would lock both out; _refusal() guards it: loopback peer, no forwarding
+    # go2rtc and the stream component dial these URLs with no HA credentials, so HA's
+    # auth would lock both out; _refusal() guards them: loopback peer, no forwarding
     # header, URL secret.
     requires_auth = False
 
@@ -197,6 +217,13 @@ class EufyStreamView(HomeAssistantView):
         if not hmac.compare_digest(offered.encode(), self._registry.secret.encode()):
             return "missing or wrong stream secret"
         return None
+
+
+class EufyStreamView(_LoopbackView):
+    """Serves one camera's muxed MPEG-TS to whoever connects, for as long as they read."""
+
+    url = STREAM_URL_PATH
+    name = STREAM_VIEW_NAME
 
     async def get(self, request: web.Request, device_sn: str) -> web.StreamResponse:
         """Subscribe to the camera's broadcast and write its chunks until it ends.
@@ -296,6 +323,49 @@ class EufyStreamView(HomeAssistantView):
         return response
 
 
+class RecordingPlayView(_LoopbackView):
+    """Serves one recording play's MPEG-TS to the first request, until the play ends."""
+
+    url = STREAM_RECORDING_URL_PATH
+    name = STREAM_RECORDING_VIEW_NAME
+
+    async def get(self, request: web.Request, play_id: str) -> web.StreamResponse:
+        """Write the play's chunks until its end, then end the response.
+
+        403 on the live view's rules, 404 for an unknown play, 410 for any request after
+        the first (the stream worker asks again after a source ended), none of which
+        starts anything. A reader that leaves before the end is reported to the play,
+        which stops the library. The play id is never logged.
+        """
+        if (refusal := self._refusal(request)) is not None:
+            _LOGGER.debug("Recording play: request refused (%s), 403", refusal)
+            return web.Response(status=HTTPStatus.FORBIDDEN)
+        source = self._registry.plays.get(play_id)
+        if source is None:
+            _LOGGER.debug("Recording play: no such play, 404")
+            return web.Response(status=HTTPStatus.NOT_FOUND)
+        if not source.claim():
+            _LOGGER.debug("Recording play: already read, 410")
+            return web.Response(status=HTTPStatus.GONE)
+        response = web.StreamResponse(headers={"Content-Type": STREAM_CONTENT_TYPE})
+        chunks = 0
+        try:
+            await response.prepare(request)
+            while (chunk := await source.read()) is not None:
+                await response.write(chunk)
+                chunks += 1
+        except ConnectionResetError, ClientConnectionResetError:
+            source.reader_left()
+            _LOGGER.debug("Recording play: the reader left after %d chunk(s)", chunks)
+            return response
+        except asyncio.CancelledError:
+            source.reader_left()
+            _LOGGER.debug("Recording play: the reader went away after %d chunk(s)", chunks)
+            raise
+        _LOGGER.debug("Recording play: served to its end, %d chunk(s)", chunks)
+        return response
+
+
 @callback
 def async_register_view(hass: HomeAssistant) -> None:
     """Register the stream view, once per Home Assistant instance.
@@ -316,7 +386,8 @@ def async_register_view(hass: HomeAssistant) -> None:
 
     registry.on_watch_change = _watch_changed
     hass.http.register_view(EufyStreamView(registry))
-    _LOGGER.debug("The live stream view is registered for this Home Assistant instance")
+    hass.http.register_view(RecordingPlayView(registry))
+    _LOGGER.debug("The stream views are registered for this Home Assistant instance")
 
 
 def stream_url(hass: HomeAssistant, device_sn: str) -> str:
@@ -330,10 +401,18 @@ def stream_url(hass: HomeAssistant, device_sn: str) -> str:
     it (go2rtc skips verification for an IP host; HA's stream worker verifies only for a
     camera whose stream options set ``verify_ssl``).
     """
+    return _loopback_url(hass, STREAM_URL_PATH.format(device_sn=device_sn))
+
+
+def recording_url(hass: HomeAssistant, play_id: str) -> str:
+    """A recording play's source URL, built as :func:`stream_url`; no I/O."""
+    return _loopback_url(hass, STREAM_RECORDING_URL_PATH.format(play_id=play_id))
+
+
+def _loopback_url(hass: HomeAssistant, path: str) -> str:
     api = hass.config.api
     scheme = "https" if api is not None and api.use_ssl else "http"
     query = urlencode({STREAM_AUTH_PARAM: stream_registry(hass).secret})
-    path = STREAM_URL_PATH.format(device_sn=device_sn)
     return f"{scheme}://127.0.0.1:{hass.http.server_port}{path}?{query}"
 
 

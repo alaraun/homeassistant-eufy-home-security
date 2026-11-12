@@ -39,6 +39,7 @@ from . import (
     history,
     homebase,
     preset_upload,
+    recording_plays,
     recordings,
     runtime,
     session_probe,
@@ -555,6 +556,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
             # poll. One ERROR line by redacted name, as a drop after setup logs.
             coordinator.async_set_update_error(errors.connection_lost_at_setup())
 
+    plays = recording_plays.RecordingPlays(hass, entry)
+    entry.async_on_unload(plays.async_stop)
     entry.runtime_data = runtime.EufyRuntimeData(
         eufy=eufy,
         coordinators=coordinators,
@@ -565,7 +568,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         streaming=stream_manager,
         history=event_history,
         recordings=recording_manager,
-        station_recordings=station_recordings.StationRecordings(hass, stored_recordings),
+        station_recordings=station_recordings.StationRecordings(hass, stored_recordings, plays),
     )
     _async_forget_moved_setting_entities(hass, entry, coordinators.values())
     _async_forget_dropped_setting_entities(hass, entry, coordinators.values())

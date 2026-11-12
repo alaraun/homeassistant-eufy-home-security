@@ -264,13 +264,29 @@ from then on is copied into the event history as an MP4:
 
 Whatever the option, the recordings a HomeBase keeps for a camera are listed on
 request (the camera card's **Station** list, over the websocket commands
-`eufy_home_security/recordings` and `eufy_home_security/recordings/fetch`). Playing
-or saving one copies it into the event history exactly as an event video: same name,
-noted as copied (the option's sync skips it), kept and deleted with the history. A
-recording still running cannot be copied until it has finished. A recording whose
-video codec changes partway cannot be saved: the card says so, and later requests for
-it (or one the event-videos sync gave up for this) are refused without downloading it
-again; play it in the eufy app. Needs **Event history** above 0 days. A HomeBase 2's
+`eufy_home_security/recordings`, `eufy_home_security/recordings/play` and
+`eufy_home_security/recordings/fetch`). Each can be played or saved:
+
+- **Play** streams the recording to the viewer through Home Assistant's stream
+  component (HLS, like a live view) and saves nothing. The picture starts after a few
+  seconds and runs forward at the recording's own pace; there is no seeking back.
+  Each viewer holds one HomeBase session for the recording's length: plays, live views
+  and live stills share **Sessions per HomeBase**, and a play past it waits for a
+  session, then fails with "every session of the HomeBase is in use". Closing the
+  player stops the HomeBase sending at once. A recording whose video codec changes
+  partway plays up to the change. The picture runs some seconds behind the HomeBase,
+  so it goes on for a few seconds after the card is told the recording has ended. The
+  last second of a recording is not shown, and a recording of only a few seconds may
+  not start at all (Home Assistant's stream needs two HLS segments). Tested on the
+  fake station; not yet checked with a HomeBase.
+- **Save** copies it into the event history exactly as an event video: same name,
+  noted as copied (the option's sync skips it), kept and deleted with the history. A
+  recording whose video codec changes partway cannot be saved: the card says so, and
+  later requests for it (or one the event-videos sync gave up for this) are refused
+  without downloading it again; play it in the eufy app. Needs **Event history** above
+  0 days.
+
+A recording still running can be played or saved once it has finished. A HomeBase 2's
 recordings are listed, played and saved the same way (the library's HomeBase 2 listing, playback and download checked on a
 HomeBase 2 by a contributor; the Station list with a HomeBase 2 tested on the fake
 station only).

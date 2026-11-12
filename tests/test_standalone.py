@@ -303,9 +303,14 @@ async def test_a_standalone_camera_lists_no_station_recordings(
         {"type": f"{DOMAIN}/recordings/fetch", "entity_id": entity_id, "ref": "v1.r.any"}
     )
     fetched = await client.receive_json()
+    await client.send_json_auto_id(
+        {"type": f"{DOMAIN}/recordings/play", "entity_id": entity_id, "ref": "v1.r.any"}
+    )
+    played = await client.receive_json()
 
     assert listed["result"] == {"supported": False, "recordings": []}
     assert fetched["error"]["code"] == "not_found"
+    assert played["error"] == fetched["error"]
     assert fake_station.history_queries == []
     assert fake_station.conn_inits == 0
     assert await hass.config_entries.async_unload(entry.entry_id)

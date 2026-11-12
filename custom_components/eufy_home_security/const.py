@@ -546,6 +546,9 @@ CAMERA_FRAME_INTERVAL_SECONDS: Final = 30
 # endpoint serves loopback peers only, go2rtc's log is local, and the URL is never logged.
 STREAM_URL_PATH: Final = "/api/eufy_home_security/stream/{device_sn}"
 STREAM_VIEW_NAME: Final = "api:eufy_home_security:stream"
+# The route a recording play's MPEG-TS is read from once, by its random play id.
+STREAM_RECORDING_URL_PATH: Final = "/api/eufy_home_security/stream/recording/{play_id}"
+STREAM_RECORDING_VIEW_NAME: Final = "api:eufy_home_security:stream_recording"
 # The stream URL's query key for the instance secret; the stream component redacts it.
 STREAM_AUTH_PARAM: Final = "auth"
 # Headers a reverse proxy adds; a stream request carrying any of them is refused.
