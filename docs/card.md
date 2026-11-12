@@ -161,17 +161,25 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     picker's Clear goes back to the newest.
   - Station asks the HomeBase a week of days per page, back as far as **Event history** reaches (30 days at
     most); `Show more` goes on from where the page stopped.
-  - Station rows have **Play** and **Save**. Play streams the recording from the HomeBase into the picture area
-    (`Recording · <time>`, muted with an Unmute button, ✕ to close): it starts in a few seconds, plays forward
-    only (no pausing or seeking back) and saves nothing. While it plays it holds one of the HomeBase's sessions,
-    the same budget live views and stills use. At its end the recording's thumbnail shows with `End of
-    recording` and Play again. One recording plays per card: closing it, opening another recording or history
-    item, starting live view, switching camera or leaving the dashboard ends the play. A recording already
-    saved plays its copy from the history instead. With every session in use Play shows `All sessions to the
-    HomeBase are in use`.
+  - Station rows have **Play** and **Save**. **Play** streams the recording from the HomeBase into the picture
+    area and saves nothing (`Recording · <time>`, muted with an Unmute button, ✕ to close). It starts in a few
+    seconds, from the beginning, and the player's own controls pause it and seek forward and backward within
+    what has arrived so far; the HomeBase usually sends faster than the video plays. While the HomeBase sends,
+    the play holds one of its sessions, the same budget live views and stills use. When the video reaches the
+    end, `End of recording` and Play again show over its last picture. For a few minutes after that, Play again
+    and seeking back with the controls replay what arrived without asking the HomeBase again; later Play again
+    starts a new play.
+    - One recording plays per card: closing it, opening another recording or history item, starting live view,
+      switching camera or leaving the dashboard ends the play and frees what arrived. A tab hidden for more than
+      60 s ends it too (`Stopped while the page was hidden`; Play again starts it anew).
+    - When the HomeBase stops sending early (an error, or a recording that changes its video format part-way:
+      `The recording changes its video format here; Save it to watch the rest`), what arrived keeps playing and
+      the message shows when the video stops. A lost connection to Home Assistant shows `Connection lost` the
+      same way. With every session in use Play shows `All sessions to the HomeBase are in use`.
+    - A recording already saved plays its copy from the history instead.
   - **Save** copies the recording from the HomeBase into the history folder (5–10 s, one at a time) and marks the
-    row Saved. Play and Save keep working on a row while the list stays open, also on a HomeBase 2. A standalone
-    camera has no Station sub-tab.
+    row Saved; it then plays from there and stays in the history. Play and Save keep working on a row while the
+    list stays open, also on a HomeBase 2. A standalone camera has no Station sub-tab.
   - Files come from the integration's history in HA's media folder (`Media › eufy_home_security › <camera name>`).
     A missing folder (history off, or nothing saved yet) reads as empty.
 - **Settings:** the camera device's settings (its `select`, `number` and `switch` entities), so a new camera
