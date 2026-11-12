@@ -161,9 +161,17 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     picker's Clear goes back to the newest.
   - Station asks the HomeBase a week of days per page, back as far as **Event history** reaches (30 days at
     most); `Show more` goes on from where the page stopped.
-  - Station rows have **Play** and **Save**: both copy the recording from the HomeBase into the history folder
-    (5–10 s each, one at a time); Play then plays it. Both keep working on a row while the list stays open,
-    also on a HomeBase 2. A standalone camera has no Station sub-tab.
+  - Station rows have **Play** and **Save**. Play streams the recording from the HomeBase into the picture area
+    (`Recording · <time>`, muted with an Unmute button, ✕ to close): it starts in a few seconds, plays forward
+    only (no pausing or seeking back) and saves nothing. While it plays it holds one of the HomeBase's sessions,
+    the same budget live views and stills use. At its end the recording's thumbnail shows with `End of
+    recording` and Play again. One recording plays per card: closing it, opening another recording or history
+    item, starting live view, switching camera or leaving the dashboard ends the play. A recording already
+    saved plays its copy from the history instead. With every session in use Play shows `All sessions to the
+    HomeBase are in use`.
+  - **Save** copies the recording from the HomeBase into the history folder (5–10 s, one at a time) and marks the
+    row Saved. Play and Save keep working on a row while the list stays open, also on a HomeBase 2. A standalone
+    camera has no Station sub-tab.
   - Files come from the integration's history in HA's media folder (`Media › eufy_home_security › <camera name>`).
     A missing folder (history off, or nothing saved yet) reads as empty.
 - **Settings:** the camera device's settings (its `select`, `number` and `switch` entities), so a new camera
@@ -206,7 +214,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
 
 - **Immediate:** pan/tilt, zoom and go-to-preset (`eufy_home_security.pan_tilt`, `.zoom`, `.goto_preset`), Record
   (`eufy_home_security.record`), Stop recording (`eufy_home_security.stop_recording`), Save view and Replace (`eufy_home_security.save_preset`, then the picture over
-  the websocket command `eufy_home_security/preset_image`) and the Station Play/Save. Pan/tilt steps run one at a time; up to 3 presses wait
+  the websocket command `eufy_home_security/preset_image`), the Station Play (websocket subscription
+  `eufy_home_security/recordings/play`) and Save (`eufy_home_security/recordings/fetch`). Pan/tilt steps run one at a time; up to 3 presses wait
   their turn.
 - **Live view buttons** (`live_buttons`): immediate on the second press.
 - **Staged:** settings, `New still` and `Refresh event image`. ✕ / Set appear in the header; Set sends one write
