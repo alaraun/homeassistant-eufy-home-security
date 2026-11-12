@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.15](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.14...v0.4.15) (2026-11-12)
+
+
+### Features
+
+* **card:** Play streams a recording from the HomeBase's storage in Home Assistant's own player without saving it; Save still downloads it (library 0.4.13) ([649b7a1](https://github.com/alaraun/homeassistant-eufy-home-security/commit/649b7a1b0c1ad36eb6a37c84e007a9e16a63fcd5))
+
 ## [0.4.14](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.13...v0.4.14) (2026-11-05)
 
 
