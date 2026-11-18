@@ -324,7 +324,7 @@
           },
           "accepted": {
             "title": "Invitation accepted",
-            "description": "Still open for the eufy account {account}: {invites}. Accept another here, or finish: Home Assistant then reloads the eufy account and asks eufy once for its devices.",
+            "description": "Still open for the eufy account {account}: {invites}. Accept the others here before you finish: once a shared device is listed, this repair no longer names open invitations. Finish, and Home Assistant reloads the eufy account and asks eufy once for its devices.",
             "menu_options": {
               "pick": "Accept another invitation",
               "finish": "Finish and look for the shared devices"
@@ -341,9 +341,10 @@
         },
         "abort": {
           "entry_not_loaded": "The eufy account is not loaded in Home Assistant right now. Wait until it has finished loading, then open this repair again.",
-          "accept_in_app": "Home Assistant cannot accept this kind of invitation. Accept it in the eufy app, signed in with this account, then open this repair again and choose to look for the devices again.",
-          "session_lapsed": "Home Assistant's eufy session for this invitation's region has ended, so nothing was sent. Open this repair again and choose to look for the devices again: Home Assistant reloads the eufy account and signs in to eufy where it needs to. Then accept the invitation.",
-          "accept_failed": "eufy did not accept the invitation, or could not be reached. Try again later, or accept it in the eufy app signed in with this account."
+          "accept_in_app": "Home Assistant cannot accept this invitation. Accept it in the eufy app, signed in with this account, then open this repair again and confirm looking for the devices again.",
+          "session_lapsed": "Home Assistant's eufy session for this invitation's region has ended, so nothing was sent. Open this repair again and confirm looking for the devices again: Home Assistant reloads the eufy account and signs in to eufy where it needs to. Then accept the invitation.",
+          "accept_failed": "eufy did not accept the invitation, or could not be reached. Try again later, or accept it in the eufy app signed in with this account.",
+          "session_replaced": "Another app, device or integration signed in with this eufy account and eufy ended Home Assistant's session, so nothing was sent. Sign Home Assistant in again with the repair \"eufy ended Home Assistant's session\" or Reconfigure, then accept the invitation."
         }
       }
     },

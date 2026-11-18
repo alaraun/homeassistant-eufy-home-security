@@ -41,6 +41,7 @@ from eufy_home_security import (
     EufySecurityError,
     InviteCodeError,
     NoCachedSessionError,
+    SessionReplacedError,
     UnsupportedError,
 )
 
@@ -195,7 +196,8 @@ class PendingInvitesFix(RepairsFlow):
     accept each reload the entry once with one rescan at its setup
     (``runtime.request_rescan_at_setup``): every login scope is asked for its devices
     and the invitations are read again; a scope whose session lapsed costs a sign-in
-    at setup. Home names, inviters and codes are never logged.
+    at setup. An entry that is not loaded is not set up by this; its next setup
+    rescans. Home names, inviters and codes are never logged.
     """
 
     def __init__(self, entry_id: str) -> None:
@@ -203,6 +205,7 @@ class PendingInvitesFix(RepairsFlow):
         self._invites: list[CloudInvite] = []
         self._chosen: CloudInvite | None = None
         self._accepted = False
+        self._removed = False
 
     def _placeholders(self) -> dict[str, str]:
         """The account's label and the open invitations: the ones read, else the issue's."""
@@ -221,15 +224,22 @@ class PendingInvitesFix(RepairsFlow):
         }
 
     def _reload(self) -> None:
-        """Reload the entry, asking every login scope once at its setup."""
-        if self.hass.config_entries.async_get_entry(self._entry_id) is None:
+        """Ask every login scope once at the entry's next setup; reload it when it runs
+        or waits to retry, never setting up an entry the user unloaded."""
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        if entry is None:
             return
         runtime.request_rescan_at_setup(self.hass, self._entry_id)
-        self.hass.config_entries.async_schedule_reload(self._entry_id)
+        if entry.state in (ConfigEntryState.LOADED, ConfigEntryState.SETUP_RETRY):
+            self.hass.config_entries.async_schedule_reload(self._entry_id)
 
     @callback
     def async_remove(self) -> None:
-        """After an accept, finished or closed: reload, so the shared devices are listed."""
+        """After an accept, finished or closed: reload, so the shared devices are listed.
+
+        Closed while an accept is still running, the accept reloads when it succeeds.
+        """
+        self._removed = True
         if self._accepted:
             self._reload()
 
@@ -291,6 +301,9 @@ class PendingInvitesFix(RepairsFlow):
                 return self.async_abort(reason="accept_in_app")
             except NoCachedSessionError:
                 return self.async_abort(reason="session_lapsed")
+            except SessionReplacedError:
+                errors.raise_session_replaced_issue(self.hass, entry)
+                return self.async_abort(reason="session_replaced")
             except EufySecurityError as err:
                 _LOGGER.warning(
                     "Accepting a eufy invitation failed (%s); the repair stays open",
@@ -299,6 +312,8 @@ class PendingInvitesFix(RepairsFlow):
                 return self.async_abort(reason="accept_failed")
             else:
                 self._accepted = True
+                if self._removed:
+                    self._reload()
                 self._invites = [other for other in self._invites if other is not invite]
                 if not self._invites:
                     return await self.async_step_finish()
