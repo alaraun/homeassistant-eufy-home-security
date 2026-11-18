@@ -228,7 +228,8 @@ async def test_a_device_dropped_from_the_cloud_list_keeps_its_snapshot_firmware(
     seed_warm_cache: Callable[..., None],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A device the paired list dropped keeps the firmware of the state read before.
+    """A device the paired list dropped keeps the firmware of the state read before; its
+    model reads unknown.
 
     Between a newer cloud list (``Station.update_sub_devices``) and its reload, the
     snapshot still has the device's block while ``station.sub_devices`` does not; a
@@ -241,6 +242,7 @@ async def test_a_device_dropped_from_the_cloud_list_keeps_its_snapshot_firmware(
     entry = await set_up_warm(hass, seed_warm_cache)
 
     sensor_firmware = entity_id_for(hass, SENSOR_DOMAIN, SENSOR_SN, FIRMWARE_KEY)
+    sensor_model = entity_id_for(hass, SENSOR_DOMAIN, SENSOR_SN, MODEL_KEY)
     station_firmware = entity_id_for(hass, SENSOR_DOMAIN, SYNTHETIC.station_sn, FIRMWARE_KEY)
     camera_battery = entity_id_for(hass, SENSOR_DOMAIN, SYNTHETIC.camera_sn, BATTERY_KEY)
     assert state_of(hass, sensor_firmware) == "1.2.3"
@@ -260,6 +262,8 @@ async def test_a_device_dropped_from_the_cloud_list_keeps_its_snapshot_firmware(
     await hass.async_block_till_done()
 
     assert state_of(hass, sensor_firmware) == "1.2.3"
+    # No cloud record, no product name: unknown until the reload removes the device.
+    assert state_of(hass, sensor_model) == STATE_UNKNOWN
     assert [record.getMessage() for record in caplog.records] == []
     # The fan-out finished: the rest of the station's entities still have their values.
     assert state_of(hass, station_firmware) == _STATION_FIRMWARE

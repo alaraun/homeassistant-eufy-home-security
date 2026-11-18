@@ -60,8 +60,9 @@ Details: [usage.md](usage.md#device-settings).
 
 A device's model in Home Assistant, and its **Model** sensor, is the product name the
 eufy app shows for that unit; where the app shows none, the library's name for it.
-Some models cover several products, told apart by the serial: a T814X is an eufyCam
-C36 or C37, 4K Edition or not.
+Some models cover several products, told apart by the serial or the product code: a
+T814X is an eufyCam C36 or C37, 4K Edition or not; a T8170 a SoloCam S340, SoloCam
+S3n or eufyCam Solo S3, among others. The T8170 tested here is a SoloCam S340.
 
 | Model | Device | Tested on hardware |
 |---|---|---|

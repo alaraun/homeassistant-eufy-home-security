@@ -39,7 +39,7 @@ from eufy_home_security import (
     SubDeviceState,
     guard_mode_label,
 )
-from eufy_home_security.devices import SettingKind, SettingUnit, product_name
+from eufy_home_security.devices import SettingKind, SettingUnit
 
 from . import detections
 from .const import (
@@ -124,14 +124,15 @@ def _signal_strength(entity: EufyDeviceEntity) -> StateType:
 
 def _device_model(entity: EufyDeviceEntity) -> StateType:
     """The paired device's product name, per unit: its cloud record's ``model_name`` (its
-    device's ``model``), else the library's name for the serial alone."""
+    device's ``model``). None while the record is gone from the station's list (the
+    reload that removes the device is pending)."""
     device = entity.device_state
     if device is None or device.serial is None:
         return None
     for listed in entity.coordinator.station.devices:
         if listed.device_sn == device.serial:
             return listed.model_name
-    return product_name(device.serial)
+    return None
 
 
 # Every description is DIAGNOSTIC: these are readings about the hardware, not
