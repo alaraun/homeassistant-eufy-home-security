@@ -8,6 +8,7 @@ the eufy app, and reloads the entry with one rescan once something was accepted.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import logging
@@ -23,6 +24,7 @@ from eufy_home_security import (
     CommunicationError,
     EufySecurity,
     EufySecurityError,
+    InviteCodeError,
     NoCachedSessionError,
     SessionReplacedError,
 )
@@ -30,7 +32,7 @@ from eufy_home_security.cloud.crypto import invite_seal
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
 from homeassistant.components.repairs import RepairsFlowManager, repairs_flow_manager
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType, UnknownFlow
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.setup import async_setup_component
@@ -545,6 +547,90 @@ async def test_closing_during_a_later_accept_reloads_once_after_it(
     assert [accept["invites"][0]["invite_id"] for accept in fake_cloud.invite_accepts] == [101, 102]
     assert len(built_clients) == clients + 1, "reloaded once"
     assert discover_calls[discovered:] == [{"rescan_regions": True}]
+
+
+@pytest.mark.parametrize(
+    ("earlier_accept", "error", "reloads"),
+    [
+        (False, CloudApiError(1, "synthetic"), 0),
+        (True, CloudApiError(1, "synthetic"), 1),
+        (True, InviteCodeError("synthetic", missing=False), 1),
+    ],
+)
+async def test_closing_during_a_failing_accept_reloads_only_for_an_earlier_one(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    discover_calls: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    earlier_accept: bool,
+    error: EufySecurityError,
+    reloads: int,
+) -> None:
+    """Closed while an accept runs that then fails: one reload after it when an earlier
+    accept succeeded, none otherwise; never while it runs."""
+    entry, _ = await _set_up_invited(
+        hass,
+        fake_cloud,
+        seed_warm_cache,
+        devices=[
+            _device_invite(111, _SHARED_CAMERA, owner="synthetic-owner-a"),
+            _device_invite(112, _SHARED_DOORBELL, owner="synthetic-owner-b"),
+        ],
+    )
+    manager, flow_id = await _open_fix(hass, entry)
+    await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    if earlier_accept:
+        await manager.async_configure(flow_id, {"invitation": "0"})
+        await manager.async_configure(flow_id, {})
+        result = await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    else:
+        result = await manager.async_configure(flow_id, {"invitation": "1"})
+    assert result["step_id"] == "accept"
+    eufy = entry.runtime_data.eufy
+    clients = len(built_clients)
+    during: list[int] = []
+
+    async def closed_then_failing(invite: Any, *, code: str | None = None) -> None:
+        manager.async_abort(flow_id)
+        await asyncio.sleep(0.05)
+        during.append(len(built_clients))
+        raise error
+
+    monkeypatch.setattr(eufy, "async_accept_invite", closed_then_failing)
+    discovered = len(discover_calls)
+    # The dialog is gone: an abort result goes nowhere, a form result raises.
+    with contextlib.suppress(UnknownFlow):
+        await manager.async_configure(flow_id, {})
+    await hass.async_block_till_done()
+
+    assert during == [clients], "no reload while the accept runs"
+    assert len(built_clients) == clients + reloads
+    assert discover_calls[discovered:] == [{"rescan_regions": True}] * reloads
+    assert runtime.take_rescan_at_setup(hass, entry.entry_id) is False
+
+
+async def test_no_reload_after_an_accept_while_home_assistant_stops(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Closed after an accept while Home Assistant stops: nothing scheduled."""
+    entry = MockConfigEntry(domain=DOMAIN, title="synthetic")
+    entry.add_to_hass(hass)
+    entry.mock_state(hass, ConfigEntryState.LOADED)
+    scheduled: list[str] = []
+    monkeypatch.setattr(hass.config_entries, "async_schedule_reload", scheduled.append)
+    flow = PendingInvitesFix(entry.entry_id)
+    flow.hass = hass
+    flow._accepted = True
+
+    hass.set_state(CoreState.stopping)
+    try:
+        flow.async_remove()
+    finally:
+        hass.set_state(CoreState.running)
+
+    assert scheduled == []
 
 
 @pytest.mark.parametrize(

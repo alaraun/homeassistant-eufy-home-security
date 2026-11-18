@@ -226,9 +226,10 @@ class PendingInvitesFix(RepairsFlow):
 
     def _reload(self) -> None:
         """Ask every login scope once at the entry's next setup; reload it when it runs,
-        is being set up or waits to retry, never setting up an entry the user unloaded."""
+        is being set up or waits to retry, never setting up an entry the user unloaded.
+        Nothing while Home Assistant stops."""
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
-        if entry is None:
+        if entry is None or self.hass.is_stopping:
             return
         runtime.request_rescan_at_setup(self.hass, self._entry_id)
         if entry.state in (
