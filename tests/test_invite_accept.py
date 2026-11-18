@@ -7,9 +7,13 @@ the eufy app, and reloads the entry with one rescan once something was accepted.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import logging
+import re
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any, Final
 
 import pytest
@@ -36,6 +40,7 @@ from pytest_homeassistant.typing import ClientSessionGenerator
 
 from custom_components.eufy_home_security import errors, runtime
 from custom_components.eufy_home_security.const import DOMAIN
+from custom_components.eufy_home_security.repairs import PendingInvitesFix
 
 # Synthetic invitations as the cloud lists them.
 _HOME_NAME: Final = "Synthetic Cottage"
@@ -492,6 +497,113 @@ async def test_closing_the_fix_while_an_accept_runs_still_reloads(
     assert _accepts(fake_cloud) == ["accept_house_invite"]
     assert len(built_clients) == clients + 1, "reloaded once"
     assert discover_calls[-1] == {"rescan_regions": True}
+
+
+async def test_closing_during_a_later_accept_reloads_once_after_it(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    discover_calls: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One accepted, the dialog closed during the second: no reload while that accept
+    runs on the client, one reload after it, asking every scope."""
+    entry, _ = await _set_up_invited(
+        hass,
+        fake_cloud,
+        seed_warm_cache,
+        devices=[
+            _device_invite(101, _SHARED_CAMERA, owner="synthetic-owner-a"),
+            _device_invite(102, _SHARED_DOORBELL, owner="synthetic-owner-b"),
+        ],
+    )
+    manager, flow_id = await _open_fix(hass, entry)
+    await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    await manager.async_configure(flow_id, {"invitation": "0"})
+    await manager.async_configure(flow_id, {})
+    result = await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    assert result["step_id"] == "accept"
+    eufy = entry.runtime_data.eufy
+    original = eufy.async_accept_invite
+    clients = len(built_clients)
+    during: list[int] = []
+
+    async def closed_meanwhile(invite: Any, *, code: str | None = None) -> None:
+        manager.async_abort(flow_id)
+        await asyncio.sleep(0.05)
+        during.append(len(built_clients))
+        await original(invite, code=code)
+
+    monkeypatch.setattr(eufy, "async_accept_invite", closed_meanwhile)
+    discovered = len(discover_calls)
+    with pytest.raises(UnknownFlow):
+        await manager.async_configure(flow_id, {})
+    await hass.async_block_till_done()
+
+    assert during == [clients], "no reload while the accept runs"
+    assert [accept["invites"][0]["invite_id"] for accept in fake_cloud.invite_accepts] == [101, 102]
+    assert len(built_clients) == clients + 1, "reloaded once"
+    assert discover_calls[discovered:] == [{"rescan_regions": True}]
+
+
+@pytest.mark.parametrize(
+    ("state", "reloads"),
+    [
+        (ConfigEntryState.LOADED, True),
+        (ConfigEntryState.SETUP_RETRY, True),
+        (ConfigEntryState.SETUP_IN_PROGRESS, True),
+        (ConfigEntryState.NOT_LOADED, False),
+        (ConfigEntryState.SETUP_ERROR, False),
+        (ConfigEntryState.UNLOAD_IN_PROGRESS, False),
+    ],
+)
+async def test_the_reload_after_an_accept_follows_the_entry_state(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    state: ConfigEntryState,
+    reloads: bool,
+) -> None:
+    """Every state asks every scope at the next setup; only a running entry, one being
+    set up or one waiting to retry is reloaded."""
+    entry = MockConfigEntry(domain=DOMAIN, title="synthetic")
+    entry.add_to_hass(hass)
+    entry.mock_state(hass, state)
+    scheduled: list[str] = []
+    monkeypatch.setattr(hass.config_entries, "async_schedule_reload", scheduled.append)
+    flow = PendingInvitesFix(entry.entry_id)
+    flow.hass = hass
+    flow._accepted = True
+
+    flow.async_remove()
+
+    assert scheduled == ([entry.entry_id] if reloads else [])
+    assert runtime.take_rescan_at_setup(hass, entry.entry_id)
+
+
+def test_every_step_and_reason_of_the_fix_has_its_text() -> None:
+    """Each step id, menu option, error and abort reason the fix uses is in the strings."""
+    source = inspect.getsource(PendingInvitesFix)
+    strings = json.loads(
+        (Path(errors.__file__).parent / "strings.json").read_text(encoding="utf-8")
+    )["issues"]["pending_invites"]["fix_flow"]
+    steps = set(re.findall(r'step_id="(\w+)"', source))
+    reasons = set(re.findall(r'reason="(\w+)"', source))
+    menu = {
+        option
+        for listed in re.findall(r"menu_options=\[([^\]]*)\]", source)
+        for option in re.findall(r'"(\w+)"', listed)
+    }
+    form_errors = set(re.findall(r'"(\w+)" if err\.missing else "(\w+)"', source)[0])
+
+    assert steps == {"init", "pick", "accept", "accepted", "confirm"}
+    assert steps <= set(strings["step"])
+    shown = {
+        option for step in ("init", "accepted") for option in strings["step"][step]["menu_options"]
+    }
+    assert menu == shown
+    assert reasons == set(strings["abort"])
+    assert form_errors == set(strings["error"])
 
 
 async def test_an_entry_unloaded_after_an_accept_stays_unloaded_and_rescans_at_its_setup(

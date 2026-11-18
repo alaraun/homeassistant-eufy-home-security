@@ -205,6 +205,7 @@ class PendingInvitesFix(RepairsFlow):
         self._invites: list[CloudInvite] = []
         self._chosen: CloudInvite | None = None
         self._accepted = False
+        self._accepting = False
         self._removed = False
 
     def _placeholders(self) -> dict[str, str]:
@@ -224,24 +225,43 @@ class PendingInvitesFix(RepairsFlow):
         }
 
     def _reload(self) -> None:
-        """Ask every login scope once at the entry's next setup; reload it when it runs
-        or waits to retry, never setting up an entry the user unloaded."""
+        """Ask every login scope once at the entry's next setup; reload it when it runs,
+        is being set up or waits to retry, never setting up an entry the user unloaded."""
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
         if entry is None:
             return
         runtime.request_rescan_at_setup(self.hass, self._entry_id)
-        if entry.state in (ConfigEntryState.LOADED, ConfigEntryState.SETUP_RETRY):
+        if entry.state in (
+            ConfigEntryState.LOADED,
+            ConfigEntryState.SETUP_RETRY,
+            ConfigEntryState.SETUP_IN_PROGRESS,
+        ):
             self.hass.config_entries.async_schedule_reload(self._entry_id)
 
     @callback
     def async_remove(self) -> None:
         """After an accept, finished or closed: reload, so the shared devices are listed.
 
-        Closed while an accept is still running, the accept reloads when it succeeds.
+        Closed while an accept is still running, :meth:`_async_accept` reloads when it
+        ends, so the reload never closes the client an accept is using.
         """
         self._removed = True
-        if self._accepted:
+        if self._accepted and not self._accepting:
             self._reload()
+
+    async def _async_accept(
+        self, entry: EufyConfigEntry, invite: CloudInvite, code: str | None
+    ) -> None:
+        """Accept through the entry's client; reload at the end when the fix was closed
+        meanwhile and something was accepted."""
+        self._accepting = True
+        try:
+            await entry.runtime_data.eufy.async_accept_invite(invite, code=code)
+            self._accepted = True
+        finally:
+            self._accepting = False
+            if self._removed and self._accepted:
+                self._reload()
 
     async def async_step_init(self, user_input: dict[str, str] | None = None) -> RepairsFlowResult:
         """Read the invitations; offer to accept one here or to look again."""
@@ -292,9 +312,7 @@ class PendingInvitesFix(RepairsFlow):
         form_errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                await entry.runtime_data.eufy.async_accept_invite(
-                    invite, code=user_input.get(_CODE) or None
-                )
+                await self._async_accept(entry, invite, user_input.get(_CODE) or None)
             except InviteCodeError as err:
                 form_errors[_CODE] = "code_missing" if err.missing else "wrong_code"
             except UnsupportedError:
@@ -311,9 +329,6 @@ class PendingInvitesFix(RepairsFlow):
                 )
                 return self.async_abort(reason="accept_failed")
             else:
-                self._accepted = True
-                if self._removed:
-                    self._reload()
                 self._invites = [other for other in self._invites if other is not invite]
                 if not self._invites:
                     return await self.async_step_finish()
