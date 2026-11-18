@@ -1443,10 +1443,23 @@ def pending_invites_issue_id(entry_id: str) -> str:
     return f"{ISSUE_PENDING_INVITES}_{entry_id}"
 
 
-def _invite_text(invite: CloudInvite) -> str:
+def invite_text(invite: CloudInvite) -> str:
     """One invitation as the repair names it: the home, or the shared device's model."""
     shared = f"“{invite.house_name}”" if invite.kind == "house" else invite.product_code or ""
     return f"{shared} from {invite.inviter}" if invite.inviter else shared
+
+
+def invites_text(invites: Iterable[CloudInvite]) -> str:
+    """The invitations as the repair lists them, ``; ``-separated."""
+    return "; ".join(invite_text(invite) for invite in invites)
+
+
+def invite_choice_label(invite: CloudInvite) -> str:
+    """One invitation as the repair's picker shows it: :func:`invite_text`, plus the
+    device's redacted serial, so two shared devices of one model differ."""
+    if invite.kind == "device" and invite.device_sn:
+        return f"{invite_text(invite)} ({redact_serial(invite.device_sn)})"
+    return invite_text(invite)
 
 
 def sync_pending_invites_issue(
@@ -1455,9 +1468,9 @@ def sync_pending_invites_issue(
     """Show the invitations the account has not accepted; withdraw the issue when none.
 
     ``None`` (the invitations could not be read) leaves the issue as it is. Fixable:
-    the fix asks every login scope again after the user accepted in the eufy app.
-    Not persistent, so the home names and inviters it shows are never stored or put
-    in a diagnostics download.
+    the fix accepts an invitation, or asks every login scope again after the user
+    accepted in the eufy app (``repairs.PendingInvitesFix``). Not persistent, so the
+    home names and inviters it shows are never stored or put in a diagnostics download.
     """
     if invites is None:
         return
@@ -1476,7 +1489,7 @@ def sync_pending_invites_issue(
         translation_key=ISSUE_PENDING_INVITES,
         translation_placeholders={
             "account": account_label(entry),
-            "invites": "; ".join(_invite_text(invite) for invite in invites),
+            "invites": invites_text(invites),
         },
     )
 

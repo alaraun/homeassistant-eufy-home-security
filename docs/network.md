@@ -69,12 +69,17 @@ location /api/hls/ {
 ## eufy account
 
 - The account must see the HomeBase: the owner's, or one the owner shared it with
-  in the eufy app. A shared home shows only after the invitation is accepted in the
-  eufy app, signed in with that account; until then the repair **eufy invitation not
-  accepted** names it.
+  in the eufy app. A shared home or device shows only after the invitation is
+  accepted; until then the repair **eufy invitation not accepted** names it. Its
+  **Fix** accepts the invitation from Home Assistant, with the code the sender shared
+  when eufy asks for one, or looks for the devices again after you accepted it in the
+  eufy app signed in with that account. Signing Home Assistant's account in on a phone
+  can end Home Assistant's session; accepting from the repair avoids that. Tested on
+  a device invitation with a code; a home invitation is accepted the way the eufy app
+  does it, not yet tested.
 - A sign-in from another client ends the earlier session of the same account. Give
-  Home Assistant its own account, shared from the owner's app; share devices added
-  later again.
+  Home Assistant its own account, shared from the owner's app, and accept the
+  invitation from the repair; share devices added later again.
 - eufy allows only a few sign-ins per account per day and locks the account for
   24 hours after repeated failures. Home Assistant signs in only at setup and on
   **Reconfigure**.

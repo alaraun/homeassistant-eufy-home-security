@@ -44,7 +44,8 @@ Assistant installs automatically. Library bugs that show without Home Assistant 
   ([stream access](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/network.md#stream-access)).
 - A eufy account that sees the HomeBase: the owner's, or one it is shared with. Use a
   separate account for Home Assistant: a sign-in elsewhere with the same account ends
-  Home Assistant's session.
+  Home Assistant's session, so accept the owner's invitation from Home Assistant's
+  repair, not on a phone.
 
 ## Installation
 

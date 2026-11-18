@@ -1,0 +1,477 @@
+"""Accepting a pending eufy invitation from the pending-invitations repair.
+
+The fix reads the invitations afresh, offers to accept one here (a code field only
+for an invitation that needs the inviter's code) or to look again after an accept in
+the eufy app, and reloads the entry with one rescan once something was accepted.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from collections.abc import Callable, Mapping
+from typing import Any, Final
+
+import pytest
+from conftest import set_up_warm
+from eufy_home_security import (
+    CloudApiError,
+    CommunicationError,
+    EufySecurity,
+    EufySecurityError,
+    NoCachedSessionError,
+)
+from eufy_home_security.cloud.crypto import invite_seal
+from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
+from homeassistant.components.repairs import RepairsFlowManager, repairs_flow_manager
+from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.setup import async_setup_component
+from pytest_homeassistant.common import MockConfigEntry
+from pytest_homeassistant.components.diagnostics import get_diagnostics_for_config_entry
+from pytest_homeassistant.typing import ClientSessionGenerator
+
+from custom_components.eufy_home_security import errors
+from custom_components.eufy_home_security.const import DOMAIN
+
+# Synthetic invitations as the cloud lists them.
+_HOME_NAME: Final = "Synthetic Cottage"
+_INVITER: Final = "synthetic-owner"
+_CODE: Final = "synthetic-code-4711"
+_HOUSE_INVITE: Final = {
+    "id": 7,
+    "house_id": "synthetic-house",
+    "house_name": _HOME_NAME,
+    "action_user_nick": _INVITER,
+}
+_SHARED_CAMERA: Final = "T8170P0000001111"
+_SHARED_DOORBELL: Final = "T8170P0000002222"
+
+
+def _device_invite(
+    invite_id: int,
+    serial: str,
+    *,
+    owner: str = "synthetic-owner-id",
+    code: str | None = None,
+    category: str | None = None,
+) -> dict[str, Any]:
+    """One ``get_invites`` entry; ``code`` seals it as an inviter's code does."""
+    entry: dict[str, Any] = {
+        "id": invite_id,
+        "device_sn": serial,
+        "product_code": serial[:5],
+        "action_user_nick": _INVITER,
+        "user_id": owner,
+        "sub_sns": "",
+    }
+    if code is not None:
+        entry["encrypted_data"] = invite_seal(code, "synthetic")
+    if category is not None:
+        entry["category"] = category
+    return entry
+
+
+@pytest.fixture
+def discover_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """The keyword arguments of every ``EufySecurity.async_discover`` call, in order."""
+    calls: list[dict[str, Any]] = []
+    original = EufySecurity.async_discover
+
+    async def recording(self: EufySecurity, **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return await original(self, **kwargs)
+
+    monkeypatch.setattr(EufySecurity, "async_discover", recording)
+    return calls
+
+
+async def _set_up_invited(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    seed_warm_cache: Callable[..., None],
+    *,
+    house: list[dict[str, Any]] | None = None,
+    devices: list[dict[str, Any]] | None = None,
+) -> tuple[MockConfigEntry, list[dict[str, Any]]]:
+    """An entry whose account lists nothing and has the given invitations open; also
+    the device list the cloud gives once they are accepted."""
+    listed = list(fake_cloud.devices)
+    fake_cloud.devices = []
+    fake_cloud.house_invites = list(house or [])
+    fake_cloud.device_invites = list(devices or [])
+    entry = await set_up_warm(hass, seed_warm_cache)
+    assert _issue(hass, entry) is not None
+    return entry, listed
+
+
+def _issue(hass: HomeAssistant, entry: MockConfigEntry) -> ir.IssueEntry | None:
+    return ir.async_get(hass).async_get_issue(
+        DOMAIN, errors.pending_invites_issue_id(entry.entry_id)
+    )
+
+
+def _accepts(cloud: FakeCloud) -> list[str]:
+    return [call for call in cloud.calls if call.startswith("accept_")]
+
+
+def _fields(result: Mapping[str, Any]) -> set[str]:
+    schema = result["data_schema"]
+    assert schema is not None
+    return {str(key) for key in schema.schema}
+
+
+async def _open_fix(hass: HomeAssistant, entry: MockConfigEntry) -> tuple[RepairsFlowManager, str]:
+    """The repair's fix, opened and moved past its menu to accept here."""
+    assert await async_setup_component(hass, "repairs", {})
+    manager = repairs_flow_manager(hass)
+    assert manager is not None
+    result = await manager.async_init(
+        DOMAIN, data={"issue_id": errors.pending_invites_issue_id(entry.entry_id)}
+    )
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == "init"
+    assert result["menu_options"] == ["pick", "confirm"]
+    return manager, result["flow_id"]
+
+
+async def test_a_home_invitation_without_a_code_is_accepted_and_its_station_set_up(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    discover_calls: list[dict[str, Any]],
+) -> None:
+    """One invitation: no picker, no code field; the accept names the home, the reload
+    asks every scope once, and the shared station is served with the issue gone."""
+    entry, listed = await _set_up_invited(
+        hass, fake_cloud, seed_warm_cache, house=[dict(_HOUSE_INVITE)]
+    )
+    manager, flow_id = await _open_fix(hass, entry)
+
+    result = await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "accept"
+    assert _fields(result) == set()
+    placeholders = result["description_placeholders"]
+    assert placeholders is not None
+    assert placeholders["invitation"] == f"“{_HOME_NAME}” from {_INVITER}"
+    clients = len(built_clients)
+
+    fake_cloud.devices = listed
+    result = await manager.async_configure(flow_id, {})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    assert _accepts(fake_cloud) == ["accept_house_invite"]
+    (body,) = fake_cloud.invite_accepts
+    assert (body["house_id"], body["invite_id"]) == ("synthetic-house", 7)
+    assert len(built_clients) == clients + 1, "reloaded once"
+    assert discover_calls[-1] == {"rescan_regions": True}
+    assert SYNTHETIC.station_sn in entry.runtime_data.eufy.stations
+    assert _issue(hass, entry) is None
+    assert "login" not in fake_cloud.calls
+
+
+async def test_a_coded_invitation_keeps_the_form_open_on_a_wrong_or_missing_code(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    discover_calls: list[dict[str, Any]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The code field shows; a wrong or empty code is a form error and sends nothing;
+    the right one accepts the device with its owner, and is neither sent nor logged."""
+    caplog.set_level(logging.DEBUG)
+    entry, listed = await _set_up_invited(
+        hass, fake_cloud, seed_warm_cache, devices=[_device_invite(11, _SHARED_CAMERA, code=_CODE)]
+    )
+    manager, flow_id = await _open_fix(hass, entry)
+    result = await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    assert result["step_id"] == "accept"
+    assert _fields(result) == {"code"}
+
+    result = await manager.async_configure(flow_id, {"code": "not-the-code"})
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"code": "wrong_code"}
+    result = await manager.async_configure(flow_id, {"code": ""})
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"code": "code_missing"}
+    assert fake_cloud.invite_accepts == []
+    assert _accepts(fake_cloud) == []
+
+    fake_cloud.devices = listed
+    result = await manager.async_configure(flow_id, {"code": _CODE})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    (body,) = fake_cloud.invite_accepts
+    (accepted,) = body["invites"]
+    assert accepted["device_sn"] == _SHARED_CAMERA
+    assert accepted["invite_id"] == 11
+    assert accepted["owner_user_id"] == "synthetic-owner-id"
+    assert _CODE not in json.dumps(body)
+    assert discover_calls[-1] == {"rescan_regions": True}
+    assert SYNTHETIC.station_sn in entry.runtime_data.eufy.stations
+    for private in (_CODE, _INVITER, _SHARED_CAMERA):
+        assert private not in caplog.text
+
+
+async def test_an_appliance_invitation_is_left_to_the_eufy_app(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A home-appliance category aborts with the eufy-app text; nothing sent, no reload,
+    the issue stays."""
+    entry, _ = await _set_up_invited(
+        hass,
+        fake_cloud,
+        seed_warm_cache,
+        devices=[_device_invite(12, _SHARED_CAMERA, category="eufy_home")],
+    )
+    manager, flow_id = await _open_fix(hass, entry)
+    await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    clients = len(built_clients)
+
+    result = await manager.async_configure(flow_id, {})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "accept_in_app"
+    await hass.async_block_till_done()
+
+    assert _accepts(fake_cloud) == []
+    assert len(built_clients) == clients
+    assert _issue(hass, entry) is not None
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (NoCachedSessionError("synthetic"), "session_lapsed"),
+        (CloudApiError(1, "synthetic"), "accept_failed"),
+        (CommunicationError("synthetic"), "accept_failed"),
+    ],
+)
+async def test_a_failed_accept_aborts_with_its_reason_and_reloads_nothing(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    error: EufySecurityError,
+    reason: str,
+) -> None:
+    """A lapsed session gets its own text; a cloud refusal or an unreachable cloud the
+    generic one. The issue stays and the entry is not reloaded."""
+    entry, _ = await _set_up_invited(hass, fake_cloud, seed_warm_cache, house=[dict(_HOUSE_INVITE)])
+
+    async def failing(*args: Any, **kwargs: Any) -> None:
+        raise error
+
+    monkeypatch.setattr(entry.runtime_data.eufy, "async_accept_invite", failing)
+    manager, flow_id = await _open_fix(hass, entry)
+    await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    clients = len(built_clients)
+
+    result = await manager.async_configure(flow_id, {})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == reason
+    await hass.async_block_till_done()
+    assert len(built_clients) == clients
+    assert _issue(hass, entry) is not None
+
+
+async def test_a_cloud_refusal_of_the_accept_aborts_and_keeps_the_issue(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The cloud answers the accept with an error code: the generic text."""
+    entry, _ = await _set_up_invited(hass, fake_cloud, seed_warm_cache, house=[dict(_HOUSE_INVITE)])
+    manager, flow_id = await _open_fix(hass, entry)
+    await manager.async_configure(flow_id, {"next_step_id": "pick"})
+
+    fake_cloud.call_errors = [CloudApiError(1, "synthetic")]
+    result = await manager.async_configure(flow_id, {})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "accept_failed"
+    assert _accepts(fake_cloud) == ["accept_house_invite"]
+    assert fake_cloud.house_invites, "still pending"
+    assert _issue(hass, entry) is not None
+
+
+async def test_two_invitations_are_picked_one_at_a_time_then_finished(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    discover_calls: list[dict[str, Any]],
+) -> None:
+    """Two devices of one model differ by their redacted serials; after one accept the
+    other stays open, and Finish reloads once with a rescan."""
+    entry, _ = await _set_up_invited(
+        hass,
+        fake_cloud,
+        seed_warm_cache,
+        devices=[
+            _device_invite(21, _SHARED_CAMERA, owner="synthetic-owner-a"),
+            _device_invite(22, _SHARED_DOORBELL, owner="synthetic-owner-b"),
+        ],
+    )
+    manager, flow_id = await _open_fix(hass, entry)
+    result = await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "pick"
+    schema = result["data_schema"]
+    assert schema is not None
+    (selector,) = schema.schema.values()
+    labels = [option["label"] for option in selector.config["options"]]
+    assert labels == [
+        f"T8170 from {_INVITER} (T8170***1111)",
+        f"T8170 from {_INVITER} (T8170***2222)",
+    ]
+
+    result = await manager.async_configure(flow_id, {"invitation": "1"})
+    assert result["step_id"] == "accept"
+    result = await manager.async_configure(flow_id, {})
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == "accepted"
+    assert result["menu_options"] == ["pick", "finish"]
+    placeholders = result["description_placeholders"]
+    assert placeholders is not None
+    assert placeholders["invites"] == f"T8170 from {_INVITER}"
+    assert [accept["invites"][0]["invite_id"] for accept in fake_cloud.invite_accepts] == [22]
+    clients = len(built_clients)
+
+    result = await manager.async_configure(flow_id, {"next_step_id": "finish"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert len(built_clients) == clients + 1, "reloaded once"
+    assert discover_calls[-1] == {"rescan_regions": True}
+
+
+async def test_closing_the_fix_after_an_accept_still_reloads(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    discover_calls: list[dict[str, Any]],
+) -> None:
+    """Closed on the "accepted" menu: the entry reloads once with a rescan anyway."""
+    entry, _ = await _set_up_invited(
+        hass,
+        fake_cloud,
+        seed_warm_cache,
+        devices=[
+            _device_invite(31, _SHARED_CAMERA, owner="synthetic-owner-a"),
+            _device_invite(32, _SHARED_DOORBELL, owner="synthetic-owner-b"),
+        ],
+    )
+    manager, flow_id = await _open_fix(hass, entry)
+    await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    await manager.async_configure(flow_id, {"invitation": "0"})
+    result = await manager.async_configure(flow_id, {})
+    assert result["step_id"] == "accepted"
+    clients = len(built_clients)
+
+    manager.async_abort(flow_id)
+    await hass.async_block_till_done()
+    assert len(built_clients) == clients + 1, "reloaded once"
+    assert discover_calls[-1] == {"rescan_regions": True}
+
+
+async def test_closing_the_fix_after_its_entry_was_removed_reloads_nothing(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An accept, then the entry removed while the fix is open: closing it is quiet."""
+    entry, _ = await _set_up_invited(
+        hass,
+        fake_cloud,
+        seed_warm_cache,
+        devices=[
+            _device_invite(51, _SHARED_CAMERA, owner="synthetic-owner-a"),
+            _device_invite(52, _SHARED_DOORBELL, owner="synthetic-owner-b"),
+        ],
+    )
+    manager, flow_id = await _open_fix(hass, entry)
+    await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    await manager.async_configure(flow_id, {"invitation": "0"})
+    result = await manager.async_configure(flow_id, {})
+    assert result["step_id"] == "accepted"
+    assert await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+
+    manager.async_abort(flow_id)
+    await hass.async_block_till_done()
+    assert "Error removing" not in caplog.text
+
+
+async def test_closing_the_fix_without_an_accept_reloads_nothing(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Opened and closed on the menu: no reload."""
+    entry, _ = await _set_up_invited(hass, fake_cloud, seed_warm_cache, house=[dict(_HOUSE_INVITE)])
+    manager, flow_id = await _open_fix(hass, entry)
+    clients = len(built_clients)
+
+    manager.async_abort(flow_id)
+    await hass.async_block_till_done()
+    assert len(built_clients) == clients
+
+
+async def test_an_invitation_accepted_meanwhile_opens_on_looking_again(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Nothing open when the fix starts: straight to the confirmation, naming what the
+    issue was raised for."""
+    entry, _ = await _set_up_invited(hass, fake_cloud, seed_warm_cache, house=[dict(_HOUSE_INVITE)])
+    fake_cloud.house_invites = []
+    assert await async_setup_component(hass, "repairs", {})
+    manager = repairs_flow_manager(hass)
+    assert manager is not None
+
+    result = await manager.async_init(
+        DOMAIN, data={"issue_id": errors.pending_invites_issue_id(entry.entry_id)}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "confirm"
+    placeholders = result["description_placeholders"]
+    assert placeholders is not None
+    assert placeholders["invites"] == f"“{_HOME_NAME}” from {_INVITER}"
+
+
+async def test_diagnostics_say_whether_an_invitation_needs_a_code_and_nothing_private(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The account report's invitation carries ``needs_code``; no inviter, no sealed code."""
+    entry, _ = await _set_up_invited(
+        hass, fake_cloud, seed_warm_cache, devices=[_device_invite(41, _SHARED_CAMERA, code=_CODE)]
+    )
+    payload = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+
+    assert isinstance(payload, dict)
+    (invite,) = payload["account_report"]["invites"]
+    assert invite["needs_code"] is True
+    text = json.dumps(payload)
+    assert _INVITER not in text
+    assert fake_cloud.device_invites[0]["encrypted_data"] not in text
