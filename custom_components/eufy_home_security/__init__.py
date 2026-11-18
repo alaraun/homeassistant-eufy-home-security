@@ -133,8 +133,8 @@ def _async_register_devices(
     The station is registered first because its ``DeviceEntry`` is the parent:
     sub-devices link with ``via_device_id``, since ``DeviceInfo["via_device"]`` is
     deprecated since 2026.8 (helpers/device_registry.py, ``async_get_or_create``).
-    Every device's ``model`` is the library's catalogued name
-    (``CloudDevice.model_name``, None for a model it does not know) and ``model_id`` the
+    Every device's ``model`` is the unit's product name
+    (``CloudDevice.model_name``, None for a model the library does not name) and ``model_id`` the
     serial prefix (``CloudDevice.model_id``, set for every model). ``sw_version`` is the
     cloud list's for a new row only; :func:`_async_track_firmware` keeps it at the
     station's report, which a reload with the station down must not undo.

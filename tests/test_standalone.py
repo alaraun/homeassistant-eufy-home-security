@@ -65,6 +65,7 @@ from custom_components.eufy_home_security.const import (
     DETECTION_EVENT_KEY,
     DOMAIN,
     GUARD_MODE_KEY,
+    MODEL_KEY,
     MOTION_DETECTED_KEY,
     PERSON_DETECTED_KEY,
     POLL_INTERVAL_SECONDS,
@@ -128,6 +129,22 @@ def wakeable(monkeypatch: pytest.MonkeyPatch) -> None:
     session-replaced latch. The library's own tests patch the same public property.
     """
     monkeypatch.setattr(CloudDevice, "rendezvous_servers", ("192.0.2.1",))
+
+
+async def test_a_standalone_camera_shows_its_unit_product_name(
+    hass: HomeAssistant, fake_cloud, seed_warm_cache, built_clients, fake_station
+):
+    """The station view's Model sensor equals the device's ``model``: the unit's product
+    name, which differs from the name of its serial prefix."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, SN), entry.entry_id)
+    assert device is not None
+    assert device.model == "SoloCam S340"
+    assert state_of(hass, entity_id_for(hass, "sensor", SN, MODEL_KEY)) == "SoloCam S340"
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
 
 
 async def test_a_standalone_station_sets_up_from_cache_without_waking(

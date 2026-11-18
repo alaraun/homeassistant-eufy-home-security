@@ -20,6 +20,7 @@ from eufy_home_security.devices import (
     DeviceKind,
     Support,
     model_for_serial,
+    product_name,
     profile_for_serial,
 )
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation, camera_device
@@ -157,7 +158,7 @@ async def test_a_device_other_than_a_camera_gets_status_entities_and_nothing_of_
 
     device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, serial), entry.entry_id)
     assert device is not None
-    assert device.model == model.name
+    assert device.model == product_name(serial)
     entities = _entities_of(hass, serial)
     assert _STATUS_ENTITIES <= entities
     assert not {domain for domain, _ in entities} & _CAMERA_ONLY_DOMAINS
