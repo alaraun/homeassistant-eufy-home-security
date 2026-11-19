@@ -330,7 +330,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     # A shared home or device shows only once its invitation is accepted. Read on a
     # reload the user started, when the account lists no station, or when this setup
     # fetched the list anyway; otherwise (a warm start makes no cloud call), and when
-    # the read fails, the invitations last read stand.
+    # the read fails, the invitations last read stand. The request is taken first, so
+    # it is used up by this setup whatever else holds.
     invites = None
     if (
         runtime.take_invites_at_setup(hass, entry.entry_id)

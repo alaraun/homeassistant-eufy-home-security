@@ -418,6 +418,12 @@ async def test_the_invitation_fix_rescans_and_sets_up_the_shared_station(
     assert SYNTHETIC.station_sn in entry.runtime_data.eufy.stations
     assert _invites_issue(hass, entry) is None
     assert "login" not in fake_cloud.calls
+
+    # the fix's read request is used up by that setup: a warm reload reads nothing
+    reads = _invite_reads(fake_cloud)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert _invite_reads(fake_cloud) == reads
     await _unload(hass, entry)
 
 
@@ -612,6 +618,52 @@ async def test_an_entry_unloaded_during_the_press_read_gets_no_issue(
 
     assert entry.state is ConfigEntryState.NOT_LOADED
     assert _invites_issue(hass, entry) is None
+
+
+async def test_a_press_read_that_ends_after_a_reload_changes_nothing(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A press's read answers with an invitation that is accepted while it runs; a
+    reload the user started reads none meanwhile. The late answer belongs to the old
+    setup: no issue and no remembered invitation."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original = EufySecurity.async_pending_invites
+    held_once: list[bool] = []
+
+    async def held(self: EufySecurity) -> list[Any]:
+        if held_once:
+            return await original(self)
+        held_once.append(True)
+        answer = await original(self)
+        entered.set()
+        await release.wait()
+        return answer
+
+    monkeypatch.setattr(EufySecurity, "async_pending_invites", held)
+    fake_cloud.house_invites = [dict(_HOUSE_INVITE)]
+    button = entity_id_for(hass, "button", entry.entry_id, REFRESH_DEVICE_LIST_KEY)
+    entity = hass.data["entity_components"]["button"].get_entity(button)
+    press = asyncio.get_running_loop().create_task(entity.async_press())  # untracked
+    await entered.wait()
+    fake_cloud.house_invites = []
+    runtime.request_invites_at_setup(hass, entry.entry_id)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert _invites_issue(hass, entry) is None
+    release.set()
+    await press
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert _invites_issue(hass, entry) is None
+    assert runtime.last_invites(hass, entry.entry_id) == []
+    await _unload(hass, entry)
 
 
 async def test_build_client_passes_the_country_and_home_assistants_time_zone(

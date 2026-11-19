@@ -164,8 +164,13 @@ async def async_read_invites(
     readable answer for :func:`last_invites`; None when they cannot be read."""
     invites = await async_pending_invites(eufy)
     if invites is not None:
-        hass.data.setdefault(LAST_INVITES, {})[entry_id] = invites
+        remember_invites(hass, entry_id, invites)
     return invites
+
+
+def remember_invites(hass: HomeAssistant, entry_id: str, invites: list[CloudInvite]) -> None:
+    """Keep a readable answer as the entry's last read (:func:`last_invites`)."""
+    hass.data.setdefault(LAST_INVITES, {})[entry_id] = invites
 
 
 def last_invites(hass: HomeAssistant, entry_id: str) -> list[CloudInvite] | None:

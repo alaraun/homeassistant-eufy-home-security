@@ -395,10 +395,14 @@ class EufyRefreshDeviceListButton(ButtonEntity):
         else:
             _LOGGER.debug("Device list refreshed: no station added")
             if not router.reload_pending:
-                # Name any invitation the account has not accepted. No reload is
-                # pending, so this entity outlives the await.
-                invites = await runtime.async_read_invites(
-                    self.hass, self._entry.entry_id, runtime_data.eufy
-                )
-                if self._entry.state is ConfigEntryState.LOADED:
+                # Name any invitation the account has not accepted. The answer
+                # stands only for the setup this press ran in: an unload or a reload
+                # during the read makes it stale.
+                invites = await runtime.async_pending_invites(runtime_data.eufy)
+                if (
+                    invites is not None
+                    and self._entry.state is ConfigEntryState.LOADED
+                    and self._entry.runtime_data is runtime_data
+                ):
+                    runtime.remember_invites(self.hass, self._entry.entry_id, invites)
                     errors.sync_pending_invites_issue(self.hass, self._entry, invites)
