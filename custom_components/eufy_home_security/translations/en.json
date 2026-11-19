@@ -399,10 +399,10 @@
       "message": "{target} does not accept this value, so nothing was sent. Choose a value the setting allows: a number must sit on one of its steps from the minimum, as the slider offers."
     },
     "station_unreachable": {
-      "message": "The HomeBase did not answer, so {target} was not set. Home Assistant keeps reconnecting; check that the HomeBase is powered on and reachable, on this network or through eufy's servers."
+      "message": "The station did not answer, so {target} was not set. Home Assistant keeps reconnecting; check that it is powered on and reachable, on this network or through eufy's servers."
     },
     "on_demand_unreachable": {
-      "message": "The camera did not answer, so {target} was not set. A battery camera sleeps between commands and takes about ten seconds to wake; check that it is charged and within Wi-Fi range, then try again."
+      "message": "The camera did not answer, so {target} was not set. A battery camera sleeps between commands and takes about ten seconds to wake; check that it is charged and within Wi-Fi range and that Home Assistant can reach eufy's servers, then try again."
     },
     "session_replaced_see_repairs": {
       "message": "Another app or device signed in with the eufy account and ended Home Assistant's session, so {target} was not set. Waking a battery camera needs a key from eufy, which refuses the ended session. Open the account's repair under Settings > System > Repairs to sign in again, or use Reconfigure on the account entry; Home Assistant does not sign in again by itself."

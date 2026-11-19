@@ -28,7 +28,7 @@ reloads the integration.
 
 ## Alarm panel
 
-- Arm Home, arm Away and disarm go to the HomeBase over the LAN; the panel shows the
+- Arm Home, arm Away and disarm go to the HomeBase directly, over its P2P session; the panel shows the
   new mode once the HomeBase confirms it.
 - The panel shows Schedule and the Custom modes but does not set them.
 - The **Security mode** select of a HomeBase or standalone camera sets every mode it has

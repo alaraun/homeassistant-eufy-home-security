@@ -88,7 +88,7 @@ an account where no device was found too.
 The log names it: `Station T8030***1234 did not come up (StationUnreachableError)`. A
 station on the LAN answers LAN discovery; one on another subnet or at another site is
 reached through eufy's servers, which needs a working eufy session (the station's
-connection key comes from eufy) and outbound UDP 32100 to eufy's servers; see
+connection key comes from eufy) and outbound UDP 32100-32102 to eufy's servers; see
 [network.md](network.md#lan). The diagnostics' `connect_path` shows which path the last
 link took.
 

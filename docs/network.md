@@ -10,10 +10,13 @@
   station's addresses and the session is the same as on the LAN (commands, settings,
   stills, live video). A HomeBase or mains camera tries them after one LAN attempt
   without a reply, so its first connect takes about 6 s longer; once a link came
-  through them, and for a battery camera always, from the first attempt. It needs a
-  working eufy session (the station's connection key comes from eufy) and outbound UDP
-  32100. Checked with standalone cameras: a mains camera on another subnet behind a
-  router and a battery camera at another site; a HomeBase off the LAN is not tested.
+  through them or while its connection key is still cached, and for a battery camera
+  always, from the first attempt. It needs a working eufy session (the station's
+  connection key comes from eufy) and outbound UDP 32100-32102 to eufy's servers. At
+  another site both routers must allow UDP hole punching: a symmetric NAT blocks it,
+  and there is no relay. Checked with standalone cameras: a mains camera on another
+  subnet behind a router and a battery camera at another site; a HomeBase off the LAN
+  is not tested.
 - **Home Assistant Container**: use `network_mode: host`. A bridge network does not
   see the LAN broadcast.
 - Give every HomeBase and standalone camera a **fixed IP** (a DHCP reservation on the
@@ -26,7 +29,7 @@
 | Home Assistant → station | UDP 32108, then UDP to the station | discovery, every local command, stills, live video |
 | station → Home Assistant | UDP from a random high port, new every session | replies on the same session |
 | Home Assistant → internet | HTTPS to `*.eufy.com`, `security-app.eufylife.com` and `security-app-eu.eufylife.com` | sign-in, device list, device keys, session check |
-| Home Assistant → internet | UDP 32100 (also 32101-32102) to eufy's rendezvous servers | connecting a station LAN discovery does not reach, and waking a battery camera |
+| Home Assistant → internet | UDP 32100-32102 to eufy's rendezvous servers | connecting a station LAN discovery does not reach, and waking a battery camera |
 | Home Assistant → internet | HTTPS to `*.google.com`, `*.googleapis.com` and `app-push-*.eufy.com`; TCP 5228 to `mtalk.google.com` | [Cloud push](usage.md#cloud-push) only |
 
 A host firewall that filters inbound UDP must allow **all UDP from each station's
