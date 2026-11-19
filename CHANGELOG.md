@@ -5,6 +5,22 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.16](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.15...v0.4.16) (2026-11-19)
+
+
+### Features
+
+* a station LAN discovery does not reach (another subnet or site) connects through eufy's servers, as the eufy app does; at another site its routers must allow UDP hole punching (library 0.4.14) ([adbde0e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/adbde0ed95e85a1ac2d643921b36a14175366924))
+* **repairs:** a repair names stations on Home Assistant's own network that connect only through eufy's servers because their LAN replies are blocked, with the address to allow in the firewall (library 0.4.14) ([adbde0e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/adbde0ed95e85a1ac2d643921b36a14175366924))
+* **repairs:** the "eufy invitation not accepted" repair accepts the invitation: Fix lists the pending ones, asks for the code where eufy needs one, then reloads and fetches the devices (library 0.4.14) ([adbde0e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/adbde0ed95e85a1ac2d643921b36a14175366924))
+* **storage:** cameras that report their microSD card or eMMC get Local storage usable and Local storage (Normal, No card, Corrupted, Other problem, Not usable) (library 0.4.14) ([adbde0e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/adbde0ed95e85a1ac2d643921b36a14175366924))
+
+
+### Bug Fixes
+
+* **sensor:** Model sensors and device pages show each unit's product name, e.g. HomeBase 3 or eufyCam C31 (library 0.4.14) ([adbde0e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/adbde0ed95e85a1ac2d643921b36a14175366924))
+* **storage:** a camera without a usable card no longer fails its storage read with a timeout; its size sensors show unknown (library 0.4.14) ([adbde0e](https://github.com/alaraun/homeassistant-eufy-home-security/commit/adbde0ed95e85a1ac2d643921b36a14175366924))
+
 ## [0.4.15](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.14...v0.4.15) (2026-11-12)
 
 
