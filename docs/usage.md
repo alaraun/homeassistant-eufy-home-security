@@ -460,12 +460,14 @@ An entity an earlier release created for a figure the HomeBase does not report i
 
 A camera without a HomeBase (not a battery camera, which is never woken for it), a
 HomeBase 2 on firmware below 3.3.7.7 and the models T8001, T8002, T8020 and T8023 report
-their local medium, a microSD card or a built-in eMMC, as a status with a size. They get **eMMC used space**, **eMMC free**, **eMMC size** (off by
-default), **Local storage usable** (diagnostic binary sensor) and **Local storage**
-(diagnostic sensor: Normal, No card, Corrupted, Other problem, or Not usable for a
-normal status without a size). The state is the eufy app's meaning of the status for
-that model. Without a usable medium the sizes show unknown, and they fill in once a
-card is in place.
+their local medium, a microSD card or a built-in eMMC, as a status with a size. They
+get **eMMC used space**, **eMMC free** and **eMMC size** (off by default), named eMMC
+whatever the medium, **Local storage usable** (diagnostic binary sensor) and **Local
+storage** (diagnostic sensor: Normal, No card, Corrupted, Other problem, or Not usable
+for a normal status without a size). The state is the eufy app's meaning of the status
+for that model. While the device reports no size (no card) the sizes show unknown; a
+medium that is not usable but reports a size keeps its figures. They fill in without a
+reload once a card is in place.
 
 **Firmware update** entities also carry, when reported: `subsystem_firmware` on the
 HomeBase (version strings by parameter id; the subsystems are unnamed) and

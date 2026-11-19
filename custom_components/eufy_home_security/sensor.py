@@ -293,7 +293,11 @@ def _gib_sensor(
     state_class: SensorStateClass | None = SensorStateClass.MEASUREMENT,
     enabled: bool = True,
 ) -> EufyStorageDescription:
-    """A size in GiB, the unit whose figures the eufy app shows (labelled "GB")."""
+    """A size in GiB, the unit whose figures the eufy app shows (labelled "GB").
+
+    An eMMC size is kept on a status record: it is None there while the device reports
+    no size (no card, a total of 0), and the entity shows unknown meanwhile.
+    """
     return EufyStorageDescription(
         key=key,
         translation_key=key,
@@ -305,8 +309,7 @@ def _gib_sensor(
         state_class=state_class,
         entity_registry_enabled_default=enabled,
         value_fn=read,
-        # A status record carries sizes only for a usable medium: unknown meanwhile.
-        on_status_record=True,
+        on_status_record=part is StoragePart.EMMC,
     )
 
 
@@ -376,7 +379,7 @@ def _wear_sensor(part: StoragePart, key: str) -> EufyStorageDescription:
 #   keyed ``emmc_used_space``. No temperature: ``emmc_info`` has no ``cur_temperate``.
 # - Recordings used/capacity: no app screen shows them; diagnostics download only.
 # - A device's status record (its local medium): used space, free and size, which show
-#   unknown while the medium is not usable, and the medium's state.
+#   unknown while the device reports no size, and the medium's state.
 # A figure the part's first record does not carry gets no entity.
 STORAGE_SENSORS: Final = (
     _gib_sensor(StoragePart.DISK, DISK_USED_KEY, lambda medium: medium.used_gib),

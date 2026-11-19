@@ -93,29 +93,34 @@ async def _unload(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     await hass.async_block_till_done()
 
 
-@pytest.mark.parametrize("sd_info", [(4, 0, 0)])
-async def test_no_card_is_a_result_not_an_error(
+@pytest.mark.parametrize(
+    ("sd_info", "state", "sizes_shown"),
+    [
+        ((4, 0, 0), "no_card", False),
+        ((22, 8000, 3000), "corrupted", True),
+        ((31, 8000, 8000), "no_card", True),
+    ],
+    ids=["no-card", "corrupted-with-size", "no-card-with-size"],
+)
+async def test_a_medium_that_is_not_usable_is_a_result_not_an_error(
     hass: HomeAssistant,
     caplog: pytest.LogCaptureFixture,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
+    state: str,
+    sizes_shown: bool,
 ) -> None:
-    """A status answer without a usable medium: usable off, the library's state, the
-    sizes unknown; no problem or wear entity, no failed read and no ERROR."""
+    """Usable off and the app's state for the model; the sizes unknown without a size
+    and shown with one; no problem or wear entity, no failed read and no warning."""
     caplog.set_level(logging.DEBUG, logger=_STORAGE_LOGGER)
     entry = await set_up_warm(hass, seed_warm_cache)
-    coordinator = entry.runtime_data.storage[SN]
-    assert coordinator.last_update_success
-    medium = coordinator.data.emmc
-    assert medium is not None
-    assert medium.usable is False
-    assert medium.state is not MediumState.NORMAL
+    assert entry.runtime_data.storage[SN].last_update_success
 
     assert _state(hass, "binary_sensor", EMMC_USABLE_KEY) == STATE_OFF
-    assert _state(hass, "sensor", EMMC_STATE_KEY) == medium.state.value
+    assert _state(hass, "sensor", EMMC_STATE_KEY) == state
     for key in (EMMC_USED_SPACE_KEY, EMMC_FREE_KEY):
-        assert _state(hass, "sensor", key) == STATE_UNKNOWN
+        assert (_state(hass, "sensor", key) != STATE_UNKNOWN) is sizes_shown, key
     assert _registered(hass, "sensor", EMMC_SIZE_KEY)  # off by default
     assert not _registered(hass, "binary_sensor", EMMC_PROBLEM_KEY)
     assert not _registered(hass, "sensor", EMMC_WEAR_KEY)
@@ -133,7 +138,7 @@ async def test_a_usable_medium_shows_normal_and_its_sizes(
 ) -> None:
     entry = await set_up_warm(hass, seed_warm_cache)
     assert _state(hass, "binary_sensor", EMMC_USABLE_KEY) == STATE_ON
-    assert _state(hass, "sensor", EMMC_STATE_KEY) == MediumState.NORMAL.value
+    assert _state(hass, "sensor", EMMC_STATE_KEY) == "normal"
     medium = entry.runtime_data.storage[SN].data.emmc
     assert medium is not None
     assert medium.used_gib is not None
@@ -172,6 +177,25 @@ async def test_a_card_that_turns_up_fills_the_size_entities_without_a_reload(
     assert _state(hass, "binary_sensor", EMMC_USABLE_KEY) == STATE_ON
     assert _state(hass, "sensor", EMMC_STATE_KEY) == MediumState.NORMAL.value
     assert _state(hass, "sensor", EMMC_FREE_KEY) not in (STATE_UNKNOWN, None)
+    await _unload(hass, entry)
+
+
+async def test_a_card_taken_out_keeps_the_entities_and_clears_the_sizes(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    entry = await set_up_warm(hass, seed_warm_cache)
+    assert _state(hass, "sensor", EMMC_FREE_KEY) not in (STATE_UNKNOWN, None)
+
+    fake_station.sd_info = (4, 0, 0)
+    await entry.runtime_data.storage[SN].async_refresh()
+    await hass.async_block_till_done()
+
+    assert _state(hass, "binary_sensor", EMMC_USABLE_KEY) == STATE_OFF
+    assert _state(hass, "sensor", EMMC_STATE_KEY) == "no_card"
+    assert _state(hass, "sensor", EMMC_FREE_KEY) == STATE_UNKNOWN
     await _unload(hass, entry)
 
 

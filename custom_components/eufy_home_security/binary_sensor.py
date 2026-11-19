@@ -136,7 +136,7 @@ def _usable(medium: StorageMedium) -> bool | None:
 
 # All DIAGNOSTIC, built per part. The eMMC has no formatting sensor: its record
 # (HomeBase 3) carries no ``parted_status``. "Usable" exists only where the record
-# carries a status (a device's status answer), never on a HomeBase 3's record.
+# carries a status group (a device's status answer), never on a 1307 or 55000 record.
 STORAGE_BINARY_SENSORS: Final = (
     _problem_sensor(StoragePart.DISK, DISK_PROBLEM_KEY),
     _formatting_sensor(StoragePart.DISK, DISK_FORMATTING_KEY),

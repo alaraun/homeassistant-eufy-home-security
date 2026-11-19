@@ -190,8 +190,8 @@ def reported_descriptions[DescT: StorageDescription](
     no health) gets no entity, and the row an earlier release registered for it is
     removed from ``domain``, this entry's rows only. A status record (a device's
     ``SDINFO_EX`` answer: it has a status group) also keeps the descriptions marked
-    ``on_status_record``: its sizes are None while the medium is not usable (no card),
-    and those entities show unknown until a usable medium reports them.
+    ``on_status_record``: its sizes are None while the device reports no size (no card,
+    a total of 0), and those entities show unknown until it reports one.
     """
     medium = part.medium(coordinator.data)
     reported: list[DescT] = []
