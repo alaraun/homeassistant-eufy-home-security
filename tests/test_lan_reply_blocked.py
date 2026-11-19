@@ -111,6 +111,35 @@ async def test_a_link_with_a_blocked_lan_reply_raises_the_repair_and_a_lan_link_
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_a_lan_link_of_one_station_keeps_another_blocked_one_named(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    blocked_serials: set[str],
+) -> None:
+    """Every connect decides over all the account's stations, not only the one that linked."""
+    seed_warm_cache()
+    entry = add_entry(hass)
+    assert await setup_entry(hass, entry)
+    other = "T8030P0000000009"
+    coordinators: dict[str, Any] = entry.runtime_data.coordinators
+    coordinators[other] = SimpleNamespace(
+        station=SimpleNamespace(serial=other, lan_path=_path(other, blocked=True, ip=_OTHER_IP))
+    )
+    try:
+        await _connected(hass, entry, fake_station.serial)
+        issue = _issue(hass, entry)
+        assert issue is not None
+        assert issue.translation_placeholders is not None
+        assert issue.translation_placeholders["stations"] == (
+            f"{redact_serial(other)} ({_OTHER_IP})"
+        )
+    finally:
+        del coordinators[other]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_the_record_kept_from_the_last_run_raises_it_at_setup(
     hass: HomeAssistant,
     hass_storage: dict[str, Any],
@@ -251,6 +280,7 @@ async def test_the_host_networks_come_from_home_assistants_adapters(
             ],
         },
         {"name": "eth2", "enabled": True, "ipv4": []},
+        {"name": "lo", "enabled": False, "ipv4": [{"address": "127.0.0.1", "network_prefix": 8}]},
     ]
 
     async def get_adapters(_hass: HomeAssistant) -> list[dict[str, Any]]:

@@ -41,7 +41,7 @@ commands and video stay on the LAN. But each reconnect then needs the internet a
 working eufy session. The repair **eufy stations on this network connect through eufy's
 servers** names each such station with its address; it clears after the next link that
 comes up over the LAN. Ignore it to keep that path; the ignore lasts until the account is
-removed from Home Assistant.
+removed or disabled in Home Assistant.
 
 A station reached through eufy's servers needs no inbound rule when every filter on the
 way (the host firewall and the router) admits replies by connection tracking: its

@@ -218,17 +218,19 @@ def build_client(
 
 
 async def async_local_networks(hass: HomeAssistant) -> list[IPv4Network] | None:
-    """This host's IPv4 networks from Home Assistant's network adapters, enabled or not.
+    """This host's IPv4 networks from Home Assistant's network adapters, enabled or not,
+    loopback left out as the library's own interface reader does.
 
     The library tells a station on one of them whose LAN reply does not arrive from one
-    beyond them. ``None`` when no adapter has an IPv4 address: the library then reads the
-    host's interfaces itself.
+    beyond them. Home Assistant reads its adapters once at start, so an interface that
+    changes later counts from the next restart. ``None`` when no adapter has a non-loopback
+    IPv4 address: the library then reads the host's interfaces itself.
     """
     found: list[IPv4Network] = []
     for adapter in await network.async_get_adapters(hass):
         for address in adapter["ipv4"]:
             net = IPv4Network(f"{address['address']}/{address['network_prefix']}", strict=False)
-            if net not in found:
+            if not net.is_loopback and net not in found:
                 found.append(net)
     return found or None
 

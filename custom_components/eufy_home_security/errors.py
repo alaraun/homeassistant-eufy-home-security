@@ -1629,6 +1629,7 @@ def sync_lan_reply_blocked_issue(
         is_fixable=False,
         is_persistent=False,
         severity=ir.IssueSeverity.WARNING,
+        # Not persistent also keeps the addresses out of the issue store and diagnostics.
         translation_key=ISSUE_LAN_REPLY_BLOCKED,
         translation_placeholders={
             "account": account_label(entry),
