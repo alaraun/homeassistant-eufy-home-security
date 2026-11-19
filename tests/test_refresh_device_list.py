@@ -75,7 +75,15 @@ async def test_a_press_that_changes_nothing_fetches_once_and_does_not_reload(
     await asyncio.sleep(0.3)
     await hass.async_block_till_done()
 
-    assert cloud_calls(fake_cloud)[n:] == ["devices"]
+    calls = cloud_calls(fake_cloud)[n:]
+    assert [call for call in calls if "invites" not in call] == ["devices"]
+    # then the pending invitations of every region with a session (login-free)
+    assert sorted(call for call in calls if "invites" in call) == [
+        "device_invites",
+        "device_invites@us",
+        "house_invites",
+        "house_invites@us",
+    ]
     assert len(built_clients) == before
     assert entry.state.value == "loaded"
 
@@ -108,7 +116,7 @@ async def test_a_press_asks_a_region_that_listed_no_devices_only_with_the_region
     await hass.services.async_call("button", "press", {"entity_id": btn_id}, blocking=True)
     await hass.async_block_till_done()
 
-    assert cloud_calls(fake_cloud)[n:] == asked
+    assert [call for call in cloud_calls(fake_cloud)[n:] if "invites" not in call] == asked
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

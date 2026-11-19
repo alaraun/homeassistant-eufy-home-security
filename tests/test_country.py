@@ -245,18 +245,102 @@ async def test_an_account_with_a_pending_invitation_gets_a_repair_naming_it(
     assert _invites_issue(hass, entry) is None
 
 
-async def test_an_account_with_devices_never_reads_its_invitations(
+async def test_a_warm_start_with_devices_never_reads_its_invitations(
     hass: HomeAssistant,
     fake_cloud: FakeCloud,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """A served station: no invitation read and no issue."""
+    """A served station on the cached list: no invitation read and no issue (a warm
+    start makes no cloud call)."""
     fake_cloud.house_invites = [dict(_HOUSE_INVITE)]
     entry = await set_up_warm(hass, seed_warm_cache)
 
     assert _invites_issue(hass, entry) is None
     assert not [call for call in cloud_calls(fake_cloud) if "invites" in call]
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("pending", [True, False], ids=["invited", "none"])
+async def test_a_setup_that_fetches_the_list_reads_the_invitations_with_devices(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    pending: bool,
+) -> None:
+    """A rescan setup (as after accepting) fetches the list: with a station served,
+    the invitations are read too, and the repair names an open one."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    fake_cloud.house_invites = [dict(_HOUSE_INVITE)] if pending else []
+    runtime.request_rescan_at_setup(hass, entry.entry_id)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert built_clients[-1].device_list_source == "fetched"
+    assert fake_station.serial in entry.runtime_data.coordinators
+    assert [call for call in cloud_calls(fake_cloud) if "invites" in call]
+    issue = _invites_issue(hass, entry)
+    if pending:
+        assert issue is not None
+        assert issue.translation_placeholders is not None
+        assert issue.translation_placeholders["invites"] == f"“{_HOME_NAME}” from {_INVITER}"
+    else:
+        assert issue is None
+    await _unload(hass, entry)
+
+
+async def test_a_warm_reload_shows_the_invitations_last_read(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The issue is not persistent: a warm reload (no cloud call) shows again what the
+    last read found."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    button = entity_id_for(hass, "button", entry.entry_id, REFRESH_DEVICE_LIST_KEY)
+    fake_cloud.house_invites = [dict(_HOUSE_INVITE)]
+    await hass.services.async_call("button", "press", {ATTR_ENTITY_ID: button}, blocking=True)
+    await hass.async_block_till_done()
+    assert _invites_issue(hass, entry) is not None
+    reads = len([call for call in cloud_calls(fake_cloud) if "invites" in call])
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert len([call for call in cloud_calls(fake_cloud) if "invites" in call]) == reads
+    issue = _invites_issue(hass, entry)
+    assert issue is not None
+    assert issue.translation_placeholders is not None
+    assert issue.translation_placeholders["invites"] == f"“{_HOME_NAME}” from {_INVITER}"
+    await _unload(hass, entry)
+
+
+async def test_refresh_device_list_with_devices_names_a_new_invitation(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """With a station served and none added, a press reads the invitations again: one
+    sent after setup shows, and goes once withdrawn; nothing reloads."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    assert _invites_issue(hass, entry) is None
+    button = entity_id_for(hass, "button", entry.entry_id, REFRESH_DEVICE_LIST_KEY)
+
+    fake_cloud.house_invites = [dict(_HOUSE_INVITE)]
+    await hass.services.async_call("button", "press", {ATTR_ENTITY_ID: button}, blocking=True)
+    await hass.async_block_till_done()
+    assert _invites_issue(hass, entry) is not None
+    assert not entry.runtime_data.router.reload_pending
+
+    fake_cloud.house_invites = []
+    await hass.services.async_call("button", "press", {ATTR_ENTITY_ID: button}, blocking=True)
+    await hass.async_block_till_done()
+    assert _invites_issue(hass, entry) is None
+    assert fake_station.serial in entry.runtime_data.coordinators
     await _unload(hass, entry)
 
 

@@ -327,9 +327,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         raise errors.cache_unavailable(err) from err
     errors.sync_no_devices_issue(hass, entry, (await eufy.async_cloud_status()).regions)
     errors.sync_skipped_devices_issues(hass, entry, eufy.skipped_devices)
-    if not eufy.stations:
-        # A shared home shows only once its invitation is accepted in the eufy app.
-        errors.sync_pending_invites_issue(hass, entry, await runtime.async_pending_invites(eufy))
+    # A shared home or device shows only once its invitation is accepted. Read when the
+    # account lists no station or this setup fetched the list from the cloud anyway; a
+    # warm start makes no cloud call and shows the invitations last read.
+    if not eufy.stations or eufy.device_list_source == "fetched":
+        invites = await runtime.async_read_invites(hass, entry.entry_id, eufy)
+    else:
+        invites = runtime.last_invites(hass, entry.entry_id)
+    errors.sync_pending_invites_issue(hass, entry, invites)
 
     coordinators: dict[str, StationCoordinator] = {
         serial: StationCoordinator(hass, entry, station)

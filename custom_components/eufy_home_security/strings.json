@@ -328,7 +328,7 @@
           },
           "accepted": {
             "title": "Invitation accepted",
-            "description": "Still open for the eufy account {account}: {invites}. Accept the others here before you finish: once a shared device is listed, this repair no longer names open invitations. Finish, and Home Assistant reloads the eufy account and asks eufy once for its devices.",
+            "description": "Still open for the eufy account {account}: {invites}. Accept the others here, or later from this repair. Finish, and Home Assistant reloads the eufy account and asks eufy once for its devices.",
             "menu_options": {
               "pick": "Accept another invitation",
               "finish": "Finish and look for the shared devices"

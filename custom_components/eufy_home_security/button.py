@@ -352,8 +352,8 @@ class EufyRefreshDeviceListButton(ButtonEntity):
         device of the entry the list no longer names is removed at once, the station
         itself included. Only registries are touched after the
         fetch when a reload follows, so the reload cannot unload this entity mid-press;
-        with no station before or after, the pending invitations are read for their
-        repair.
+        when no reload follows, the pending invitations are read for their repair (a
+        reload's setup reads them itself).
         """
         runtime_data = self._entry.runtime_data
         router = runtime_data.router
@@ -391,9 +391,13 @@ class EufyRefreshDeviceListButton(ButtonEntity):
             router.async_reload_soon("station list changed")
         else:
             _LOGGER.debug("Device list refreshed: no station added")
-            if not after and not router.reload_pending:
-                # Still nothing: name any invitation the account has not accepted.
-                # No reload is pending, so this entity outlives the await.
+            if not router.reload_pending:
+                # Name any invitation the account has not accepted. No reload is
+                # pending, so this entity outlives the await.
                 errors.sync_pending_invites_issue(
-                    self.hass, self._entry, await runtime.async_pending_invites(runtime_data.eufy)
+                    self.hass,
+                    self._entry,
+                    await runtime.async_read_invites(
+                        self.hass, self._entry.entry_id, runtime_data.eufy
+                    ),
                 )
