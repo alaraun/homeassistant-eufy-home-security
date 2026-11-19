@@ -36,15 +36,17 @@ Assistant installs automatically. Library bugs that show without Home Assistant 
 
 - Home Assistant **2026.11.0** or newer, with ffmpeg (included in Home Assistant OS
   and the official container) for 4K stills.
-- Home Assistant on the **same LAN segment** as the HomeBase (host networking in
-  Docker). Firewall, reverse proxy and browsers:
+- Home Assistant on the same LAN as the HomeBase is the fastest path (host networking
+  in Docker). A station on another subnet or at another site connects through eufy's
+  servers (not behind a symmetric NAT). Firewall, reverse proxy and browsers:
   [Network and security](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/network.md).
 - Live view reads each camera from Home Assistant's own port on `127.0.0.1`: TLS on
   that port works, an `http: server_host` bound only to a LAN address does not
   ([stream access](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/network.md#stream-access)).
 - A eufy account that sees the HomeBase: the owner's, or one it is shared with. Use a
   separate account for Home Assistant: a sign-in elsewhere with the same account ends
-  Home Assistant's session.
+  Home Assistant's session, so accept the owner's invitation from Home Assistant's
+  repair, not on a phone.
 
 ## Installation
 

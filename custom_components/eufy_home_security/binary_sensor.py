@@ -55,6 +55,7 @@ from .const import (
     DISK_FORMATTING_KEY,
     DISK_PROBLEM_KEY,
     EMMC_PROBLEM_KEY,
+    EMMC_USABLE_KEY,
     MOTION_DETECTED_KEY,
     SOLAR_CHARGING_KEY,
     STORAGE_PROBLEM_KEY,
@@ -89,6 +90,7 @@ class EufyStorageBinaryDescription(BinarySensorEntityDescription):
 
     part: StoragePart
     value_fn: Callable[[StorageMedium], bool | None]
+    on_status_record: bool = False
 
 
 def _problem(medium: StorageMedium) -> bool | None:
@@ -127,12 +129,25 @@ def _formatting_sensor(part: StoragePart, key: str) -> EufyStorageBinaryDescript
     )
 
 
+def _usable(medium: StorageMedium) -> bool | None:
+    """On while the library reports the medium usable; None without a status (no entity)."""
+    return medium.usable
+
+
 # All DIAGNOSTIC, built per part. The eMMC has no formatting sensor: its record
-# (HomeBase 3) carries no ``parted_status``.
+# (HomeBase 3) carries no ``parted_status``. "Usable" exists only where the record
+# carries a status group (a device's status answer), never on a 1307 or 55000 record.
 STORAGE_BINARY_SENSORS: Final = (
     _problem_sensor(StoragePart.DISK, DISK_PROBLEM_KEY),
     _formatting_sensor(StoragePart.DISK, DISK_FORMATTING_KEY),
     _problem_sensor(StoragePart.EMMC, EMMC_PROBLEM_KEY),
+    EufyStorageBinaryDescription(
+        key=EMMC_USABLE_KEY,
+        translation_key=EMMC_USABLE_KEY,
+        part=StoragePart.EMMC,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_usable,
+    ),
 )
 
 

@@ -2,11 +2,24 @@
 
 ## LAN
 
-- Home Assistant must be on the **same L2 network segment** as every HomeBase. It
-  finds stations by UDP broadcast to port 32108 and opens UDP sessions to them; this
-  does not work across a router or a VPN.
+- The fastest path is Home Assistant on the **same L2 network segment** as every
+  HomeBase: it finds stations by UDP broadcast to port 32108 and opens UDP sessions to
+  them.
+- A station LAN discovery does not reach (another subnet, another site) connects
+  through **eufy's rendezvous servers**, as the eufy app does: the servers name the
+  station's addresses and the session is the same as on the LAN (commands, settings,
+  stills, live video). A HomeBase or mains camera tries them after one LAN attempt
+  without a reply, so its first connect takes about 6 s longer; once a link came
+  through them or while its connection key is still cached, and for a battery camera
+  always, from the first attempt. It needs a working eufy session (the station's
+  connection key comes from eufy) and outbound UDP 32100-32102 to eufy's servers. At
+  another site both routers must allow UDP hole punching: a symmetric NAT blocks it,
+  and there is no relay. Checked with standalone cameras: a mains camera on another
+  subnet behind a router and a battery camera at another site; a HomeBase off the LAN
+  is not tested.
 - **Home Assistant Container**: use `network_mode: host`. A bridge network does not
-  see the LAN broadcast.
+  see the LAN broadcast: its stations then connect through eufy's servers, slower and
+  only while the internet is up.
 - Give every HomeBase and standalone camera a **fixed IP** (a DHCP reservation on the
   router).
 
@@ -17,11 +30,27 @@
 | Home Assistant → station | UDP 32108, then UDP to the station | discovery, every local command, stills, live video |
 | station → Home Assistant | UDP from a random high port, new every session | replies on the same session |
 | Home Assistant → internet | HTTPS to `*.eufy.com`, `security-app.eufylife.com` and `security-app-eu.eufylife.com` | sign-in, device list, device keys, session check |
-| Home Assistant → internet | UDP 32100 to eufy's rendezvous servers | waking a standalone battery camera |
+| Home Assistant → internet | UDP 32100-32102 to eufy's rendezvous servers | connecting a station LAN discovery does not reach, and waking a battery camera |
 | Home Assistant → internet | HTTPS to `*.google.com`, `*.googleapis.com` and `app-push-*.eufy.com`; TCP 5228 to `mtalk.google.com` | [Cloud push](usage.md#cloud-push) only |
 
 A host firewall that filters inbound UDP must allow **all UDP from each station's
 address**: the station's source port cannot be predicted.
+
+A HomeBase or mains camera on Home Assistant's own network whose replies that firewall
+drops still connects: the link is set up through eufy's servers, about 2.5 s later, and
+commands and video stay on the LAN. But each reconnect then needs the internet and a
+working eufy session. The repair **eufy stations on this network connect through eufy's
+servers** names each such station with its address; it clears after the next link that
+comes up over the LAN, so reload the integration after changing the firewall. A station
+that answers the local search later than 2.5 s can show it once without a firewall in
+the way; it then clears at its next link. Ignore it to keep that path; the ignore lasts
+until the account is removed or disabled in Home Assistant.
+
+A station reached through eufy's servers needs no inbound rule when every filter on the
+way (the host firewall and the router) admits replies by connection tracking: its
+answers return as replies to Home Assistant's own packets. A stateless filter still
+needs the station's UDP admitted, as above. A router that drops new connections from
+an IoT network to Home Assistant does not block this path.
 
 ## Reverse proxy
 
@@ -69,12 +98,19 @@ location /api/hls/ {
 ## eufy account
 
 - The account must see the HomeBase: the owner's, or one the owner shared it with
-  in the eufy app. A shared home shows only after the invitation is accepted in the
-  eufy app, signed in with that account; until then the repair **eufy invitation not
-  accepted** names it.
+  in the eufy app. A shared home or device shows only after the invitation is
+  accepted; while the account lists no devices, the repair **eufy invitation not
+  accepted** names it. Its **Fix** accepts the invitation from Home Assistant, with
+  the code the sender shared when eufy asks for one, or looks for the devices again
+  after you accepted it in the eufy app signed in with that account. Signing Home
+  Assistant's account in on a phone can end Home Assistant's session; accepting from
+  the repair avoids that. Once a shared device is listed, the repair no longer names
+  other open invitations: accept them all before finishing. Accepting is tested with
+  a device invitation that needed a code; a home invitation is accepted the way the
+  eufy app does it, not yet tested.
 - A sign-in from another client ends the earlier session of the same account. Give
-  Home Assistant its own account, shared from the owner's app; share devices added
-  later again.
+  Home Assistant its own account, shared from the owner's app, and accept the
+  invitation from the repair; share devices added later again.
 - eufy allows only a few sign-ins per account per day and locks the account for
   24 hours after repeated failures. Home Assistant signs in only at setup and on
   **Reconfigure**.

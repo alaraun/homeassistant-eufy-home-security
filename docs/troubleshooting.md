@@ -27,7 +27,11 @@ in `configuration.yaml` (above) for the full request trail.
 
 ## Diagnostics
 
-**⋮ → Download diagnostics** on the integration entry: session health, LAN warnings,
+**⋮ → Download diagnostics** on the integration entry: session health (in each station's
+`session`, `connect_path` and `connects_by_path` say whether its links come up on the
+LAN, `lan`, or through eufy's servers, `rendezvous`, and `lan_reply_blocked` whether a
+station on Home Assistant's network needed eufy's servers because its LAN reply did not
+arrive), LAN warnings,
 storage figures, event-video copy counters (`recording_sync`), cloud push state
 (`push`), whether the security mode in force sends each device's detections
 (`detection_delivery`), options, `models` (how the library knows each product code; see
@@ -52,13 +56,14 @@ an account where no device was found too.
 | eufy sends no key for a station | eufy answers for the key number the station uses but without the key, so it cannot connect; its entities are unavailable; signing in does not help | reload; asked again at most once an hour otherwise. If it stays, open an issue with the diagnostics download |
 | eufy serves no usable key for a station | eufy serves no key for the station's connection method, so it cannot connect; its entities are unavailable; fetching again or signing in does not help | open an issue with the diagnostics download |
 | No eufy devices found | no eufy region lists a device for the account | check the account sees the devices in the eufy app and the **eufy sign-in country** option matches the country the app signs in with, add the country of anyone who shared a home with it as an extra country (experimental; [network.md](network.md#eufy-sign-in-country)), or turn on **Look for devices under every sign-in country on each refresh**, press **Refresh device list**; see [network.md](network.md#eufy-regions). Still none: open an issue with the diagnostics download |
-| eufy invitation not accepted | the account lists no devices and has an invitation it has not accepted; the repair names the home and who sent it | accept it in the eufy app, signed in with this account, then **Fix**: Home Assistant reloads and asks eufy once more for the devices |
+| eufy invitation not accepted | the account lists no devices and has an invitation it has not accepted; the repair names the home or device and who sent it | **Fix** → **Accept an invitation here**: a code field shows when the sender protected the invitation, and Home Assistant then reloads and asks eufy once more for the devices. Or accept it in the eufy app, signed in with this account, then **Fix** → look for the devices again. See [network.md](network.md#eufy-account) |
 | eufy station not supported | eufy lists a station whose P2P id local connections do not accept; the eufy app does not connect to it locally either. The repair names it by its model and last four serial characters. It and its paired devices are left out; the account's other stations work | none in Home Assistant; it is checked again on every reload and **Refresh device list** |
 | eufy station needs WebRTC | eufy lists a station the eufy app reaches only over its WebRTC connection (decided per station as the eufy app does, e.g. the HomeBase Professional S1 T9000 or the NVR T8N00), which the integration does not support yet. It and its paired devices are left out, named by model and last four serial characters; the account's other stations work | none in Home Assistant; it is checked again on every reload and **Refresh device list** |
 | eufy device not supported | eufy lists a device whose serial number is not only letters and digits; it is left out (a station with its paired devices) | none in Home Assistant; if the device shows in the eufy app, open an issue with the diagnostics download |
 | Camera event history is not kept | no host directory mounted at `/media` (Container) | see [usage.md](usage.md#event-history) |
 | eufy detections need cloud push | cloud push is off, and a station does not send its cameras' detections over the LAN (a standalone camera, a HomeBase 2, a model not yet checked); their detection sensors stay off | **Fix** switches cloud push on and reloads; or ignore it to leave push off; see [usage.md](usage.md#cloud-push) |
 | No detections from some cameras in a mode | the security mode in force has the **Notification** action off for the cameras it names, so the station sends none of their detections while that mode is in force; they keep recording. Not raised while disarmed | in the eufy app: Security mode → the mode → each camera → Notification on (also notifies your phone); see [usage.md](usage.md#detections-in-the-security-mode). Clears when a mode that sends them is in force or the setting changes. To keep the mode silent, ignore it: the ignore applies to that mode only, and is lost when the mode leaves and comes back and on every restart or reload (Home Assistant forgets an ignored repair once it is withdrawn), so the repair shows again then. To turn it off for every mode, switch off the option **Repair when a security mode holds detections back** ([usage.md](usage.md#options)) |
+| eufy stations on this network connect through eufy's servers | a station on Home Assistant's own network does not get its replies to the local search through, so each link is set up through eufy's servers; commands and video stay on the LAN, but a reconnect needs the internet. The repair names each station with its address | allow all UDP from that address in the firewall on the Home Assistant host, then reload the integration; see [network.md](network.md#firewall). Clears after the next link over the LAN; ignore it to keep the path |
 | eufy cloud push is not running | cloud push is on but not receiving; detections of standalone cameras and a HomeBase 2 are late or missing | retries by itself; check internet access and the log, or switch the option off; see [usage.md](usage.md#cloud-push) |
 
 ## Setting errors
@@ -80,6 +85,15 @@ an account where no device was found too.
    detection types).
 4. Still nothing: open an issue with the diagnostics download (it has
    `detection_delivery` per device) and a debug log of a detection.
+
+## A station is unavailable
+
+The log names it: `Station T8030***1234 did not come up (StationUnreachableError)`. A
+station on the LAN answers LAN discovery; one on another subnet or at another site is
+reached through eufy's servers, which needs a working eufy session (the station's
+connection key comes from eufy) and outbound UDP 32100-32102 to eufy's servers; see
+[network.md](network.md#lan). The diagnostics' `connect_path` shows which path the last
+link took.
 
 ## Known limitations
 

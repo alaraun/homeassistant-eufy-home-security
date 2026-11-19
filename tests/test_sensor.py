@@ -26,9 +26,10 @@ from conftest import (
 from eufy_home_security import EufySecurity, Station, entity_unique_id
 from eufy_home_security.devices import Setting, model_for_serial
 from eufy_home_security.devices.model_settings import settings_of
-from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
+from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation, camera_device
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.update import DOMAIN as UPDATE_DOMAIN
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_DEVICE_CLASS,
     ATTR_UNIT_OF_MEASUREMENT,
@@ -86,6 +87,13 @@ def _set_cloud_firmware(cloud: FakeCloud, serial: str, firmware: str) -> None:
     raise AssertionError(f"{serial} is not in the fake cloud's device list")
 
 
+def _registry_model(hass: HomeAssistant, entry: ConfigEntry, serial: str) -> str | None:
+    """The ``model`` of the device registered for ``serial``."""
+    device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, serial), entry.entry_id)
+    assert device is not None, serial
+    return device.model
+
+
 def _entity_id_or_none(hass: HomeAssistant, serial: str, key: str) -> str | None:
     """The sensor of ``key`` on ``serial``, or None when no such entity was made."""
     return er.async_get(hass).async_get_entity_id(
@@ -103,19 +111,18 @@ async def test_station_diagnostics_are_diagnostic_sensors(
     """The station's firmware, eMMC use and model are diagnostic sensors.
 
     Each one is built from the library's typed state, and each is a diagnostic
-    reading rather than a control.
+    reading rather than a control. The model is the station device's ``model``.
     """
     add_motion_sensor(fake_station, fake_cloud)
     fake_station.params[_STATION_BLOCK][_EMMC_USED_PARAM] = "37"
     entry = await set_up_warm(hass, seed_warm_cache)
 
-    model = model_for_serial(SYNTHETIC.station_sn)
-    assert model is not None
     registry = er.async_get(hass)
     for key, shown in (
         (FIRMWARE_KEY, _STATION_FIRMWARE),
         (EMMC_USED_KEY, "37"),
-        (MODEL_KEY, model.name),
+        (MODEL_KEY, _registry_model(hass, entry, SYNTHETIC.station_sn)),
+        (MODEL_KEY, "HomeBase 3"),
     ):
         entity_id = entity_id_for(hass, SENSOR_DOMAIN, SYNTHETIC.station_sn, key)
         assert state_of(hass, entity_id) == shown, key
@@ -164,11 +171,50 @@ async def test_camera_and_motion_sensor_diagnostics_with_the_firmware_fallback(
     sensor_firmware = entity_id_for(hass, SENSOR_DOMAIN, SENSOR_SN, FIRMWARE_KEY)
     assert state_of(hass, sensor_firmware) == "1.2.3"
 
-    for serial in (SYNTHETIC.camera_sn, SENSOR_SN):
-        model = model_for_serial(serial)
-        assert model is not None, serial
+    for serial, name in ((SYNTHETIC.camera_sn, "eufyCam 3"), (SENSOR_SN, "Motion Sensor")):
         entity_id = entity_id_for(hass, SENSOR_DOMAIN, serial, MODEL_KEY)
-        assert state_of(hass, entity_id) == model.name, serial
+        assert state_of(hass, entity_id) == name, serial
+        assert _registry_model(hass, entry, serial) == name, serial
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize(
+    ("serial", "product_code", "name"),
+    [
+        # The serial makes this T814X an eufyCam C36; the prefix alone names a C37.
+        ("T814XZ5000000001", None, "eufyCam C36"),
+        # The cloud record's product code names one of the prefix's two products.
+        ("T8124P0000000001", "T8124R", "SoloCam S40"),
+    ],
+    ids=["by-serial", "by-product-code"],
+)
+async def test_a_unit_shows_its_own_product_name_on_device_and_sensor(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    serial: str,
+    product_code: str | None,
+    name: str,
+) -> None:
+    """The Model sensor equals its device's ``model``: the unit's own product name, not
+    the name of its serial prefix."""
+    paired = camera_device(serial, station_sn=fake_station.serial, channel=_SENSOR_CHANNEL)
+    if product_code is not None:
+        paired["device_new_pn"] = product_code
+    fake_cloud.devices.append(paired)
+    fake_station.params[_SENSOR_CHANNEL] = {_BATTERY_PARAM: "80"}
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    entity_id = entity_id_for(hass, SENSOR_DOMAIN, serial, MODEL_KEY)
+    assert state_of(hass, entity_id) == name
+    assert _registry_model(hass, entry, serial) == name
+    base = model_for_serial(serial)
+    assert base is not None
+    assert base.name != name, "the prefix alone names another product"
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
@@ -182,7 +228,8 @@ async def test_a_device_dropped_from_the_cloud_list_keeps_its_snapshot_firmware(
     seed_warm_cache: Callable[..., None],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A device the paired list dropped keeps the firmware of the state read before.
+    """A device the paired list dropped keeps the firmware of the state read before; its
+    model reads unknown.
 
     Between a newer cloud list (``Station.update_sub_devices``) and its reload, the
     snapshot still has the device's block while ``station.sub_devices`` does not; a
@@ -195,6 +242,7 @@ async def test_a_device_dropped_from_the_cloud_list_keeps_its_snapshot_firmware(
     entry = await set_up_warm(hass, seed_warm_cache)
 
     sensor_firmware = entity_id_for(hass, SENSOR_DOMAIN, SENSOR_SN, FIRMWARE_KEY)
+    sensor_model = entity_id_for(hass, SENSOR_DOMAIN, SENSOR_SN, MODEL_KEY)
     station_firmware = entity_id_for(hass, SENSOR_DOMAIN, SYNTHETIC.station_sn, FIRMWARE_KEY)
     camera_battery = entity_id_for(hass, SENSOR_DOMAIN, SYNTHETIC.camera_sn, BATTERY_KEY)
     assert state_of(hass, sensor_firmware) == "1.2.3"
@@ -214,6 +262,8 @@ async def test_a_device_dropped_from_the_cloud_list_keeps_its_snapshot_firmware(
     await hass.async_block_till_done()
 
     assert state_of(hass, sensor_firmware) == "1.2.3"
+    # No cloud record, no product name: unknown until the reload removes the device.
+    assert state_of(hass, sensor_model) == STATE_UNKNOWN
     assert [record.getMessage() for record in caplog.records] == []
     # The fan-out finished: the rest of the station's entities still have their values.
     assert state_of(hass, station_firmware) == _STATION_FIRMWARE

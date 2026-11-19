@@ -34,12 +34,13 @@ from homeassistant.helpers.typing import StateType
 from eufy_home_security import (
     DetectionDelivery,
     DetectionDeliveryReport,
+    MediumState,
     StationState,
     StorageMedium,
     SubDeviceState,
     guard_mode_label,
 )
-from eufy_home_security.devices import SettingKind, SettingUnit, model_for_serial
+from eufy_home_security.devices import SettingKind, SettingUnit
 
 from . import detections
 from .const import (
@@ -55,6 +56,7 @@ from .const import (
     DISK_USED_PERCENT_KEY,
     EMMC_FREE_KEY,
     EMMC_SIZE_KEY,
+    EMMC_STATE_KEY,
     EMMC_USED_KEY,
     EMMC_USED_SPACE_KEY,
     EMMC_WEAR_KEY,
@@ -102,9 +104,8 @@ def _emmc_used(entity: EufyDeviceEntity) -> StateType:
 
 
 def _station_model(entity: EufyDeviceEntity) -> StateType:
-    """The station's model name, as the library's own catalog names it."""
-    model = entity.coordinator.station.model
-    return model.name if model else None
+    """The station's product name: its device's ``model`` (``CloudDevice.model_name``)."""
+    return entity.coordinator.station.device.model_name
 
 
 def _battery(entity: EufyDeviceEntity) -> StateType:
@@ -124,12 +125,16 @@ def _signal_strength(entity: EufyDeviceEntity) -> StateType:
 
 
 def _device_model(entity: EufyDeviceEntity) -> StateType:
-    """The paired device's model name, from its serial's catalogued model."""
+    """The paired device's product name, per unit: its cloud record's ``model_name`` (its
+    device's ``model``). None while the record is gone from the station's list (the
+    reload that removes the device is pending)."""
     device = entity.device_state
     if device is None or device.serial is None:
         return None
-    model = model_for_serial(device.serial)
-    return model.name if model else None
+    for listed in entity.coordinator.station.devices:
+        if listed.device_sn == device.serial:
+            return listed.model_name
+    return None
 
 
 # Every description is DIAGNOSTIC: these are readings about the hardware, not
@@ -274,6 +279,7 @@ class EufyStorageDescription(SensorEntityDescription):
 
     part: StoragePart
     value_fn: Callable[[StorageMedium], StateType]
+    on_status_record: bool = False
 
 
 type _MediumRead = Callable[[StorageMedium], StateType]
@@ -287,7 +293,11 @@ def _gib_sensor(
     state_class: SensorStateClass | None = SensorStateClass.MEASUREMENT,
     enabled: bool = True,
 ) -> EufyStorageDescription:
-    """A size in GiB, the unit whose figures the eufy app shows (labelled "GB")."""
+    """A size in GiB, the unit whose figures the eufy app shows (labelled "GB").
+
+    An eMMC size is kept on a status record: it is None there while the device reports
+    no size (no card, a total of 0), and the entity shows unknown meanwhile.
+    """
     return EufyStorageDescription(
         key=key,
         translation_key=key,
@@ -299,7 +309,24 @@ def _gib_sensor(
         state_class=state_class,
         entity_registry_enabled_default=enabled,
         value_fn=read,
+        on_status_record=part is StoragePart.EMMC,
     )
+
+
+# The local medium's state: the library's ``MediumState`` while usable or not normal,
+# and ``not_usable`` for a normal status without a size (a total of 0).
+MEDIUM_NOT_USABLE: Final = "not_usable"
+EMMC_STATE_OPTIONS: Final = [*(state.value for state in MediumState), MEDIUM_NOT_USABLE]
+
+
+def _medium_state(medium: StorageMedium) -> StateType:
+    """``normal`` only while usable; None without a status (no entity)."""
+    state = medium.state
+    if state is None:
+        return None
+    if state is MediumState.NORMAL and not medium.usable:
+        return MEDIUM_NOT_USABLE
+    return state.value
 
 
 def _used_percent_sensor(part: StoragePart, key: str) -> EufyStorageDescription:
@@ -351,6 +378,8 @@ def _wear_sensor(part: StoragePart, key: str) -> EufyStorageDescription:
 #   station's ``emmc_used`` dump sensor shows it, which is also why used space is
 #   keyed ``emmc_used_space``. No temperature: ``emmc_info`` has no ``cur_temperate``.
 # - Recordings used/capacity: no app screen shows them; diagnostics download only.
+# - A device's status record (its local medium): used space, free and size, which show
+#   unknown while the device reports no size, and the medium's state.
 # A figure the part's first record does not carry gets no entity.
 STORAGE_SENSORS: Final = (
     _gib_sensor(StoragePart.DISK, DISK_USED_KEY, lambda medium: medium.used_gib),
@@ -374,6 +403,15 @@ STORAGE_SENSORS: Final = (
         enabled=False,
     ),
     _wear_sensor(StoragePart.EMMC, EMMC_WEAR_KEY),
+    EufyStorageDescription(
+        key=EMMC_STATE_KEY,
+        translation_key=EMMC_STATE_KEY,
+        part=StoragePart.EMMC,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        device_class=SensorDeviceClass.ENUM,
+        options=EMMC_STATE_OPTIONS,
+        value_fn=_medium_state,
+    ),
 )
 
 

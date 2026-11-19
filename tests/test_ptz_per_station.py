@@ -21,7 +21,7 @@ from custom_components.eufy_home_security.const import (
     REFRESH_PRESETS_KEY,
 )
 
-# A Battery Solo Cam 8172: its handler pans, tilts and zooms only behind a HomeBase.
+# An eufyCam S4 (T8172): its handler pans, tilts and zooms only behind a HomeBase.
 SN: Final = "T8172P0000000001"
 CHANNEL: Final = 0
 _PTZ_CAPABILITIES: Final = (Capability.PTZ_CONTROL, Capability.PTZ_PRESETS, Capability.PTZ_ZOOM)

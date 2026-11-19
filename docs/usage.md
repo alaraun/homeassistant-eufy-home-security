@@ -28,8 +28,8 @@ reloads the integration.
 
 ## Alarm panel
 
-- Arm Home, arm Away and disarm go to the HomeBase over the LAN; the panel shows the
-  new mode once the HomeBase confirms it.
+- Arm Home, arm Away and disarm go to the HomeBase directly, over its P2P session; the
+  panel shows the new mode once the HomeBase confirms it.
 - The panel shows Schedule and the Custom modes but does not set them.
 - The **Security mode** select of a HomeBase or standalone camera sets every mode it has
   except Off and Geofencing, Schedule and the Custom modes included, under their names
@@ -454,9 +454,21 @@ Rows an earlier release created for such a device are removed at setup.
 
 **Disk and eMMC** entities (used, free, size, used percentage, temperature, wear,
 problem, formatting) come from the HomeBase's storage record, read every 30 minutes.
-Each HomeBase gets only the figures its record carries: a HomeBase 2 reports sizes only,
-a HomeBase mini its eMMC only. A HomeBase that refuses the storage query gets none.
+Each HomeBase gets only the figures its record carries: a HomeBase 2 from firmware
+3.3.7.7 reports sizes only (below that, see the next paragraph), a HomeBase mini its
+eMMC only. A HomeBase that refuses the storage query gets none.
 An entity an earlier release created for a figure the HomeBase does not report is removed.
+
+A camera without a HomeBase (not a battery camera, which is never woken for it), a
+HomeBase 2 on firmware below 3.3.7.7 and the models T8001, T8002, T8020 and T8023 report
+their local medium, a microSD card or a built-in eMMC, as a status with a size. They
+get **eMMC used space**, **eMMC free** and **eMMC size** (off by default), named eMMC
+whatever the medium, **Local storage usable** (diagnostic binary sensor) and **Local
+storage** (diagnostic sensor: Normal, No card, Corrupted, Other problem, or Not usable
+for a normal status without a size). The state is the eufy app's meaning of the status
+for that model. While the device reports no size (no card) the sizes show unknown; a
+medium that is not usable but reports a size keeps its figures. They fill in without a
+reload once a card is in place.
 
 **Firmware update** entities also carry, when reported: `subsystem_firmware` on the
 HomeBase (version strings by parameter id; the subsystems are unnamed) and

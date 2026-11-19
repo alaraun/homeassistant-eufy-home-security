@@ -3,7 +3,8 @@
 eufy lists a device only to a login with the country it is held under, so the entry
 logs in with a country the user picks (Home Assistant's by default) and Home
 Assistant's time zone. An account that lists nothing is told about invitations it
-has not accepted, and the repair's fix asks every login scope again.
+has not accepted, and the repair's fix asks every login scope again (accepting from
+the repair itself: ``test_invite_accept.py``).
 """
 
 from __future__ import annotations
@@ -310,6 +311,9 @@ async def test_the_invitation_fix_rescans_and_sets_up_the_shared_station(
     issue_id = errors.pending_invites_issue_id(entry.entry_id)
 
     result = await manager.async_init(DOMAIN, data={"issue_id": issue_id})
+    assert result["type"] is FlowResultType.MENU
+    assert result["menu_options"] == ["pick", "confirm"]
+    result = await manager.async_configure(result["flow_id"], {"next_step_id": "confirm"})
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "confirm"
     placeholders = result["description_placeholders"]

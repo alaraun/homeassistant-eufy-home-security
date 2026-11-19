@@ -20,8 +20,10 @@ import hashlib
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from ipaddress import IPv4Network
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.components import network
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -180,6 +182,7 @@ def build_client(
     max_sessions: int = DEFAULT_STATION_SESSIONS,
     scan_regions: bool = False,
     country: str | Sequence[str] = "",
+    local_networks: Sequence[IPv4Network] | None = None,
 ) -> EufySecurity:
     """Build a ``EufySecurity`` on the account store: the single construction site.
 
@@ -197,6 +200,8 @@ def build_client(
     entry's option); a flow's client keeps the library default. ``country`` is the
     login country, or it and the extra ones (:func:`login_countries`); every client
     sends Home Assistant's time zone, as the eufy app sends the phone's.
+    ``local_networks`` are this host's networks (:func:`async_local_networks`), passed
+    only by entry setup; ``None`` leaves the library to read the host's interfaces.
     """
     return EufySecurity(
         async_get_clientsession(hass),
@@ -208,7 +213,26 @@ def build_client(
         scan_regions=scan_regions,
         country=country,
         timezone=hass.config.time_zone,
+        local_networks=local_networks,
     )
+
+
+async def async_local_networks(hass: HomeAssistant) -> list[IPv4Network] | None:
+    """This host's IPv4 networks from Home Assistant's network adapters, enabled or not,
+    loopback left out as the library's own interface reader does.
+
+    The library tells a station on one of them whose LAN reply does not arrive from one
+    beyond them. Home Assistant reads its adapters once at start, so an interface that
+    changes later counts from the next restart. ``None`` when no adapter has a non-loopback
+    IPv4 address: the library then reads the host's interfaces itself.
+    """
+    found: list[IPv4Network] = []
+    for adapter in await network.async_get_adapters(hass):
+        for address in adapter["ipv4"]:
+            net = IPv4Network(f"{address['address']}/{address['network_prefix']}", strict=False)
+            if not net.is_loopback and net not in found:
+                found.append(net)
+    return found or None
 
 
 def session_budget(options: Mapping[str, Any]) -> int:

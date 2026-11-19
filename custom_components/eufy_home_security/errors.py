@@ -61,6 +61,7 @@ from eufy_home_security import (
     LiveStreamLimitError,
     LoginChallengeError,
     LoginVerificationError,
+    PathWarning,
     PtzAction,
     PtzActionUnsupportedError,
     RateLimitedError,
@@ -76,7 +77,7 @@ from eufy_home_security import (
     redact_serial,
 )
 from eufy_home_security.cloud.const import LOGIN_BUDGET, LOGIN_BUDGET_WINDOW_SECONDS, scope_country
-from eufy_home_security.devices import Support
+from eufy_home_security.devices import Support, product_name
 
 from . import detections
 from .const import (
@@ -142,6 +143,7 @@ from .const import (
     EXC_STATION_UNREACHABLE,
     EXC_ZOOM_NEEDS_SINGLE_VIEW,
     EXC_ZOOM_UNSUPPORTED,
+    FIREWALL_DOCS_URL,
     ISSUE_ACCOUNT_ID_MISMATCH,
     ISSUE_CIPHER_KEY_MISSING,
     ISSUE_CIPHER_UNAVAILABLE,
@@ -150,6 +152,7 @@ from .const import (
     ISSUE_DEVICE_SERIAL_UNSUPPORTED,
     ISSUE_KEY_REJECTED,
     ISSUE_KEY_UNUSABLE,
+    ISSUE_LAN_REPLY_BLOCKED,
     ISSUE_LOGIN_BUDGET,
     ISSUE_LOGIN_LIMITED,
     ISSUE_LOGIN_LIMITED_NO_WAIT,
@@ -1443,10 +1446,29 @@ def pending_invites_issue_id(entry_id: str) -> str:
     return f"{ISSUE_PENDING_INVITES}_{entry_id}"
 
 
-def _invite_text(invite: CloudInvite) -> str:
-    """One invitation as the repair names it: the home, or the shared device's model."""
-    shared = f"“{invite.house_name}”" if invite.kind == "house" else invite.product_code or ""
+def invite_text(invite: CloudInvite) -> str:
+    """One invitation as the repair names it: the home, or the shared device's product
+    name as the device page shows it (its product code when the library has none)."""
+    if invite.kind == "house":
+        shared = f"“{invite.house_name}”"
+    else:
+        shared = product_name(invite.device_sn or "", invite.product_code or None) or (
+            invite.product_code or ""
+        )
     return f"{shared} from {invite.inviter}" if invite.inviter else shared
+
+
+def invites_text(invites: Iterable[CloudInvite]) -> str:
+    """The invitations as the repair lists them, ``; ``-separated."""
+    return "; ".join(invite_text(invite) for invite in invites)
+
+
+def invite_choice_label(invite: CloudInvite) -> str:
+    """One invitation as the repair's picker shows it: :func:`invite_text`, plus the
+    device's redacted serial, so two shared devices of one model differ."""
+    if invite.kind == "device" and invite.device_sn:
+        return f"{invite_text(invite)} ({redact_serial(invite.device_sn)})"
+    return invite_text(invite)
 
 
 def sync_pending_invites_issue(
@@ -1455,9 +1477,9 @@ def sync_pending_invites_issue(
     """Show the invitations the account has not accepted; withdraw the issue when none.
 
     ``None`` (the invitations could not be read) leaves the issue as it is. Fixable:
-    the fix asks every login scope again after the user accepted in the eufy app.
-    Not persistent, so the home names and inviters it shows are never stored or put
-    in a diagnostics download.
+    the fix accepts an invitation, or asks every login scope again after the user
+    accepted in the eufy app (``repairs.PendingInvitesFix``). Not persistent, so the
+    home names and inviters it shows are never stored or put in a diagnostics download.
     """
     if invites is None:
         return
@@ -1476,7 +1498,7 @@ def sync_pending_invites_issue(
         translation_key=ISSUE_PENDING_INVITES,
         translation_placeholders={
             "account": account_label(entry),
-            "invites": "; ".join(_invite_text(invite) for invite in invites),
+            "invites": invites_text(invites),
         },
     )
 
@@ -1569,6 +1591,63 @@ def sync_push_needed_issue(
             "stations": ", ".join(sorted(needing)),
         },
     )
+
+
+def lan_reply_blocked_issue_id(entry_id: str) -> str:
+    """The account's LAN-reply-blocked issue: one per entry."""
+    return f"{ISSUE_LAN_REPLY_BLOCKED}_{entry_id}"
+
+
+def sync_lan_reply_blocked_issue(
+    hass: HomeAssistant, entry: ConfigEntry[Any], stations: Iterable[Station]
+) -> None:
+    """Name the served stations on Home Assistant's own network that connect only through
+    eufy's servers.
+
+    A station is named while its ``lan_path`` warns ``PathWarning.LAN_REPLY_BLOCKED``: it
+    is on one of this host's networks, but its last link (or the record kept from the last
+    run) needed a punch through eufy's servers because its LAN reply did not arrive
+    (library guide). Each by its device name and the address a firewall rule needs.
+    Not fixable, not persistent. With none named the issue is withdrawn, except an ignored
+    one, so an ignore lasts until the entry is removed (:func:`delete_lan_reply_blocked_issue`).
+    """
+    issue_id = lan_reply_blocked_issue_id(entry.entry_id)
+    blocked: list[str] = []
+    for station in stations:
+        path = station.lan_path
+        if PathWarning.LAN_REPLY_BLOCKED not in path.warnings:
+            continue
+        device = _station_device(hass, entry, station.serial)
+        label = (station_label(device) if device is not None else "") or redact_serial(
+            station.serial
+        )
+        address = path.station_ip
+        blocked.append(f"{label} ({address})" if address else label)
+    if not blocked:
+        issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+        if issue is None or issue.dismissed_version is None:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=False,
+        is_persistent=False,
+        severity=ir.IssueSeverity.WARNING,
+        # Not persistent also keeps the addresses out of the issue store and diagnostics.
+        translation_key=ISSUE_LAN_REPLY_BLOCKED,
+        translation_placeholders={
+            "account": account_label(entry),
+            "stations": ", ".join(sorted(blocked)),
+        },
+        learn_more_url=FIREWALL_DOCS_URL,
+    )
+
+
+def delete_lan_reply_blocked_issue(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:
+    """Delete the entry's LAN-reply-blocked issue, ignored or not."""
+    ir.async_delete_issue(hass, DOMAIN, lan_reply_blocked_issue_id(entry.entry_id))
 
 
 def variant_reset_issue_id(entry_id: str) -> str:

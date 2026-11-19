@@ -215,15 +215,15 @@ async def test_station_and_its_sub_devices_are_devices_under_the_station(
     assert station.config_entry_id == entry.entry_id
     assert camera.config_entry_id == entry.entry_id
     assert camera.serial_number == SYNTHETIC.camera_sn
-    # The model from the library's catalogue, for the station and its camera alike.
+    # The unit's product name from the library, for the station and its camera alike.
     assert (station.manufacturer, station.model, station.model_id) == (
         "eufy",
-        "HomeBase 3 (S380)",
+        "HomeBase 3",
         "T8030",
     )
     assert (camera.manufacturer, camera.model, camera.model_id) == (
         "eufy",
-        "eufyCam 3 (S330)",
+        "eufyCam 3",
         "T8160",
     )
 

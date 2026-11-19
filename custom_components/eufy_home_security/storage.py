@@ -177,6 +177,8 @@ class StorageDescription(Protocol):
     def part(self) -> StoragePart: ...
     @property
     def value_fn(self) -> Callable[[StorageMedium], object]: ...
+    @property
+    def on_status_record(self) -> bool: ...
 
 
 def reported_descriptions[DescT: StorageDescription](
@@ -186,7 +188,10 @@ def reported_descriptions[DescT: StorageDescription](
 
     A figure the record lacks (a HomeBase 2's has sizes only, a standalone camera's eMMC
     no health) gets no entity, and the row an earlier release registered for it is
-    removed from ``domain``, this entry's rows only.
+    removed from ``domain``, this entry's rows only. A status record (a device's
+    ``SDINFO_EX`` answer: it has a status group) also keeps the descriptions marked
+    ``on_status_record``: its sizes are None while the device reports no size (no card,
+    a total of 0), and those entities show unknown until it reports one.
     """
     medium = part.medium(coordinator.data)
     reported: list[DescT] = []
@@ -194,7 +199,10 @@ def reported_descriptions[DescT: StorageDescription](
     for description in descriptions:
         if description.part is not part:
             continue
-        if medium is not None and description.value_fn(medium) is not None:
+        if medium is not None and (
+            description.value_fn(medium) is not None
+            or (description.on_status_record and medium.status_group is not None)
+        ):
             reported.append(description)
         else:
             missing.append(description.key)

@@ -14,7 +14,7 @@ on an entry that is not loaded aborts.
 from __future__ import annotations
 
 import logging
-from typing import cast
+from typing import Final, cast
 
 import probatio as vol
 from homeassistant.components.repairs import (
@@ -23,11 +23,27 @@ from homeassistant.components.repairs import (
     RepairsFlowResult,
 )
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.selector import (
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 
-from eufy_home_security import EufySecurityError
+from eufy_home_security import (
+    CloudInvite,
+    EufySecurityError,
+    InviteCodeError,
+    NoCachedSessionError,
+    SessionReplacedError,
+    UnsupportedError,
+)
 
 from . import (
     async_reset_variant_rows,
@@ -49,6 +65,10 @@ from .const import (
 from .runtime import EufyConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+
+# The pending-invitations fix's form fields: the chosen invitation, the inviter's code.
+_INVITATION: Final = "invitation"
+_CODE: Final = "code"
 
 
 def _loaded_entry(hass: HomeAssistant, entry_id: str) -> EufyConfigEntry | None:
@@ -165,45 +185,205 @@ class KeyRejectedFix(RepairsFlow):
 
 
 class PendingInvitesFix(RepairsFlow):
-    """Ask every login scope again once the user accepted an invitation in the eufy app.
+    """Accept a pending eufy invitation here, or look for the shared devices again once
+    the user accepted it in the eufy app.
 
-    On confirmation the entry is reloaded with one rescan at its setup
-    (``runtime.request_rescan_at_setup``): every login scope is asked for its devices,
-    including one that listed none before, and the invitations are read again. The
-    fix itself sends nothing; a scope whose session lapsed costs a sign-in at setup.
+    Opening the fix reads the invitations afresh through the loaded client (login-free);
+    with none left, or none readable, it opens on the look-again confirmation. An
+    accept goes through the library, which checks an inviter's code on this host and
+    sends nothing when it is missing or wrong; the code field shows only for an
+    invitation that needs one. Looking again, finishing, and closing the fix after an
+    accept each reload the entry once with one rescan at its setup
+    (``runtime.request_rescan_at_setup``): every login scope is asked for its devices
+    and the invitations are read again; a scope whose session lapsed costs a sign-in
+    at setup. An entry that is not loaded is not set up by this; its next setup
+    rescans. Home names, inviters and codes are never logged.
     """
 
     def __init__(self, entry_id: str) -> None:
         self._entry_id = entry_id
+        self._invites: list[CloudInvite] = []
+        self._chosen: CloudInvite | None = None
+        self._accepted = False
+        self._accepting = False
+        self._removed = False
+
+    def _placeholders(self) -> dict[str, str]:
+        """The account's label and the open invitations: the ones read, else the issue's."""
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        if self._invites:
+            invites = errors.invites_text(self._invites)
+        else:
+            issue = ir.async_get(self.hass).async_get_issue(
+                DOMAIN, errors.pending_invites_issue_id(self._entry_id)
+            )
+            stored = (issue.translation_placeholders if issue is not None else None) or {}
+            invites = stored.get("invites", "")
+        return {
+            "account": errors.account_label(entry) if entry is not None else "",
+            "invites": invites,
+        }
+
+    def _reload(self) -> None:
+        """Ask every login scope once at the entry's next setup; reload it when it runs,
+        is being set up or waits to retry, never setting up an entry the user unloaded.
+        Nothing while Home Assistant stops."""
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        if entry is None or self.hass.is_stopping:
+            return
+        runtime.request_rescan_at_setup(self.hass, self._entry_id)
+        if entry.state in (
+            ConfigEntryState.LOADED,
+            ConfigEntryState.SETUP_RETRY,
+            ConfigEntryState.SETUP_IN_PROGRESS,
+        ):
+            self.hass.config_entries.async_schedule_reload(self._entry_id)
+
+    @callback
+    def async_remove(self) -> None:
+        """After an accept, finished or closed: reload, so the shared devices are listed.
+
+        Closed while an accept is still running, :meth:`_async_accept` reloads when it
+        ends, so the reload never closes the client an accept is using.
+        """
+        self._removed = True
+        if self._accepted and not self._accepting:
+            self._reload()
+
+    async def _async_accept(
+        self, entry: EufyConfigEntry, invite: CloudInvite, code: str | None
+    ) -> None:
+        """Accept through the entry's client; reload at the end when the fix was closed
+        meanwhile and something was accepted."""
+        self._accepting = True
+        try:
+            await entry.runtime_data.eufy.async_accept_invite(invite, code=code)
+            self._accepted = True
+        finally:
+            self._accepting = False
+            if self._removed and self._accepted:
+                self._reload()
 
     async def async_step_init(self, user_input: dict[str, str] | None = None) -> RepairsFlowResult:
-        """Open straight on the confirmation."""
-        return await self.async_step_confirm()
+        """Read the invitations; offer to accept one here or to look again."""
+        entry = _loaded_entry(self.hass, self._entry_id)
+        if entry is None:
+            return self.async_abort(reason="entry_not_loaded")
+        self._invites = list(await runtime.async_pending_invites(entry.runtime_data.eufy) or [])
+        if not self._invites:
+            return await self.async_step_confirm()
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["pick", "confirm"],
+            description_placeholders=self._placeholders(),
+        )
+
+    async def async_step_pick(self, user_input: dict[str, str] | None = None) -> RepairsFlowResult:
+        """Choose the invitation to accept; a single one is taken without asking."""
+        if len(self._invites) == 1:
+            self._chosen = self._invites[0]
+            return await self.async_step_accept()
+        if user_input is not None:
+            self._chosen = self._invites[int(user_input[_INVITATION])]
+            return await self.async_step_accept()
+        options = [
+            SelectOptionDict(value=str(index), label=errors.invite_choice_label(invite))
+            for index, invite in enumerate(self._invites)
+        ]
+        return self.async_show_form(
+            step_id="pick",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(_INVITATION): SelectSelector(
+                        SelectSelectorConfig(options=options, mode=SelectSelectorMode.LIST)
+                    )
+                }
+            ),
+            description_placeholders=self._placeholders(),
+        )
+
+    async def async_step_accept(
+        self, user_input: dict[str, str] | None = None
+    ) -> RepairsFlowResult:
+        """Accept the chosen invitation, with the inviter's code when it needs one."""
+        invite = self._chosen
+        entry = _loaded_entry(self.hass, self._entry_id)
+        if invite is None or entry is None:
+            return self.async_abort(reason="entry_not_loaded")
+        form_errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                await self._async_accept(entry, invite, user_input.get(_CODE) or None)
+            except InviteCodeError as err:
+                form_errors[_CODE] = "code_missing" if err.missing else "wrong_code"
+            except UnsupportedError:
+                return self.async_abort(reason="accept_in_app")
+            except NoCachedSessionError:
+                return self.async_abort(reason="session_lapsed")
+            except SessionReplacedError:
+                errors.raise_session_replaced_issue(self.hass, entry)
+                return self.async_abort(reason="session_replaced")
+            except EufySecurityError as err:
+                _LOGGER.warning(
+                    "Accepting a eufy invitation failed (%s); the repair stays open",
+                    type(err).__name__,
+                )
+                return self.async_abort(reason="accept_failed")
+            else:
+                self._invites = [other for other in self._invites if other is not invite]
+                if not self._invites:
+                    return await self.async_step_finish()
+                return await self.async_step_accepted()
+        schema = (
+            vol.Schema(
+                {
+                    vol.Required(_CODE): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                    )
+                }
+            )
+            if invite.needs_code
+            else vol.Schema({})
+        )
+        return self.async_show_form(
+            step_id="accept",
+            data_schema=schema,
+            errors=form_errors,
+            description_placeholders={
+                **self._placeholders(),
+                "invitation": errors.invite_choice_label(invite),
+            },
+        )
+
+    async def async_step_accepted(
+        self, user_input: dict[str, str] | None = None
+    ) -> RepairsFlowResult:
+        """One accepted, others open: accept another, or finish."""
+        return self.async_show_menu(
+            step_id="accepted",
+            menu_options=["pick", "finish"],
+            description_placeholders=self._placeholders(),
+        )
+
+    async def async_step_finish(
+        self, user_input: dict[str, str] | None = None
+    ) -> RepairsFlowResult:
+        """Done accepting; the reload follows when the flow is removed (:meth:`async_remove`)."""
+        return self.async_create_entry(data={})
 
     async def async_step_confirm(
         self, user_input: dict[str, str] | None = None
     ) -> RepairsFlowResult:
-        """Ask first, naming the invitations the issue shows; on submit, reload with one
-        rescan."""
+        """Ask first, naming the invitations; on submit, reload with one rescan."""
         if user_input is None:
-            entry = self.hass.config_entries.async_get_entry(self._entry_id)
-            issue = ir.async_get(self.hass).async_get_issue(
-                DOMAIN, errors.pending_invites_issue_id(self._entry_id)
-            )
-            placeholders = (issue.translation_placeholders if issue is not None else None) or {}
             return self.async_show_form(
                 step_id="confirm",
                 data_schema=vol.Schema({}),
-                description_placeholders={
-                    "account": errors.account_label(entry) if entry is not None else "",
-                    "invites": placeholders.get("invites", ""),
-                },
+                description_placeholders=self._placeholders(),
             )
-        entry = _loaded_entry(self.hass, self._entry_id)
-        if entry is None:
+        if _loaded_entry(self.hass, self._entry_id) is None:
             return self.async_abort(reason="entry_not_loaded")
-        runtime.request_rescan_at_setup(self.hass, entry.entry_id)
-        self.hass.config_entries.async_schedule_reload(entry.entry_id)
+        self._reload()
         return self.async_create_entry(data={})
 
 
