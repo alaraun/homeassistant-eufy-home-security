@@ -27,7 +27,9 @@ in `configuration.yaml` (above) for the full request trail.
 
 ## Diagnostics
 
-**⋮ → Download diagnostics** on the integration entry: session health, LAN warnings,
+**⋮ → Download diagnostics** on the integration entry: session health (in each station's
+`session`, `connect_path` and `connects_by_path` say whether its links come up on the
+LAN, `lan`, or through eufy's servers, `rendezvous`), LAN warnings,
 storage figures, event-video copy counters (`recording_sync`), cloud push state
 (`push`), whether the security mode in force sends each device's detections
 (`detection_delivery`), options, `models` (how the library knows each product code; see
@@ -80,6 +82,15 @@ an account where no device was found too.
    detection types).
 4. Still nothing: open an issue with the diagnostics download (it has
    `detection_delivery` per device) and a debug log of a detection.
+
+## A station is unavailable
+
+The log names it: `Station T8030***1234 did not come up (StationUnreachableError)`. A
+station on the LAN answers LAN discovery; one on another subnet or at another site is
+reached through eufy's servers, which needs a working eufy session (the station's
+connection key comes from eufy) and outbound UDP 32100 to eufy's servers; see
+[network.md](network.md#lan). The diagnostics' `connect_path` shows which path the last
+link took.
 
 ## Known limitations
 
