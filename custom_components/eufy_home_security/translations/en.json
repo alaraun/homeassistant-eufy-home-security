@@ -596,6 +596,16 @@
             "name": "Modes that send"
           }
         }
+      },
+      "emmc_state": {
+        "name": "Local storage",
+        "state": {
+          "normal": "Normal",
+          "no_card": "No card",
+          "corrupted": "Corrupted",
+          "other": "Other problem",
+          "not_usable": "Not usable"
+        }
       }
     },
     "select": {
@@ -660,6 +670,9 @@
       },
       "storage_problem": {
         "name": "Storage problem"
+      },
+      "emmc_usable": {
+        "name": "Local storage usable"
       }
     },
     "button": {

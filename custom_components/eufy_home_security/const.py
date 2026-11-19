@@ -155,6 +155,10 @@ EMMC_USED_SPACE_KEY: Final = "emmc_used_space"
 EMMC_FREE_KEY: Final = "emmc_free"
 EMMC_SIZE_KEY: Final = "emmc_size"
 EMMC_PROBLEM_KEY: Final = "emmc_problem"
+# A device's local medium (SD card or built-in eMMC) from its status answer: whether it
+# is usable, and the app's meaning of its status.
+EMMC_USABLE_KEY: Final = "emmc_usable"
+EMMC_STATE_KEY: Final = "emmc_state"
 # Power and storage state from the parameter dump, each the key of its unique id;
 # an entity exists once its device's state reports the field.
 CHARGING_KEY: Final = "charging"

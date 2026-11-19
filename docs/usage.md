@@ -458,6 +458,15 @@ Each HomeBase gets only the figures its record carries: a HomeBase 2 reports siz
 a HomeBase mini its eMMC only. A HomeBase that refuses the storage query gets none.
 An entity an earlier release created for a figure the HomeBase does not report is removed.
 
+A camera without a HomeBase (not a battery camera, which is never woken for it), a
+HomeBase 2 on firmware below 3.3.7.7 and the models T8001, T8002, T8020 and T8023 report
+their local medium, a microSD card or a built-in eMMC, as a status with a size. They get **eMMC used space**, **eMMC free**, **eMMC size** (off by
+default), **Local storage usable** (diagnostic binary sensor) and **Local storage**
+(diagnostic sensor: Normal, No card, Corrupted, Other problem, or Not usable for a
+normal status without a size). The state is the eufy app's meaning of the status for
+that model. Without a usable medium the sizes show unknown, and they fill in once a
+card is in place.
+
 **Firmware update** entities also carry, when reported: `subsystem_firmware` on the
 HomeBase (version strings by parameter id; the subsystems are unnamed) and
 `siren_actions` on a camera (raw siren action per guard mode, keyed `away`, `home`,

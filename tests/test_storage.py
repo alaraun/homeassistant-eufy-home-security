@@ -61,6 +61,8 @@ from custom_components.eufy_home_security.const import (
     EMMC_FREE_KEY,
     EMMC_PROBLEM_KEY,
     EMMC_SIZE_KEY,
+    EMMC_STATE_KEY,
+    EMMC_USABLE_KEY,
     EMMC_USED_KEY,
     EMMC_USED_SPACE_KEY,
     EMMC_WEAR_KEY,
@@ -188,9 +190,10 @@ def test_the_storage_keys_are_pinned_per_part_and_collide_with_no_station_sensor
         "emmc_free",
         "emmc_size",
         "emmc_wear",
+        "emmc_state",
     }
     assert keys(STORAGE_BINARY_SENSORS, StoragePart.DISK) == {"disk_problem", "disk_formatting"}
-    assert keys(STORAGE_BINARY_SENSORS, StoragePart.EMMC) == {"emmc_problem"}
+    assert keys(STORAGE_BINARY_SENSORS, StoragePart.EMMC) == {"emmc_problem", "emmc_usable"}
     for descriptions in (STORAGE_SENSORS, STORAGE_BINARY_SENSORS):
         all_keys = [d.key for d in descriptions]
         assert len(all_keys) == len(set(all_keys))
@@ -275,6 +278,30 @@ async def test_a_figure_the_record_does_not_carry_gets_no_entity(
         assert _registered(hass, BINARY_SENSOR_DOMAIN, key) is None, key
     used = entity_id_for(hass, SENSOR_DOMAIN, SYNTHETIC.station_sn, DISK_USED_KEY)
     assert state_of(hass, used) == "14.16"
+
+    await _unload(hass, entry)
+
+
+async def test_a_homebase_emmc_without_sizes_gets_no_size_usable_or_state_entity(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A HomeBase record carries no status group: a size it lacks gets no entity (only a
+    device's status record keeps them), and no "usable" or state entity exists."""
+    for key in ("disk_size", "disk_used", "disk_nominal", "data_used_percent"):
+        fake_station.storage["emmc_info"].pop(key, None)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    medium = _storage(entry).data.emmc
+    assert medium is not None
+    assert medium.status_group is None
+    assert medium.size_mib is None
+
+    for key in (EMMC_USED_SPACE_KEY, EMMC_FREE_KEY, EMMC_SIZE_KEY, EMMC_STATE_KEY):
+        assert _registered(hass, SENSOR_DOMAIN, key) is None, key
+    assert _registered(hass, BINARY_SENSOR_DOMAIN, EMMC_USABLE_KEY) is None
+    assert _registered(hass, SENSOR_DOMAIN, EMMC_WEAR_KEY) is not None
 
     await _unload(hass, entry)
 
