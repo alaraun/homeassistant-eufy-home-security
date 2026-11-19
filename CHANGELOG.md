@@ -5,6 +5,13 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.17](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.16...v0.4.17) (2026-11-19)
+
+
+### Bug Fixes
+
+* **repairs:** the "eufy invitation not accepted" repair also names an invitation when the account already lists devices; press Refresh device list after one arrives ([87c006b](https://github.com/alaraun/homeassistant-eufy-home-security/commit/87c006bbebd6a8a6bcb01ec9141113c839e509be))
+
 ## [0.4.16](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.15...v0.4.16) (2026-11-19)
 
 
