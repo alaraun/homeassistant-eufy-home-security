@@ -232,6 +232,7 @@ class PendingInvitesFix(RepairsFlow):
         if entry is None or self.hass.is_stopping:
             return
         runtime.request_rescan_at_setup(self.hass, self._entry_id)
+        runtime.request_invites_at_setup(self.hass, self._entry_id)
         if entry.state in (
             ConfigEntryState.LOADED,
             ConfigEntryState.SETUP_RETRY,

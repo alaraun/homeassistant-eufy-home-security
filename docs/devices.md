@@ -145,6 +145,8 @@ account:
 1. Add the device to the HomeBase or account in the eufy app.
 2. If Home Assistant uses a shared account, share the new device to it as well.
 3. In Home Assistant, press **Refresh device list** on the **eufy account** device.
+   An invitation the shared account has not accepted then shows as the repair **eufy
+   invitation not accepted**; accept it there.
    A device under a sign-in country that listed none before needs the option **Look
    for devices under every sign-in country on each refresh** first; see
    [network.md](network.md#eufy-regions).

@@ -67,6 +67,10 @@ _LOGGER = logging.getLogger(__name__)
 CLAIMS: HassKey[StationClaims] = HassKey(f"{DOMAIN}_claims")
 # Entries whose next setup asks every login scope once (the login country changed).
 RESCAN_AT_SETUP: HassKey[set[str]] = HassKey(f"{DOMAIN}_rescan_at_setup")
+# Per entry id, the pending invitations last read, in memory only (entry ids are not
+# reused): a warm reload, which reads none, shows these again.
+LAST_INVITES: HassKey[dict[str, list[CloudInvite]]] = HassKey(f"{DOMAIN}_last_invites")
+INVITES_AT_SETUP: HassKey[set[str]] = HassKey(f"{DOMAIN}_invites_at_setup")
 
 _STORE_VERSION = 1
 
@@ -151,6 +155,44 @@ async def async_pending_invites(eufy: EufySecurity) -> list[CloudInvite] | None:
     except EufySecurityError as err:
         _LOGGER.debug("Pending eufy invitations not read: %s", type(err).__name__)
         return None
+
+
+async def async_read_invites(
+    hass: HomeAssistant, entry_id: str, eufy: EufySecurity
+) -> list[CloudInvite] | None:
+    """Read the pending invitations (:func:`async_pending_invites`) and remember a
+    readable answer for :func:`last_invites`; None when they cannot be read."""
+    invites = await async_pending_invites(eufy)
+    if invites is not None:
+        remember_invites(hass, entry_id, invites)
+    return invites
+
+
+def remember_invites(hass: HomeAssistant, entry_id: str, invites: list[CloudInvite]) -> None:
+    """Keep a readable answer as the entry's last read (:func:`last_invites`)."""
+    hass.data.setdefault(LAST_INVITES, {})[entry_id] = invites
+
+
+def last_invites(hass: HomeAssistant, entry_id: str) -> list[CloudInvite] | None:
+    """The invitations last read for the entry since Home Assistant started; None
+    when none were read."""
+    return hass.data.get(LAST_INVITES, {}).get(entry_id)
+
+
+def request_invites_at_setup(hass: HomeAssistant, entry_id: str) -> None:
+    """Make the entry's next setup read the invitations (a reload the user started);
+    the last read no longer stands, so a failed read shows none."""
+    hass.data.setdefault(INVITES_AT_SETUP, set()).add(entry_id)
+    hass.data.get(LAST_INVITES, {}).pop(entry_id, None)
+
+
+def take_invites_at_setup(hass: HomeAssistant, entry_id: str) -> bool:
+    """Whether this setup reads the invitations on request; the request is used up."""
+    pending = hass.data.get(INVITES_AT_SETUP)
+    if pending is None or entry_id not in pending:
+        return False
+    pending.discard(entry_id)
+    return True
 
 
 def station_claims(hass: HomeAssistant) -> StationClaims:
