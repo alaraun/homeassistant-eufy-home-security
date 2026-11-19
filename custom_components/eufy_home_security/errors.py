@@ -61,6 +61,7 @@ from eufy_home_security import (
     LiveStreamLimitError,
     LoginChallengeError,
     LoginVerificationError,
+    PathWarning,
     PtzAction,
     PtzActionUnsupportedError,
     RateLimitedError,
@@ -142,6 +143,7 @@ from .const import (
     EXC_STATION_UNREACHABLE,
     EXC_ZOOM_NEEDS_SINGLE_VIEW,
     EXC_ZOOM_UNSUPPORTED,
+    FIREWALL_DOCS_URL,
     ISSUE_ACCOUNT_ID_MISMATCH,
     ISSUE_CIPHER_KEY_MISSING,
     ISSUE_CIPHER_UNAVAILABLE,
@@ -150,6 +152,7 @@ from .const import (
     ISSUE_DEVICE_SERIAL_UNSUPPORTED,
     ISSUE_KEY_REJECTED,
     ISSUE_KEY_UNUSABLE,
+    ISSUE_LAN_REPLY_BLOCKED,
     ISSUE_LOGIN_BUDGET,
     ISSUE_LOGIN_LIMITED,
     ISSUE_LOGIN_LIMITED_NO_WAIT,
@@ -1582,6 +1585,62 @@ def sync_push_needed_issue(
             "stations": ", ".join(sorted(needing)),
         },
     )
+
+
+def lan_reply_blocked_issue_id(entry_id: str) -> str:
+    """The account's LAN-reply-blocked issue: one per entry."""
+    return f"{ISSUE_LAN_REPLY_BLOCKED}_{entry_id}"
+
+
+def sync_lan_reply_blocked_issue(
+    hass: HomeAssistant, entry: ConfigEntry[Any], stations: Iterable[Station]
+) -> None:
+    """Name the served stations on Home Assistant's own network that connect only through
+    eufy's servers.
+
+    A station is named while its ``lan_path`` warns ``PathWarning.LAN_REPLY_BLOCKED``: it
+    is on one of this host's networks, but its last link (or the record kept from the last
+    run) needed a punch through eufy's servers because its LAN reply did not arrive
+    (library guide). Each by its device name and the address a firewall rule needs.
+    Not fixable, not persistent. With none named the issue is withdrawn, except an ignored
+    one, so an ignore lasts until the entry is removed (:func:`delete_lan_reply_blocked_issue`).
+    """
+    issue_id = lan_reply_blocked_issue_id(entry.entry_id)
+    blocked: list[str] = []
+    for station in stations:
+        path = station.lan_path
+        if PathWarning.LAN_REPLY_BLOCKED not in path.warnings:
+            continue
+        device = _station_device(hass, entry, station.serial)
+        label = (station_label(device) if device is not None else "") or redact_serial(
+            station.serial
+        )
+        address = path.station_ip
+        blocked.append(f"{label} ({address})" if address else label)
+    if not blocked:
+        issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+        if issue is None or issue.dismissed_version is None:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=False,
+        is_persistent=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=ISSUE_LAN_REPLY_BLOCKED,
+        translation_placeholders={
+            "account": account_label(entry),
+            "stations": ", ".join(sorted(blocked)),
+        },
+        learn_more_url=FIREWALL_DOCS_URL,
+    )
+
+
+def delete_lan_reply_blocked_issue(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:
+    """Delete the entry's LAN-reply-blocked issue, ignored or not."""
+    ir.async_delete_issue(hass, DOMAIN, lan_reply_blocked_issue_id(entry.entry_id))
 
 
 def variant_reset_issue_id(entry_id: str) -> str:

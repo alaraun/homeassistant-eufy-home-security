@@ -12,6 +12,7 @@
     "http",
     "lovelace",
     "media_source",
+    "network",
     "stream"
   ],
   "documentation": "https://github.com/alaraun/homeassistant-eufy-home-security",

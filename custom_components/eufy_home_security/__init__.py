@@ -244,6 +244,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         max_sessions=runtime.session_budget(entry.options),
         scan_regions=entry.options.get(CONF_SCAN_REGIONS, False) is True,
         country=runtime.login_countries(hass, entry.options),
+        local_networks=await runtime.async_local_networks(hass),
     )
     # The cloud push start, once setup has started it (below).
     push_start: list[asyncio.Task[None]] = []
@@ -493,6 +494,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         (coordinator.station for coordinator in coordinators.values()),
         cloud_push=cloud_push,
     )
+    # From the record the last run kept; each link's ConnectionChanged decides again.
+    errors.sync_lan_reply_blocked_issue(
+        hass, entry, (coordinator.station for coordinator in coordinators.values())
+    )
 
     start_errors = await eufy.async_start(p2p=True, push=False)
 
@@ -630,8 +635,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> boo
 
     A successful unload deletes the entry's account-id-mismatch and cipher-unavailable
     issues, so a reload re-evaluates each station's stamps and asks for its key again;
-    with the entry disabled, the setting-version reset issue too (its fix needs the entry
-    loaded).
+    with the entry disabled, the setting-version reset and LAN-reply-blocked issues too
+    (a disabled entry never decides them again).
     A reconnect never clears a mismatch issue: the library reports a mismatch at
     most once per connection.
     """
@@ -644,6 +649,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> boo
         errors.delete_reload_scoped_issues(hass, entry)
         if entry.disabled_by is not None:
             errors.delete_variant_reset_issue(hass, entry)
+            errors.delete_lan_reply_blocked_issue(hass, entry)
     else:
         # The entry stays loaded with its entities listening: without this every
         # later push would go to the fallback bus event until a restart.
@@ -1178,7 +1184,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry[Any]) -> No
 
     Any account-id-mismatch or cipher-unavailable issue goes too: an entry whose
     setup failed was never unloaded, so nothing else deletes it. So does the
-    setting-version reset issue, which outlives an unload. The entry's cached
+    setting-version reset and LAN-reply-blocked issues, which outlive an unload. The entry's cached
     stills are deleted, and with the last entry the dashboard cards' resources. The
     record of the recordings copied into the history goes too; the files stay.
     """
@@ -1191,4 +1197,5 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry[Any]) -> No
         await card.async_remove_card_resource(hass)
     errors.sync_media_not_persistent_issue(hass, entry, None)
     errors.delete_variant_reset_issue(hass, entry)
+    errors.delete_lan_reply_blocked_issue(hass, entry)
     await async_forget_account(runtime.cache_store(hass, entry.data[CONF_EMAIL]))

@@ -15,6 +15,7 @@ import re
 import shlex
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import datetime, timedelta
+from ipaddress import IPv4Network
 from pathlib import Path
 from typing import Any, Final
 
@@ -303,6 +304,12 @@ def client_countries() -> list[str | list[str]]:
 
 
 @pytest.fixture
+def client_local_networks() -> list[Sequence[IPv4Network] | None]:
+    """The ``local_networks`` each client of ``built_clients`` was built with, in order."""
+    return []
+
+
+@pytest.fixture
 def client_options() -> dict[str, Any]:
     """Extra ``EufySecurity`` keyword arguments for every client ``built_clients`` builds."""
     return {}
@@ -314,6 +321,7 @@ def built_clients(
     fake_cloud: FakeCloud,
     fake_station: FakeStation,
     client_countries: list[str | list[str]],
+    client_local_networks: list[Sequence[IPv4Network] | None],
     client_options: dict[str, Any],
 ) -> list[EufySecurity]:
     """Replace ``runtime.build_client``; returns every client built, in order.
@@ -321,8 +329,8 @@ def built_clients(
     The replacement keeps Home Assistant's real account ``Store`` and forwards the
     caller's password as it is, ``None`` from setup included, never the testing
     helper's synthetic default. It sends Home Assistant's time zone, as the real one
-    does, records the login country in ``client_countries`` and passes
-    ``client_options`` on.
+    does, records the login country in ``client_countries`` and the host networks in
+    ``client_local_networks``, and passes ``client_options`` on.
     """
     built: list[EufySecurity] = []
 
@@ -335,6 +343,7 @@ def built_clients(
         max_sessions: int = DEFAULT_STATION_SESSIONS,
         scan_regions: bool = False,
         country: str | Sequence[str] = "",
+        local_networks: Sequence[IPv4Network] | None = None,
     ) -> EufySecurity:
         stamp_product_codes(fake_cloud)
         eufy = build_eufy_security(
@@ -348,10 +357,12 @@ def built_clients(
             scan_regions=scan_regions,
             country=country,
             timezone=hass.config.time_zone,
+            local_networks=local_networks,
             **client_options,
         )
         built.append(eufy)
         client_countries.append(country if isinstance(country, str) else list(country))
+        client_local_networks.append(local_networks)
         return eufy
 
     monkeypatch.setattr(runtime, "build_client", build)

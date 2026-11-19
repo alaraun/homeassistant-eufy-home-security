@@ -661,6 +661,12 @@ class EventRouter:
         if event.connected:
             # The key was accepted; the credentials notice stays.
             errors.clear_station_issues(self._hass, self._entry, event.station_sn)
+            # Each link sets the station's LAN-reply-blocked warning again.
+            errors.sync_lan_reply_blocked_issue(
+                self._hass,
+                self._entry,
+                (coordinator.station for coordinator in self._coordinators.values()),
+            )
         elif isinstance(event.error, KeyRejectedError):
             errors.raise_key_rejected_issue(self._hass, self._entry, event.station_sn)
         elif isinstance(event.error, CipherUnusableError):

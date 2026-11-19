@@ -35,6 +35,14 @@
 A host firewall that filters inbound UDP must allow **all UDP from each station's
 address**: the station's source port cannot be predicted.
 
+A HomeBase or mains camera on Home Assistant's own network whose replies that firewall
+drops still connects: the link is set up through eufy's servers, about 1.5 s later, and
+commands and video stay on the LAN. But each reconnect then needs the internet and a
+working eufy session. The repair **eufy stations on this network connect through eufy's
+servers** names each such station with its address; it clears after the next link that
+comes up over the LAN. Ignore it to keep that path; the ignore lasts until the account is
+removed from Home Assistant.
+
 A station reached through eufy's servers needs no inbound rule when every filter on the
 way (the host firewall and the router) admits replies by connection tracking: its
 answers return as replies to Home Assistant's own packets. A stateless filter still

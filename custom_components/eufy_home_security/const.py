@@ -111,6 +111,10 @@ PUSH_START_RETRY_MAX_SECONDS: Final = 30 * 60.0
 ISSUE_MEDIA_NOT_PERSISTENT: Final = "media_not_persistent"
 # Home Assistant's page on its media folder, linked from that issue.
 MEDIA_DOCS_URL: Final = "https://www.home-assistant.io/more-info/local-media/setup-media/"
+# The integration's firewall notes (the lan_reply_blocked repair's link).
+FIREWALL_DOCS_URL: Final = (
+    "https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/network.md#firewall"
+)
 # The first probe waits for the P2P starts to settle and keeps setup itself cloud-free.
 SESSION_PROBE_FIRST_DELAY_SECONDS: Final = 60
 # Four reads a day, next to the library's own 24 hourly ones on an account with an
@@ -391,6 +395,9 @@ ISSUE_DEVICE_SERIAL_UNSUPPORTED: Final = "device_serial_unsupported"
 # Controls of a setting's versions the eufy app does not use are on; fixable by a reset
 # to the app's defaults.
 ISSUE_VARIANT_RESET: Final = "variant_reset"
+# A station on Home Assistant's own network connects only through eufy's servers: its
+# replies to the LAN search do not arrive (a firewall drops them).
+ISSUE_LAN_REPLY_BLOCKED: Final = "lan_reply_blocked"
 
 # Camera snapshots. The camera entity's unique-id key; it has no name of its
 # own, the camera is its device.
