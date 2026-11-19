@@ -28,8 +28,8 @@ reloads the integration.
 
 ## Alarm panel
 
-- Arm Home, arm Away and disarm go to the HomeBase directly, over its P2P session; the panel shows the
-  new mode once the HomeBase confirms it.
+- Arm Home, arm Away and disarm go to the HomeBase directly, over its P2P session; the
+  panel shows the new mode once the HomeBase confirms it.
 - The panel shows Schedule and the Custom modes but does not set them.
 - The **Security mode** select of a HomeBase or standalone camera sets every mode it has
   except Off and Geofencing, Schedule and the Custom modes included, under their names
@@ -454,8 +454,9 @@ Rows an earlier release created for such a device are removed at setup.
 
 **Disk and eMMC** entities (used, free, size, used percentage, temperature, wear,
 problem, formatting) come from the HomeBase's storage record, read every 30 minutes.
-Each HomeBase gets only the figures its record carries: a HomeBase 2 reports sizes only,
-a HomeBase mini its eMMC only. A HomeBase that refuses the storage query gets none.
+Each HomeBase gets only the figures its record carries: a HomeBase 2 from firmware
+3.3.7.7 reports sizes only (below that, see the next paragraph), a HomeBase mini its
+eMMC only. A HomeBase that refuses the storage query gets none.
 An entity an earlier release created for a figure the HomeBase does not report is removed.
 
 A camera without a HomeBase (not a battery camera, which is never woken for it), a

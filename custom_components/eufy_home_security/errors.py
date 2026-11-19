@@ -77,7 +77,7 @@ from eufy_home_security import (
     redact_serial,
 )
 from eufy_home_security.cloud.const import LOGIN_BUDGET, LOGIN_BUDGET_WINDOW_SECONDS, scope_country
-from eufy_home_security.devices import Support
+from eufy_home_security.devices import Support, product_name
 
 from . import detections
 from .const import (
@@ -1447,8 +1447,14 @@ def pending_invites_issue_id(entry_id: str) -> str:
 
 
 def invite_text(invite: CloudInvite) -> str:
-    """One invitation as the repair names it: the home, or the shared device's model."""
-    shared = f"“{invite.house_name}”" if invite.kind == "house" else invite.product_code or ""
+    """One invitation as the repair names it: the home, or the shared device's product
+    name as the device page shows it (its product code when the library has none)."""
+    if invite.kind == "house":
+        shared = f"“{invite.house_name}”"
+    else:
+        shared = product_name(invite.device_sn or "", invite.product_code or None) or (
+            invite.product_code or ""
+        )
     return f"{shared} from {invite.inviter}" if invite.inviter else shared
 
 

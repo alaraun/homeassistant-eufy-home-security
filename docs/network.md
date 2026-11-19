@@ -18,7 +18,8 @@
   subnet behind a router and a battery camera at another site; a HomeBase off the LAN
   is not tested.
 - **Home Assistant Container**: use `network_mode: host`. A bridge network does not
-  see the LAN broadcast.
+  see the LAN broadcast: its stations then connect through eufy's servers, slower and
+  only while the internet is up.
 - Give every HomeBase and standalone camera a **fixed IP** (a DHCP reservation on the
   router).
 
@@ -40,9 +41,10 @@ drops still connects: the link is set up through eufy's servers, about 2.5 s lat
 commands and video stay on the LAN. But each reconnect then needs the internet and a
 working eufy session. The repair **eufy stations on this network connect through eufy's
 servers** names each such station with its address; it clears after the next link that
-comes up over the LAN. A station that answers the local search later than 2.5 s can show
-it once without a firewall in the way; it then clears at its next link. Ignore it to keep that path; the ignore lasts until the account is
-removed or disabled in Home Assistant.
+comes up over the LAN, so reload the integration after changing the firewall. A station
+that answers the local search later than 2.5 s can show it once without a firewall in
+the way; it then clears at its next link. Ignore it to keep that path; the ignore lasts
+until the account is removed or disabled in Home Assistant.
 
 A station reached through eufy's servers needs no inbound rule when every filter on the
 way (the host firewall and the router) admits replies by connection tracking: its

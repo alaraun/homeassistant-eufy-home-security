@@ -375,22 +375,22 @@ async def test_two_invitations_are_picked_one_at_a_time_then_finished(
     assert selector.config["mode"] == "list"
     labels = [option["label"] for option in selector.config["options"]]
     assert labels == [
-        f"T8170 from {_INVITER} (T8170***1111)",
-        f"T8170 from {_INVITER} (T8170***2222)",
+        f"SoloCam S340 from {_INVITER} (T8170***1111)",
+        f"SoloCam S340 from {_INVITER} (T8170***2222)",
     ]
 
     result = await manager.async_configure(flow_id, {"invitation": "1"})
     assert result["step_id"] == "accept"
     placeholders = result["description_placeholders"]
     assert placeholders is not None
-    assert placeholders["invitation"] == f"T8170 from {_INVITER} (T8170***2222)"
+    assert placeholders["invitation"] == f"SoloCam S340 from {_INVITER} (T8170***2222)"
     result = await manager.async_configure(flow_id, {})
     assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == "accepted"
     assert result["menu_options"] == ["pick", "finish"]
     placeholders = result["description_placeholders"]
     assert placeholders is not None
-    assert placeholders["invites"] == f"T8170 from {_INVITER}"
+    assert placeholders["invites"] == f"SoloCam S340 from {_INVITER}"
     assert [accept["invites"][0]["invite_id"] for accept in fake_cloud.invite_accepts] == [22]
     clients = len(built_clients)
 
@@ -460,7 +460,7 @@ async def test_accept_another_takes_the_last_one_without_a_picker_then_finishes(
     assert result["step_id"] == "accept"
     placeholders = result["description_placeholders"]
     assert placeholders is not None
-    assert placeholders["invitation"] == f"T8170 from {_INVITER} (T8170***2222)"
+    assert placeholders["invitation"] == f"SoloCam S340 from {_INVITER} (T8170***2222)"
     clients = len(built_clients)
     result = await manager.async_configure(flow_id, {})
     assert result["type"] is FlowResultType.CREATE_ENTRY
