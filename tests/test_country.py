@@ -9,6 +9,7 @@ the repair itself: ``test_invite_accept.py``).
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from typing import Any, Final
@@ -16,16 +17,18 @@ from typing import Any, Final
 import pytest
 from conftest import (
     add_entry,
+    add_motion_sensor,
     cloud_calls,
     configure_options,
     entity_id_for,
     set_up_warm,
     setup_entry,
+    wait_until,
 )
-from eufy_home_security import EufySecurity
+from eufy_home_security import CommunicationError, EufySecurity
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
 from homeassistant.components.repairs import RepairsFlowManager, repairs_flow_manager
-from homeassistant.config_entries import SOURCE_USER, ConfigEntry
+from homeassistant.config_entries import SOURCE_USER, ConfigEntry, ConfigEntryState
 from homeassistant.const import ATTR_ENTITY_ID, CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -41,6 +44,7 @@ from custom_components.eufy_home_security import errors, runtime
 from custom_components.eufy_home_security.const import (
     CONF_COUNTRY,
     CONF_EXTRA_COUNTRIES,
+    CONF_SCAN_REGIONS,
     DOMAIN,
     OPTIONS_STEP_INIT,
     REFRESH_DEVICE_LIST_KEY,
@@ -415,6 +419,199 @@ async def test_the_invitation_fix_rescans_and_sets_up_the_shared_station(
     assert _invites_issue(hass, entry) is None
     assert "login" not in fake_cloud.calls
     await _unload(hass, entry)
+
+
+async def _press(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    button = entity_id_for(hass, "button", entry.entry_id, REFRESH_DEVICE_LIST_KEY)
+    await hass.services.async_call("button", "press", {ATTR_ENTITY_ID: button}, blocking=True)
+    await hass.async_block_till_done()
+
+
+def _invite_reads(fake_cloud: FakeCloud) -> int:
+    return len([call for call in cloud_calls(fake_cloud) if "invites" in call])
+
+
+async def test_an_invitation_accepted_in_the_app_is_gone_after_the_press_that_lists_it(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Accepted in the eufy app, then Refresh device list: the press adds the station
+    and reloads; the reload's setup reads the invitations, so the accepted one is not
+    named again from the last read."""
+    listed = list(fake_cloud.devices)
+    fake_cloud.devices = []
+    fake_cloud.house_invites = [dict(_HOUSE_INVITE)]
+    # an account that lists nothing is asked on a press only with the region option
+    entry = await set_up_warm(hass, seed_warm_cache, options={CONF_SCAN_REGIONS: True})
+    assert _invites_issue(hass, entry) is not None
+
+    fake_cloud.house_invites = []
+    fake_cloud.devices = listed
+    await _press(hass, entry)
+    await wait_until(
+        lambda: (
+            entry.state.value == "loaded" and fake_station.serial in entry.runtime_data.coordinators
+        )
+    )
+    await hass.async_block_till_done()
+
+    assert _invites_issue(hass, entry) is None
+    await _unload(hass, entry)
+
+
+async def test_a_press_that_reloads_reads_the_invitations_once_at_the_reload(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A press whose fetch finds a new paired device (same stations, a reload pending)
+    leaves the read to the reload's setup: one read in all, and the issue shows."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    first = len(built_clients)
+    reads = _invite_reads(fake_cloud)
+    add_motion_sensor(fake_station, fake_cloud)
+    fake_cloud.house_invites = [dict(_HOUSE_INVITE)]
+    button = entity_id_for(hass, "button", entry.entry_id, REFRESH_DEVICE_LIST_KEY)
+    await hass.services.async_call("button", "press", {ATTR_ENTITY_ID: button}, blocking=True)
+    await wait_until(lambda: len(built_clients) == first + 1 and entry.state.value == "loaded")
+    await hass.async_block_till_done()
+
+    # house and device invitations of eu and us, once: by the reload's setup only
+    assert _invite_reads(fake_cloud) - reads == 4
+    assert _invites_issue(hass, entry) is not None
+
+    # the request is used up: a later warm reload reads nothing
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert _invite_reads(fake_cloud) - reads == 4
+    assert _invites_issue(hass, entry) is not None
+    await _unload(hass, entry)
+
+
+async def test_a_failed_read_keeps_the_invitations_last_read(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A press whose invitation read fails leaves the issue, and a warm reload after
+    it still names what the last readable answer listed."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    fake_cloud.house_invites = [dict(_HOUSE_INVITE)]
+    await _press(hass, entry)
+    assert _invites_issue(hass, entry) is not None
+
+    async def refused(self: EufySecurity) -> None:
+        raise CommunicationError("synthetic")
+
+    monkeypatch.setattr(EufySecurity, "async_pending_invites", refused)
+    await _press(hass, entry)
+    assert _invites_issue(hass, entry) is not None
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    issue = _invites_issue(hass, entry)
+    assert issue is not None
+    assert issue.translation_placeholders is not None
+    assert issue.translation_placeholders["invites"] == f"“{_HOME_NAME}” from {_INVITER}"
+    await _unload(hass, entry)
+
+
+async def test_a_requested_read_that_fails_names_no_earlier_invitation(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reload the user started drops the last read: when its own read fails, the
+    issue is gone rather than naming an invitation that may be accepted by now."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    fake_cloud.house_invites = [dict(_HOUSE_INVITE)]
+    await _press(hass, entry)
+    assert _invites_issue(hass, entry) is not None
+
+    async def refused(self: EufySecurity) -> None:
+        raise CommunicationError("synthetic")
+
+    monkeypatch.setattr(EufySecurity, "async_pending_invites", refused)
+    runtime.request_invites_at_setup(hass, entry.entry_id)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert _invites_issue(hass, entry) is None
+    await _unload(hass, entry)
+
+
+async def test_finishing_the_fix_with_devices_reads_the_invitations_at_the_reload(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A station served and an invitation accepted in the eufy app, then confirmed in
+    the fix: even when the reload's rescan falls back to the cached list, its setup
+    reads the invitations and the accepted one is not named again."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    fake_cloud.house_invites = [dict(_HOUSE_INVITE)]
+    await _press(hass, entry)
+    manager = await _repairs(hass)
+    issue_id = errors.pending_invites_issue_id(entry.entry_id)
+    result = await manager.async_init(DOMAIN, data={"issue_id": issue_id})
+    result = await manager.async_configure(result["flow_id"], {"next_step_id": "confirm"})
+    assert result["step_id"] == "confirm"
+
+    fake_cloud.house_invites = []
+    fake_cloud.call_errors = [CommunicationError("synthetic")] * 2
+    result = await manager.async_configure(result["flow_id"], {})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    assert built_clients[-1].device_list_source != "fetched"
+    assert _invites_issue(hass, entry) is None
+    await _unload(hass, entry)
+
+
+async def test_an_entry_unloaded_during_the_press_read_gets_no_issue(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The entry is unloaded while a press reads the invitations: the late answer
+    raises no issue for an entry that is not loaded."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original = EufySecurity.async_pending_invites
+
+    async def held(self: EufySecurity) -> list[Any]:
+        entered.set()
+        await release.wait()
+        return await original(self)
+
+    monkeypatch.setattr(EufySecurity, "async_pending_invites", held)
+    fake_cloud.house_invites = [dict(_HOUSE_INVITE)]
+    button = entity_id_for(hass, "button", entry.entry_id, REFRESH_DEVICE_LIST_KEY)
+    entity = hass.data["entity_components"]["button"].get_entity(button)
+    press = hass.async_create_task(entity.async_press())
+    await entered.wait()
+    unload = hass.async_create_task(hass.config_entries.async_unload(entry.entry_id))
+    await wait_until(lambda: entry.state is not ConfigEntryState.LOADED)
+    release.set()
+    await press
+    assert await unload
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.NOT_LOADED
+    assert _invites_issue(hass, entry) is None
 
 
 async def test_build_client_passes_the_country_and_home_assistants_time_zone(

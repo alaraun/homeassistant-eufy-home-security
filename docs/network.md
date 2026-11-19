@@ -105,8 +105,9 @@ location /api/hls/ {
   looks for the devices again after you accepted it in the eufy app signed in with
   that account. Signing Home Assistant's account in on a phone can end Home
   Assistant's session; accepting from the repair avoids that. Invitations are read
-  when the account lists no devices, when a start fetches the device list, and on
-  **Refresh device list**: press it after a new invitation arrives. Accepting is tested
+  when the account lists no devices, when a start fetches the device list, on
+  **Refresh device list** and at the reload it starts: press it after a new invitation
+  arrives. Accepting is tested
   with a device invitation that needed a code; a home invitation is accepted the way
   the eufy app does it, not yet tested.
 - A sign-in from another client ends the earlier session of the same account. Give

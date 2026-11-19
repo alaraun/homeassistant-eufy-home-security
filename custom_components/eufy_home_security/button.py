@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, override
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -352,8 +353,8 @@ class EufyRefreshDeviceListButton(ButtonEntity):
         device of the entry the list no longer names is removed at once, the station
         itself included. Only registries are touched after the
         fetch when a reload follows, so the reload cannot unload this entity mid-press;
-        when no reload follows, the pending invitations are read for their repair (a
-        reload's setup reads them itself).
+        the pending invitations are read for their repair, at once or at the setup of
+        the reload that follows.
         """
         runtime_data = self._entry.runtime_data
         router = runtime_data.router
@@ -382,6 +383,8 @@ class EufyRefreshDeviceListButton(ButtonEntity):
             self.hass, self._entry, runtime_data.eufy.skipped_devices
         )
         after = set(runtime_data.eufy.stations)
+        if after != before or router.reload_pending:
+            runtime.request_invites_at_setup(self.hass, self._entry.entry_id)
         if after != before:
             _LOGGER.debug(
                 "Device list refreshed: %d station(s) added, %d gone",
@@ -394,10 +397,8 @@ class EufyRefreshDeviceListButton(ButtonEntity):
             if not router.reload_pending:
                 # Name any invitation the account has not accepted. No reload is
                 # pending, so this entity outlives the await.
-                errors.sync_pending_invites_issue(
-                    self.hass,
-                    self._entry,
-                    await runtime.async_read_invites(
-                        self.hass, self._entry.entry_id, runtime_data.eufy
-                    ),
+                invites = await runtime.async_read_invites(
+                    self.hass, self._entry.entry_id, runtime_data.eufy
                 )
+                if self._entry.state is ConfigEntryState.LOADED:
+                    errors.sync_pending_invites_issue(self.hass, self._entry, invites)
