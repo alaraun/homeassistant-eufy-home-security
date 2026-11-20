@@ -102,7 +102,7 @@ async def test_a_link_with_a_blocked_lan_reply_raises_the_repair_and_a_lan_link_
     name = _station_name(hass, entry, fake_station.serial)
     assert issue.translation_placeholders == {
         "account": errors.account_label(entry),
-        "stations": f"{name} ({_STATION_IP})",
+        "stations": f"- {_STATION_IP} ({name})",
     }
 
     blocked_serials.clear()
@@ -133,7 +133,7 @@ async def test_a_lan_link_of_one_station_keeps_another_blocked_one_named(
         assert issue is not None
         assert issue.translation_placeholders is not None
         assert issue.translation_placeholders["stations"] == (
-            f"{redact_serial(other)} ({_OTHER_IP})"
+            f"- {_OTHER_IP} ({errors.markdown_literal(redact_serial(other))})"
         )
     finally:
         del coordinators[other]
@@ -241,22 +241,27 @@ async def test_a_plain_unload_keeps_it_and_disabling_the_entry_deletes_it(
 async def test_stations_are_named_sorted_with_their_address_when_known(
     hass: HomeAssistant,
 ) -> None:
-    """Unregistered stations go by their redacted serial; one without a known address by
-    its name alone; stations without the warning are left out."""
+    """One markdown list line per station, address first, in numeric address order
+    (``.9`` before ``.11``), the redacted serial's asterisks escaped; unregistered
+    stations go by their
+    redacted serial, one without a known address by its name alone; stations without
+    the warning are left out."""
     entry = MockConfigEntry(domain=DOMAIN, title="eufy", data={"email": SYNTHETIC.email})
     entry.add_to_hass(hass)
     first, second, third = "T8030P0000000002", "T8030P0000000001", "T8030P0000000003"
+    fourth = "T8030P0000000004"
     stations: Sequence[Any] = [
         SimpleNamespace(serial=first, lan_path=_path(first, blocked=True, ip=None)),
         SimpleNamespace(serial=second, lan_path=_path(second, blocked=True, ip=_OTHER_IP)),
         SimpleNamespace(serial=third, lan_path=_path(third, blocked=False)),
+        SimpleNamespace(serial=fourth, lan_path=_path(fourth, blocked=True, ip="192.0.2.9")),
     ]
     errors.sync_lan_reply_blocked_issue(hass, entry, stations)
     issue = _issue(hass, entry)
     assert issue is not None
     assert issue.translation_placeholders is not None
     assert issue.translation_placeholders["stations"] == (
-        f"{redact_serial(second)} ({_OTHER_IP}), {redact_serial(first)}"
+        "- 192.0.2.9 (T8030\\*\\*\\*0004)\n- 192.0.2.11 (T8030\\*\\*\\*0001)\n- T8030\\*\\*\\*0002"
     )
 
 

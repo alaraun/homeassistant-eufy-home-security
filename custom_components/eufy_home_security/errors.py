@@ -19,8 +19,10 @@ the two write paths cannot drift.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import timedelta
+from ipaddress import ip_address
 from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.const import CONF_EMAIL
@@ -1463,12 +1465,29 @@ def invites_text(invites: Iterable[CloudInvite]) -> str:
     return "; ".join(invite_text(invite) for invite in invites)
 
 
-def invite_choice_label(invite: CloudInvite) -> str:
-    """One invitation as the repair's picker shows it: :func:`invite_text`, plus the
-    device's redacted serial, so two shared devices of one model differ."""
-    if invite.kind == "device" and invite.device_sn:
-        return f"{invite_text(invite)} ({redact_serial(invite.device_sn)})"
-    return invite_text(invite)
+def invite_choice_label(invite: CloudInvite, others: Iterable[CloudInvite] = ()) -> str:
+    """One invitation as the repair's form names it: :func:`invite_text`, plus the
+    device's redacted serial when another of ``others`` reads the same."""
+    text = invite_text(invite)
+    same = any(other is not invite and invite_text(other) == text for other in others)
+    if same and invite.kind == "device" and invite.device_sn:
+        return f"{text} ({redact_serial(invite.device_sn)})"
+    return text
+
+
+_MARKDOWN_SPECIAL: Final = re.compile(r"([\\`*_~\[\]<>])")
+# A block marker at the start: a heading, a list item or a rule.
+_MARKDOWN_LEADING: Final = re.compile(r"^([#+\-])")
+_MARKDOWN_ORDERED: Final = re.compile(r"^(\d+)([.)])")
+
+
+def markdown_literal(text: str) -> str:
+    """``text`` stripped and escaped for a placeholder of a markdown-rendered repair
+    description, so a redacted ``***``, an ``_`` or a leading ``#`` or ``1.`` in a
+    name shows as written."""
+    escaped = _MARKDOWN_SPECIAL.sub(r"\\\1", text.strip())
+    escaped = _MARKDOWN_LEADING.sub(r"\\\1", escaped)
+    return _MARKDOWN_ORDERED.sub(r"\1\\\2", escaped)
 
 
 def sync_pending_invites_issue(
@@ -1478,8 +1497,10 @@ def sync_pending_invites_issue(
 
     ``None`` (the invitations could not be read) leaves the issue as it is. Fixable:
     the fix accepts an invitation, or asks every login scope again after the user
-    accepted in the eufy app (``repairs.PendingInvitesFix``). Not persistent, so the
-    home names and inviters it shows are never stored or put in a diagnostics download.
+    accepted in the eufy app (``repairs.PendingInvitesFix``). The ``invites``
+    placeholder names what the issue was raised for (the text shows only the
+    account; the fix reads the invitations afresh). Not persistent, so the home names
+    and inviters it holds are never stored or put in a diagnostics download.
     """
     if invites is None:
         return
@@ -1607,12 +1628,13 @@ def sync_lan_reply_blocked_issue(
     A station is named while its ``lan_path`` warns ``PathWarning.LAN_REPLY_BLOCKED``: it
     is on one of this host's networks, but its last link (or the record kept from the last
     run) needed a punch through eufy's servers because its LAN reply did not arrive
-    (library guide). Each by its device name and the address a firewall rule needs.
+    (library guide). One markdown list line per station: the address a firewall rule
+    needs, then the device name.
     Not fixable, not persistent. With none named the issue is withdrawn, except an ignored
     one, so an ignore lasts until the entry is removed (:func:`delete_lan_reply_blocked_issue`).
     """
     issue_id = lan_reply_blocked_issue_id(entry.entry_id)
-    blocked: list[str] = []
+    blocked: list[tuple[tuple[bool, int, str], str]] = []
     for station in stations:
         path = station.lan_path
         if PathWarning.LAN_REPLY_BLOCKED not in path.warnings:
@@ -1622,7 +1644,11 @@ def sync_lan_reply_blocked_issue(
             station.serial
         )
         address = path.station_ip
-        blocked.append(f"{label} ({address})" if address else label)
+        shown = markdown_literal(label)
+        if address:
+            blocked.append(((False, int(ip_address(address)), label), f"- {address} ({shown})"))
+        else:
+            blocked.append(((True, 0, label), f"- {shown}"))
     if not blocked:
         issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
         if issue is None or issue.dismissed_version is None:
@@ -1639,7 +1665,8 @@ def sync_lan_reply_blocked_issue(
         translation_key=ISSUE_LAN_REPLY_BLOCKED,
         translation_placeholders={
             "account": account_label(entry),
-            "stations": ", ".join(sorted(blocked)),
+            # addresses in numeric order, stations without one last
+            "stations": "\n".join(line for _, line in sorted(blocked)),
         },
         learn_more_url=FIREWALL_DOCS_URL,
     )

@@ -1,8 +1,8 @@
-"""Accepting a pending eufy invitation from the pending-invitations repair.
+"""Accepting pending eufy invitations from the pending-invitations repair.
 
-The fix reads the invitations afresh, offers to accept one here (a code field only
-for an invitation that needs the inviter's code) or to look again after an accept in
-the eufy app, and reloads the entry with one rescan once something was accepted.
+The fix reads the invitations afresh and shows them one form each (a code field only
+for an invitation that needs the inviter's code), then reloads the entry with one
+rescan once something was accepted; with none open it confirms loading the devices.
 """
 
 from __future__ import annotations
@@ -131,18 +131,25 @@ def _fields(result: Mapping[str, Any]) -> set[str]:
     return {str(key) for key in schema.schema}
 
 
-async def _open_fix(hass: HomeAssistant, entry: MockConfigEntry) -> tuple[RepairsFlowManager, str]:
-    """The repair's fix, opened and moved past its menu to accept here."""
+async def _open_fix(
+    hass: HomeAssistant, entry: MockConfigEntry
+) -> tuple[RepairsFlowManager, str, Mapping[str, Any]]:
+    """The repair's fix, opened on the form of the first open invitation."""
     assert await async_setup_component(hass, "repairs", {})
     manager = repairs_flow_manager(hass)
     assert manager is not None
     result = await manager.async_init(
         DOMAIN, data={"issue_id": errors.pending_invites_issue_id(entry.entry_id)}
     )
-    assert result["type"] is FlowResultType.MENU
-    assert result["step_id"] == "init"
-    assert result["menu_options"] == ["pick", "confirm"]
-    return manager, result["flow_id"]
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] in ("accept", "accept_code")
+    return manager, result["flow_id"], result
+
+
+def _shown(result: Mapping[str, Any]) -> str:
+    placeholders = result["description_placeholders"]
+    assert placeholders is not None
+    return str(placeholders["invitation"])
 
 
 async def test_a_home_invitation_without_a_code_is_accepted_and_its_station_set_up(
@@ -153,20 +160,21 @@ async def test_a_home_invitation_without_a_code_is_accepted_and_its_station_set_
     seed_warm_cache: Callable[..., None],
     discover_calls: list[dict[str, Any]],
 ) -> None:
-    """One invitation: no picker, no code field; the accept names the home, the reload
-    asks every scope once, and the shared station is served with the issue gone."""
+    """One invitation: the fix opens on its form, no code field, naming the home and
+    the account; the reload asks every scope once, and the shared station is served
+    with the issue gone."""
     entry, listed = await _set_up_invited(
         hass, fake_cloud, seed_warm_cache, house=[dict(_HOUSE_INVITE)]
     )
-    manager, flow_id = await _open_fix(hass, entry)
+    manager, flow_id, result = await _open_fix(hass, entry)
 
-    result = await manager.async_configure(flow_id, {"next_step_id": "pick"})
-    assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "accept"
     assert _fields(result) == set()
-    placeholders = result["description_placeholders"]
-    assert placeholders is not None
-    assert placeholders["invitation"] == f"“{_HOME_NAME}” from {_INVITER}"
+    assert errors.account_label(entry).startswith("***")
+    assert result["description_placeholders"] == {
+        "account": "\\*\\*\\*" + errors.account_label(entry)[3:],
+        "invitation": f"“{_HOME_NAME}” from {_INVITER}",
+    }
     clients = len(built_clients)
 
     fake_cloud.devices = listed
@@ -199,9 +207,8 @@ async def test_a_coded_invitation_keeps_the_form_open_on_a_wrong_or_missing_code
     entry, listed = await _set_up_invited(
         hass, fake_cloud, seed_warm_cache, devices=[_device_invite(11, _SHARED_CAMERA, code=_CODE)]
     )
-    manager, flow_id = await _open_fix(hass, entry)
-    result = await manager.async_configure(flow_id, {"next_step_id": "pick"})
-    assert result["step_id"] == "accept"
+    manager, flow_id, result = await _open_fix(hass, entry)
+    assert result["step_id"] == "accept_code"
     assert _fields(result) == {"code"}
     schema = result["data_schema"]
     assert schema is not None
@@ -210,10 +217,10 @@ async def test_a_coded_invitation_keeps_the_form_open_on_a_wrong_or_missing_code
 
     result = await manager.async_configure(flow_id, {"code": "not-the-code"})
     assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"code": "wrong_code"}
+    assert (result["step_id"], result["errors"]) == ("accept_code", {"code": "wrong_code"})
     result = await manager.async_configure(flow_id, {"code": ""})
     assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"code": "code_missing"}
+    assert (result["step_id"], result["errors"]) == ("accept_code", {"code": "code_missing"})
     assert fake_cloud.invite_accepts == []
     assert _accepts(fake_cloud) == []
 
@@ -248,13 +255,13 @@ async def test_an_appliance_invitation_is_left_to_the_eufy_app(
         seed_warm_cache,
         devices=[_device_invite(12, _SHARED_CAMERA, category="eufy_home")],
     )
-    manager, flow_id = await _open_fix(hass, entry)
-    await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    manager, flow_id, _ = await _open_fix(hass, entry)
     clients = len(built_clients)
 
     result = await manager.async_configure(flow_id, {})
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "accept_in_app"
+    assert result["description_placeholders"] == {"invitation": f"SoloCam S340 from {_INVITER}"}
     await hass.async_block_till_done()
 
     assert _accepts(fake_cloud) == []
@@ -262,15 +269,140 @@ async def test_an_appliance_invitation_is_left_to_the_eufy_app(
     assert _issue(hass, entry) is not None
 
 
+async def test_an_invitation_left_to_the_eufy_app_does_not_block_the_next(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    discover_calls: list[dict[str, Any]],
+) -> None:
+    """An appliance invitation first, a camera after it: the camera's form follows, it
+    is accepted, and the end names the appliance; one reload, the issue stays."""
+    entry, _ = await _set_up_invited(
+        hass,
+        fake_cloud,
+        seed_warm_cache,
+        devices=[
+            _device_invite(71, _SHARED_CAMERA, owner="synthetic-owner-a", category="eufy_home"),
+            _device_invite(72, _SHARED_DOORBELL, owner="synthetic-owner-b"),
+        ],
+    )
+    manager, flow_id, _ = await _open_fix(hass, entry)
+    clients = len(built_clients)
+
+    result = await manager.async_configure(flow_id, {})
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {}
+    assert _shown(result) == f"SoloCam S340 from {_INVITER}"
+    result = await manager.async_configure(flow_id, {})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "accept_in_app"
+    # named apart from the accepted invitation that reads alike
+    assert result["description_placeholders"] == {
+        "invitation": f"SoloCam S340 from {_INVITER} (T8170\\*\\*\\*1111)"
+    }
+    await hass.async_block_till_done()
+
+    assert _accepted_ids(fake_cloud) == [72]
+    assert len(built_clients) == clients + 1, "reloaded once"
+    assert discover_calls[-1] == {"rescan_regions": True}
+    assert _issue(hass, entry) is not None
+
+
+async def test_a_second_submit_while_an_accept_runs_sends_nothing(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two submits of one form at once: one accept is sent; the second submit shows
+    the form again."""
+    entry, _ = await _set_up_invited(
+        hass, fake_cloud, seed_warm_cache, devices=_two_devices(121, 122)
+    )
+    manager, flow_id, opened = await _open_fix(hass, entry)
+    eufy = entry.runtime_data.eufy
+    original = eufy.async_accept_invite
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def held(invite: Any, *, code: str | None = None) -> None:
+        entered.set()
+        await release.wait()
+        await original(invite, code=code)
+
+    monkeypatch.setattr(eufy, "async_accept_invite", held)
+    first = asyncio.get_running_loop().create_task(manager.async_configure(flow_id, {}))
+    await entered.wait()
+    async with asyncio.timeout(5):
+        second = await manager.async_configure(flow_id, {})
+    assert second["type"] is FlowResultType.FORM
+    assert (second["step_id"], _shown(second)) == (opened["step_id"], _shown(opened))
+    release.set()
+    result = await first
+    assert _shown(result) == f"SoloCam S340 from {_INVITER}"
+    assert _accepted_ids(fake_cloud) == [121]
+    manager.async_abort(flow_id)
+    await hass.async_block_till_done()
+
+
+async def test_a_lapsed_session_after_an_earlier_accept_reloads_once(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first accepted, the second meets a lapsed session: one reload in all."""
+    entry, _ = await _set_up_invited(
+        hass, fake_cloud, seed_warm_cache, devices=_two_devices(131, 132)
+    )
+    manager, flow_id, _ = await _open_fix(hass, entry)
+    await manager.async_configure(flow_id, {})
+
+    async def lapsed(*args: Any, **kwargs: Any) -> None:
+        raise NoCachedSessionError("synthetic")
+
+    monkeypatch.setattr(entry.runtime_data.eufy, "async_accept_invite", lapsed)
+    clients = len(built_clients)
+    result = await manager.async_configure(flow_id, {})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "session_lapsed"
+    await hass.async_block_till_done()
+    assert len(built_clients) == clients + 1, "reloaded once"
+
+
 @pytest.mark.parametrize(
-    ("error", "reason"),
+    ("text", "shown"),
     [
-        (NoCachedSessionError("synthetic-detail"), "session_lapsed"),
-        (CloudApiError(1, "synthetic-detail"), "accept_failed"),
-        (CommunicationError("synthetic-detail"), "accept_failed"),
+        ("Plain Name", "Plain Name"),
+        ("T8170***1111", "T8170\\*\\*\\*1111"),
+        ("a\\b`c_d[e]f<g>h~i", "a\\\\b\\`c\\_d\\[e\\]f\\<g\\>h\\~i"),
+        ("# Garage", "\\# Garage"),
+        ("- Garage", "\\- Garage"),
+        ("+Garage", "\\+Garage"),
+        ("1. Garage", "1\\. Garage"),
+        ("2) Garage", "2\\) Garage"),
+        ("  Garage  ", "Garage"),
     ],
 )
-async def test_a_failed_accept_aborts_with_its_reason_and_reloads_nothing(
+def test_markdown_literal_shows_a_name_as_written(text: str, shown: str) -> None:
+    """Markdown characters, a leading block marker and outer spaces are neutralised;
+    a plain name passes unchanged."""
+    assert errors.markdown_literal(text) == shown
+
+
+@pytest.mark.parametrize(
+    ("error", "reason", "reloads"),
+    [
+        (NoCachedSessionError("synthetic-detail"), "session_lapsed", 1),
+        (CloudApiError(1, "synthetic-detail"), "accept_failed", 0),
+        (CommunicationError("synthetic-detail"), "accept_failed", 0),
+    ],
+)
+async def test_a_failed_accept_aborts_with_its_reason(
+    discover_calls: list[dict[str, Any]],
     hass: HomeAssistant,
     fake_cloud: FakeCloud,
     built_clients: list[EufySecurity],
@@ -279,25 +411,27 @@ async def test_a_failed_accept_aborts_with_its_reason_and_reloads_nothing(
     caplog: pytest.LogCaptureFixture,
     error: EufySecurityError,
     reason: str,
+    reloads: int,
 ) -> None:
-    """A lapsed session gets its own text; a cloud refusal or an unreachable cloud the
-    generic one. The issue stays, the entry is not reloaded, and the library's message
-    text is not logged."""
+    """A lapsed region session gets its own text and one reload with a rescan, which
+    signs in there again; a cloud refusal or an unreachable cloud the generic text and
+    no reload. The issue stays, and the library's message text is not logged."""
     entry, _ = await _set_up_invited(hass, fake_cloud, seed_warm_cache, house=[dict(_HOUSE_INVITE)])
 
     async def failing(*args: Any, **kwargs: Any) -> None:
         raise error
 
     monkeypatch.setattr(entry.runtime_data.eufy, "async_accept_invite", failing)
-    manager, flow_id = await _open_fix(hass, entry)
-    await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    manager, flow_id, _ = await _open_fix(hass, entry)
     clients = len(built_clients)
+    discovered = len(discover_calls)
 
     result = await manager.async_configure(flow_id, {})
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == reason
     await hass.async_block_till_done()
-    assert len(built_clients) == clients
+    assert len(built_clients) == clients + reloads
+    assert discover_calls[discovered:] == [{"rescan_regions": True}] * reloads
     assert _issue(hass, entry) is not None
     assert "synthetic-detail" not in caplog.text
 
@@ -311,8 +445,7 @@ async def test_a_replaced_session_aborts_and_raises_its_own_repair(
     """Another client ended the session: its own text and the session-replaced repair,
     whose fix signs in again; no reload."""
     entry, _ = await _set_up_invited(hass, fake_cloud, seed_warm_cache, house=[dict(_HOUSE_INVITE)])
-    manager, flow_id = await _open_fix(hass, entry)
-    await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    manager, flow_id, _ = await _open_fix(hass, entry)
     clients = len(built_clients)
 
     fake_cloud.call_errors = [SessionReplacedError("synthetic")]
@@ -335,8 +468,7 @@ async def test_a_cloud_refusal_of_the_accept_aborts_and_keeps_the_issue(
 ) -> None:
     """The cloud answers the accept with an error code: the generic text."""
     entry, _ = await _set_up_invited(hass, fake_cloud, seed_warm_cache, house=[dict(_HOUSE_INVITE)])
-    manager, flow_id = await _open_fix(hass, entry)
-    await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    manager, flow_id, _ = await _open_fix(hass, entry)
 
     fake_cloud.call_errors = [CloudApiError(1, "synthetic")]
     result = await manager.async_configure(flow_id, {})
@@ -347,58 +479,74 @@ async def test_a_cloud_refusal_of_the_accept_aborts_and_keeps_the_issue(
     assert _issue(hass, entry) is not None
 
 
-async def test_two_invitations_are_picked_one_at_a_time_then_finished(
+def _two_devices(first: int, second: int) -> list[dict[str, Any]]:
+    return [
+        _device_invite(first, _SHARED_CAMERA, owner="synthetic-owner-a"),
+        _device_invite(second, _SHARED_DOORBELL, owner="synthetic-owner-b"),
+    ]
+
+
+def _accepted_ids(cloud: FakeCloud) -> list[int]:
+    return [accept["invites"][0]["invite_id"] for accept in cloud.invite_accepts]
+
+
+async def test_two_invitations_are_shown_one_after_the_other_then_finished(
     hass: HomeAssistant,
     fake_cloud: FakeCloud,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
     discover_calls: list[dict[str, Any]],
 ) -> None:
-    """Two devices of one model differ by their redacted serials; after one accept the
-    other stays open, and Finish reloads once with a rescan."""
+    """Two devices of one model differ by their redacted serials; accepting the first
+    shows the second, and accepting that one finishes with one reload and a rescan."""
+    entry, _ = await _set_up_invited(
+        hass, fake_cloud, seed_warm_cache, devices=_two_devices(21, 22)
+    )
+    manager, flow_id, result = await _open_fix(hass, entry)
+    assert _shown(result) == f"SoloCam S340 from {_INVITER} (T8170\\*\\*\\*1111)"
+
+    result = await manager.async_configure(flow_id, {})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "accept"
+    assert result["errors"] == {}
+    # the last one open reads like no other: no serial
+    assert _shown(result) == f"SoloCam S340 from {_INVITER}"
+    assert _accepted_ids(fake_cloud) == [21]
+    clients = len(built_clients)
+
+    result = await manager.async_configure(flow_id, {})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert _accepted_ids(fake_cloud) == [21, 22]
+    assert len(built_clients) == clients + 1, "reloaded once"
+    assert discover_calls[-1] == {"rescan_regions": True}
+
+
+async def test_the_next_invitation_gets_the_code_field_only_when_it_needs_one(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """An open invitation without a code, then one with: the second form asks for it."""
     entry, _ = await _set_up_invited(
         hass,
         fake_cloud,
         seed_warm_cache,
         devices=[
-            _device_invite(21, _SHARED_CAMERA, owner="synthetic-owner-a"),
-            _device_invite(22, _SHARED_DOORBELL, owner="synthetic-owner-b"),
+            _device_invite(61, _SHARED_CAMERA, owner="synthetic-owner-a"),
+            _device_invite(62, _SHARED_DOORBELL, owner="synthetic-owner-b", code=_CODE),
         ],
     )
-    manager, flow_id = await _open_fix(hass, entry)
-    result = await manager.async_configure(flow_id, {"next_step_id": "pick"})
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "pick"
-    schema = result["data_schema"]
-    assert schema is not None
-    (selector,) = schema.schema.values()
-    assert selector.config["mode"] == "list"
-    labels = [option["label"] for option in selector.config["options"]]
-    assert labels == [
-        f"SoloCam S340 from {_INVITER} (T8170***1111)",
-        f"SoloCam S340 from {_INVITER} (T8170***2222)",
-    ]
+    manager, flow_id, result = await _open_fix(hass, entry)
+    assert (result["step_id"], _fields(result)) == ("accept", set())
 
-    result = await manager.async_configure(flow_id, {"invitation": "1"})
-    assert result["step_id"] == "accept"
-    placeholders = result["description_placeholders"]
-    assert placeholders is not None
-    assert placeholders["invitation"] == f"SoloCam S340 from {_INVITER} (T8170***2222)"
     result = await manager.async_configure(flow_id, {})
-    assert result["type"] is FlowResultType.MENU
-    assert result["step_id"] == "accepted"
-    assert result["menu_options"] == ["pick", "finish"]
-    placeholders = result["description_placeholders"]
-    assert placeholders is not None
-    assert placeholders["invites"] == f"SoloCam S340 from {_INVITER}"
-    assert [accept["invites"][0]["invite_id"] for accept in fake_cloud.invite_accepts] == [22]
-    clients = len(built_clients)
-
-    result = await manager.async_configure(flow_id, {"next_step_id": "finish"})
+    assert (result["step_id"], _fields(result)) == ("accept_code", {"code"})
+    result = await manager.async_configure(flow_id, {"code": _CODE})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
-    assert len(built_clients) == clients + 1, "reloaded once"
-    assert discover_calls[-1] == {"rescan_regions": True}
+    assert _accepted_ids(fake_cloud) == [61, 62]
 
 
 async def test_closing_the_fix_after_an_accept_still_reloads(
@@ -408,65 +556,17 @@ async def test_closing_the_fix_after_an_accept_still_reloads(
     seed_warm_cache: Callable[..., None],
     discover_calls: list[dict[str, Any]],
 ) -> None:
-    """Closed on the "accepted" menu: the entry reloads once with a rescan anyway."""
+    """Closed on the second invitation's form: the entry reloads once with a rescan."""
     entry, _ = await _set_up_invited(
-        hass,
-        fake_cloud,
-        seed_warm_cache,
-        devices=[
-            _device_invite(31, _SHARED_CAMERA, owner="synthetic-owner-a"),
-            _device_invite(32, _SHARED_DOORBELL, owner="synthetic-owner-b"),
-        ],
+        hass, fake_cloud, seed_warm_cache, devices=_two_devices(31, 32)
     )
-    manager, flow_id = await _open_fix(hass, entry)
-    await manager.async_configure(flow_id, {"next_step_id": "pick"})
-    await manager.async_configure(flow_id, {"invitation": "0"})
+    manager, flow_id, _ = await _open_fix(hass, entry)
     result = await manager.async_configure(flow_id, {})
-    assert result["step_id"] == "accepted"
+    assert result["step_id"] == "accept"
     clients = len(built_clients)
 
     manager.async_abort(flow_id)
     await hass.async_block_till_done()
-    assert len(built_clients) == clients + 1, "reloaded once"
-    assert discover_calls[-1] == {"rescan_regions": True}
-
-
-async def test_accept_another_takes_the_last_one_without_a_picker_then_finishes(
-    hass: HomeAssistant,
-    fake_cloud: FakeCloud,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    discover_calls: list[dict[str, Any]],
-) -> None:
-    """ "Accept another" with one left opens its accept form; accepting it finishes with
-    one reload."""
-    entry, _ = await _set_up_invited(
-        hass,
-        fake_cloud,
-        seed_warm_cache,
-        devices=[
-            _device_invite(81, _SHARED_CAMERA, owner="synthetic-owner-a"),
-            _device_invite(82, _SHARED_DOORBELL, owner="synthetic-owner-b"),
-        ],
-    )
-    manager, flow_id = await _open_fix(hass, entry)
-    await manager.async_configure(flow_id, {"next_step_id": "pick"})
-    await manager.async_configure(flow_id, {"invitation": "0"})
-    result = await manager.async_configure(flow_id, {})
-    assert result["step_id"] == "accepted"
-
-    result = await manager.async_configure(flow_id, {"next_step_id": "pick"})
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "accept"
-    placeholders = result["description_placeholders"]
-    assert placeholders is not None
-    assert placeholders["invitation"] == f"SoloCam S340 from {_INVITER} (T8170***2222)"
-    clients = len(built_clients)
-    result = await manager.async_configure(flow_id, {})
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    await hass.async_block_till_done()
-
-    assert [accept["invites"][0]["invite_id"] for accept in fake_cloud.invite_accepts] == [81, 82]
     assert len(built_clients) == clients + 1, "reloaded once"
     assert discover_calls[-1] == {"rescan_regions": True}
 
@@ -481,8 +581,7 @@ async def test_closing_the_fix_while_an_accept_runs_still_reloads(
 ) -> None:
     """The dialog closed before the accept answers: the accept, once it succeeds, reloads."""
     entry, _ = await _set_up_invited(hass, fake_cloud, seed_warm_cache, house=[dict(_HOUSE_INVITE)])
-    manager, flow_id = await _open_fix(hass, entry)
-    await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    manager, flow_id, _ = await _open_fix(hass, entry)
     eufy = entry.runtime_data.eufy
     original = eufy.async_accept_invite
 
@@ -492,7 +591,8 @@ async def test_closing_the_fix_while_an_accept_runs_still_reloads(
 
     monkeypatch.setattr(eufy, "async_accept_invite", closed_meanwhile)
     clients = len(built_clients)
-    with pytest.raises(UnknownFlow):
+    # The dialog is gone: the finished flow's result goes nowhere.
+    with contextlib.suppress(UnknownFlow):
         await manager.async_configure(flow_id, {})
     await hass.async_block_till_done()
 
@@ -512,19 +612,10 @@ async def test_closing_during_a_later_accept_reloads_once_after_it(
     """One accepted, the dialog closed during the second: no reload while that accept
     runs on the client, one reload after it, asking every scope."""
     entry, _ = await _set_up_invited(
-        hass,
-        fake_cloud,
-        seed_warm_cache,
-        devices=[
-            _device_invite(101, _SHARED_CAMERA, owner="synthetic-owner-a"),
-            _device_invite(102, _SHARED_DOORBELL, owner="synthetic-owner-b"),
-        ],
+        hass, fake_cloud, seed_warm_cache, devices=_two_devices(101, 102)
     )
-    manager, flow_id = await _open_fix(hass, entry)
-    await manager.async_configure(flow_id, {"next_step_id": "pick"})
-    await manager.async_configure(flow_id, {"invitation": "0"})
-    await manager.async_configure(flow_id, {})
-    result = await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    manager, flow_id, _ = await _open_fix(hass, entry)
+    result = await manager.async_configure(flow_id, {})
     assert result["step_id"] == "accept"
     eufy = entry.runtime_data.eufy
     original = eufy.async_accept_invite
@@ -539,12 +630,12 @@ async def test_closing_during_a_later_accept_reloads_once_after_it(
 
     monkeypatch.setattr(eufy, "async_accept_invite", closed_meanwhile)
     discovered = len(discover_calls)
-    with pytest.raises(UnknownFlow):
+    with contextlib.suppress(UnknownFlow):
         await manager.async_configure(flow_id, {})
     await hass.async_block_till_done()
 
     assert during == [clients], "no reload while the accept runs"
-    assert [accept["invites"][0]["invite_id"] for accept in fake_cloud.invite_accepts] == [101, 102]
+    assert _accepted_ids(fake_cloud) == [101, 102]
     assert len(built_clients) == clients + 1, "reloaded once"
     assert discover_calls[discovered:] == [{"rescan_regions": True}]
 
@@ -555,6 +646,8 @@ async def test_closing_during_a_later_accept_reloads_once_after_it(
         (False, CloudApiError(1, "synthetic"), 0),
         (True, CloudApiError(1, "synthetic"), 1),
         (True, InviteCodeError("synthetic", missing=False), 1),
+        (False, NoCachedSessionError("synthetic"), 1),
+        (True, NoCachedSessionError("synthetic"), 1),
     ],
 )
 async def test_closing_during_a_failing_accept_reloads_only_for_an_earlier_one(
@@ -569,24 +662,13 @@ async def test_closing_during_a_failing_accept_reloads_only_for_an_earlier_one(
     reloads: int,
 ) -> None:
     """Closed while an accept runs that then fails: one reload after it when an earlier
-    accept succeeded, none otherwise; never while it runs."""
+    accept succeeded or the session lapsed, none otherwise; never while it runs."""
     entry, _ = await _set_up_invited(
-        hass,
-        fake_cloud,
-        seed_warm_cache,
-        devices=[
-            _device_invite(111, _SHARED_CAMERA, owner="synthetic-owner-a"),
-            _device_invite(112, _SHARED_DOORBELL, owner="synthetic-owner-b"),
-        ],
+        hass, fake_cloud, seed_warm_cache, devices=_two_devices(111, 112)
     )
-    manager, flow_id = await _open_fix(hass, entry)
-    await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    manager, flow_id, result = await _open_fix(hass, entry)
     if earlier_accept:
-        await manager.async_configure(flow_id, {"invitation": "0"})
-        await manager.async_configure(flow_id, {})
-        result = await manager.async_configure(flow_id, {"next_step_id": "pick"})
-    else:
-        result = await manager.async_configure(flow_id, {"invitation": "1"})
+        result = await manager.async_configure(flow_id, {})
     assert result["step_id"] == "accept"
     eufy = entry.runtime_data.eufy
     clients = len(built_clients)
@@ -668,12 +750,17 @@ async def test_the_reload_after_an_accept_follows_the_entry_state(
 
 
 def test_every_step_and_reason_of_the_fix_has_its_text() -> None:
-    """Each step id, menu option, error and abort reason the fix uses is in the strings."""
+    """Each step id, error and abort reason the fix uses is in the strings, and no
+    other step is; the fix shows no menu."""
     source = inspect.getsource(PendingInvitesFix)
     strings = json.loads(
         (Path(errors.__file__).parent / "strings.json").read_text(encoding="utf-8")
     )["issues"]["pending_invites"]["fix_flow"]
-    steps = set(re.findall(r'step_id="(\w+)"', source))
+    steps = {
+        step
+        for shown in re.findall(r"step_id=([^\n]+)", source)
+        for step in re.findall(r'"(\w+)"', shown)
+    }
     reasons = set(re.findall(r'reason="(\w+)"', source))
     menu = {
         option
@@ -682,12 +769,9 @@ def test_every_step_and_reason_of_the_fix_has_its_text() -> None:
     }
     form_errors = set(re.findall(r'"(\w+)" if err\.missing else "(\w+)"', source)[0])
 
-    assert steps == {"init", "pick", "accept", "accepted", "confirm"}
-    assert steps <= set(strings["step"])
-    shown = {
-        option for step in ("init", "accepted") for option in strings["step"][step]["menu_options"]
-    }
-    assert menu == shown
+    assert steps == {"accept", "accept_code", "confirm"}
+    assert steps == set(strings["step"])
+    assert menu == set()
     assert reasons == set(strings["abort"])
     assert form_errors == set(strings["error"])
 
@@ -709,11 +793,8 @@ async def test_an_entry_unloaded_after_an_accept_stays_unloaded_and_rescans_at_i
             _device_invite(92, _SHARED_DOORBELL, owner="synthetic-owner-b"),
         ],
     )
-    manager, flow_id = await _open_fix(hass, entry)
-    await manager.async_configure(flow_id, {"next_step_id": "pick"})
-    await manager.async_configure(flow_id, {"invitation": "0"})
-    await manager.async_configure(flow_id, {})
-    result = await manager.async_configure(flow_id, {"next_step_id": "pick"})
+    manager, flow_id, _ = await _open_fix(hass, entry)
+    result = await manager.async_configure(flow_id, {})
     assert result["step_id"] == "accept"
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
@@ -747,11 +828,9 @@ async def test_closing_the_fix_after_its_entry_was_removed_reloads_nothing(
             _device_invite(52, _SHARED_DOORBELL, owner="synthetic-owner-b"),
         ],
     )
-    manager, flow_id = await _open_fix(hass, entry)
-    await manager.async_configure(flow_id, {"next_step_id": "pick"})
-    await manager.async_configure(flow_id, {"invitation": "0"})
+    manager, flow_id, _ = await _open_fix(hass, entry)
     result = await manager.async_configure(flow_id, {})
-    assert result["step_id"] == "accepted"
+    assert result["step_id"] == "accept"
     assert await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done()
 
@@ -766,9 +845,9 @@ async def test_closing_the_fix_without_an_accept_reloads_nothing(
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """Opened and closed on the menu: no reload."""
+    """Opened and closed on the first invitation's form: no reload."""
     entry, _ = await _set_up_invited(hass, fake_cloud, seed_warm_cache, house=[dict(_HOUSE_INVITE)])
-    manager, flow_id = await _open_fix(hass, entry)
+    manager, flow_id, _ = await _open_fix(hass, entry)
     clients = len(built_clients)
 
     manager.async_abort(flow_id)
@@ -776,14 +855,15 @@ async def test_closing_the_fix_without_an_accept_reloads_nothing(
     assert len(built_clients) == clients
 
 
-async def test_an_invitation_accepted_meanwhile_opens_on_looking_again(
+async def test_an_invitation_accepted_meanwhile_opens_on_loading_the_devices(
     hass: HomeAssistant,
     fake_cloud: FakeCloud,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
+    discover_calls: list[dict[str, Any]],
 ) -> None:
-    """Nothing open when the fix starts: straight to the confirmation, naming what the
-    issue was raised for."""
+    """Nothing open when the fix starts: straight to the confirmation, which names the
+    account; submitting it reloads once with a rescan."""
     entry, _ = await _set_up_invited(hass, fake_cloud, seed_warm_cache, house=[dict(_HOUSE_INVITE)])
     fake_cloud.house_invites = []
     assert await async_setup_component(hass, "repairs", {})
@@ -795,9 +875,16 @@ async def test_an_invitation_accepted_meanwhile_opens_on_looking_again(
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "confirm"
-    placeholders = result["description_placeholders"]
-    assert placeholders is not None
-    assert placeholders["invites"] == f"“{_HOME_NAME}” from {_INVITER}"
+    assert result["description_placeholders"] == {
+        "account": errors.markdown_literal(errors.account_label(entry))
+    }
+    clients = len(built_clients)
+
+    result = await manager.async_configure(result["flow_id"], {})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert len(built_clients) == clients + 1, "reloaded once"
+    assert discover_calls[-1] == {"rescan_regions": True}
 
 
 async def test_diagnostics_say_whether_an_invitation_needs_a_code_and_nothing_private(
