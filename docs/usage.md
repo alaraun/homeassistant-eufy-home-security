@@ -159,7 +159,7 @@ wake costs battery), and the choice works like this:
 | Button | Shows | Wakes the camera |
 |---|---|---|
 | **Refresh event image** | HomeBase camera: the newest event the HomeBase recorded for that camera in the last 7 days (the HomeBase is not searched further back), per the Event image choice; with no event in that window the image stays. Standalone camera: its newest event thumbnail | HomeBase camera: no. Standalone camera: yes |
-| **Capture live image** | what the camera sees now | yes |
+| **Capture live image** | what the camera sees now; only a camera with live video ([devices.md](devices.md#other-models)) | yes |
 
 The **Refresh event image keyframe** option selects which keyframe of the stored
 recording **Refresh event image** shows (unless Event image is Thumbnail only): 1, the

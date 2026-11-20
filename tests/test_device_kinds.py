@@ -81,10 +81,11 @@ _CAMERA_ENTITIES: Final = frozenset(
         ("binary_sensor", PET_DETECTED_KEY),
         ("binary_sensor", VEHICLE_DETECTED_KEY),
         ("event", DETECTION_EVENT_KEY),
-        ("button", CAPTURE_LIVE_IMAGE_KEY),
         ("button", REFRESH_IMAGE_KEY),
     }
 )
+# The button only a camera with a live stream gets.
+_LIVE_CAPTURE: Final = ("button", CAPTURE_LIVE_IMAGE_KEY)
 
 # The status diagnostics and firmware entity every paired device gets.
 _STATUS_ENTITIES: Final = frozenset(
@@ -163,7 +164,7 @@ async def test_a_device_other_than_a_camera_gets_status_entities_and_nothing_of_
     assert _STATUS_ENTITIES <= entities
     assert not {domain for domain, _ in entities} & _CAMERA_ONLY_DOMAINS
     assert not {key for _, key in entities} & (
-        {key for _, key in _CAMERA_ENTITIES} | _PTZ_KEYS | {DOORBELL_EVENT_KEY}
+        {key for _, key in _CAMERA_ENTITIES | {_LIVE_CAPTURE}} | _PTZ_KEYS | {DOORBELL_EVENT_KEY}
     )
 
 
@@ -179,7 +180,10 @@ async def test_a_doorbell_gets_the_camera_entities_and_the_ring_event(
     await set_up_warm(hass, seed_warm_cache)
 
     entities = _entities_of(hass, DOORBELL_SN)
-    assert _CAMERA_ENTITIES | _STATUS_ENTITIES | {("event", DOORBELL_EVENT_KEY)} <= entities
+    assert (
+        _CAMERA_ENTITIES | _STATUS_ENTITIES | {_LIVE_CAPTURE, ("event", DOORBELL_EVENT_KEY)}
+        <= entities
+    )
     assert not {key for _, key in entities} & _PTZ_KEYS
 
 
@@ -194,6 +198,7 @@ async def test_a_video_smart_lock_gets_the_camera_entities_and_stays_a_lock(
     event (the eufy app rings it as a video doorbell).
 
     Its kind stays the library's LOCK (the HomeBase card's per-mode actions read it).
+    Behind a HomeBase 3 it has no live stream, so no Capture live image button.
     """
     model = model_for_serial(VIDEO_LOCK_SN)
     assert model is not None and model.kind is DeviceKind.LOCK
@@ -201,10 +206,13 @@ async def test_a_video_smart_lock_gets_the_camera_entities_and_stays_a_lock(
     assert detections.entity_kind(VIDEO_LOCK_SN) is DeviceKind.CAMERA
     assert detections.entity_kind(LOCK_SN) is DeviceKind.LOCK
     _pair(fake_station, fake_cloud, VIDEO_LOCK_SN)
-    await set_up_warm(hass, seed_warm_cache)
+    entry = await set_up_warm(hass, seed_warm_cache)
 
+    station = entry.runtime_data.coordinators[fake_station.serial].station
+    assert station.live_support(VIDEO_LOCK_SN).support is Support.UNKNOWN
     entities = _entities_of(hass, VIDEO_LOCK_SN)
     assert _CAMERA_ENTITIES | _STATUS_ENTITIES <= entities
+    assert _LIVE_CAPTURE not in entities
     assert ("event", DOORBELL_EVENT_KEY) in entities
 
 
@@ -235,7 +243,7 @@ async def test_a_generic_camera_behind_a_homebase_2_gets_a_live_stream(
     entry = await set_up_warm(hass, seed_warm_cache)
 
     entities = _entities_of(hass, GENERIC_CAMERA_SN)
-    assert _CAMERA_ENTITIES | _STATUS_ENTITIES <= entities
+    assert _CAMERA_ENTITIES | _STATUS_ENTITIES | {_LIVE_CAPTURE} <= entities
     assert not {key for _, key in entities} & _PTZ_KEYS
     state = _camera_state(hass, GENERIC_CAMERA_SN)
     assert state.attributes["supported_features"] & CameraEntityFeature.STREAM
@@ -255,7 +263,8 @@ async def test_a_camera_whose_open_the_library_lacks_behind_its_station_gets_no_
     """The gate is the device on its station, not the model alone.
 
     A T8223's profile grades live video declared, but the library has no open for it
-    behind a HomeBase 3: camera entity, no stream feature, no broadcast.
+    behind a HomeBase 3: camera entity, no stream feature, no broadcast, no Capture live
+    image button.
     """
     model_profile = profile_for_serial(WEBRTC_BEHIND_HB3_SN)
     assert model_profile is not None
@@ -265,7 +274,9 @@ async def test_a_camera_whose_open_the_library_lacks_behind_its_station_gets_no_
 
     station = entry.runtime_data.coordinators[fake_station.serial].station
     assert station.live_support(WEBRTC_BEHIND_HB3_SN).support is Support.UNKNOWN
-    assert _CAMERA_ENTITIES <= _entities_of(hass, WEBRTC_BEHIND_HB3_SN)
+    entities = _entities_of(hass, WEBRTC_BEHIND_HB3_SN)
+    assert _CAMERA_ENTITIES <= entities
+    assert _LIVE_CAPTURE not in entities
     state = _camera_state(hass, WEBRTC_BEHIND_HB3_SN)
     assert not state.attributes["supported_features"] & CameraEntityFeature.STREAM
     streams = runtime.streaming(entry)

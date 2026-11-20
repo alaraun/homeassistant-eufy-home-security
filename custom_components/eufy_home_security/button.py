@@ -3,7 +3,8 @@
 Camera buttons (each camera with a camera entity):
 
 - **Capture live image** takes one live keyframe; it always wakes a battery camera
-  and ignores the live-snapshot option and its cooldown.
+  and ignores the live-snapshot option and its cooldown. Only a camera with a live
+  stream gets it (``detections.has_live_stream``).
 - **Refresh image** shows the camera's newest recorded event per the Camera image
   option (thumbnail, else the recording's trigger frame). It never wakes a camera
   paired to a HomeBase; a standalone battery camera is woken to read its newest still.
@@ -91,6 +92,8 @@ class EufyCameraButtonDescription(ButtonEntityDescription):
     # Whether a press is refused while a preset capture holds the camera. Not
     # while the snapshot manager's own live capture does: such presses coalesce.
     busy_check: bool = False
+    # Whether only a camera with a live stream gets the button.
+    needs_live_stream: bool = False
 
 
 BUTTONS: tuple[EufyCameraButtonDescription, ...] = (
@@ -99,6 +102,7 @@ BUTTONS: tuple[EufyCameraButtonDescription, ...] = (
         translation_key=CAPTURE_LIVE_IMAGE_KEY,
         press_fn=SnapshotManager.async_request_capture,
         busy_check=True,
+        needs_live_stream=True,
     ),
     EufyCameraButtonDescription(
         key=REFRESH_IMAGE_KEY,
@@ -133,6 +137,8 @@ async def async_setup_entry(
         for device_sn, kind in detections.paired_device_kinds(coordinator.station).items()
         if detections.has_detection_entities(kind)
         for description in BUTTONS
+        if not description.needs_live_stream
+        or detections.has_live_stream(coordinator.station, device_sn)
     )
     entities.extend(
         EufyRefreshPresetsButton(coordinator, device_sn, preset_manager)
