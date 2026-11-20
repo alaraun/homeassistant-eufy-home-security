@@ -46,7 +46,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry, async_capture_events
 
 from custom_components.eufy_home_security.binary_sensor import STORAGE_BINARY_SENSORS
 from custom_components.eufy_home_security.const import (
@@ -354,6 +354,41 @@ async def test_an_earlier_entity_of_a_figure_the_record_does_not_carry_is_forgot
     assert registry.async_get(kept.entity_id) is not None
     assert state_of(hass, kept.entity_id) == "2"
     assert registry.async_get(foreign.entity_id) is not None, "another entry's row stays"
+
+    await _unload(hass, entry)
+
+
+async def test_a_scheduled_stations_storage_rows_are_never_removed_at_setup(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Only a station without a storage schedule loses its storage rows at setup: a
+    HomeBase's reported figures keep their registry rows, none is removed and re-added."""
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    rows = [
+        registry.async_get_or_create(
+            domain, DOMAIN, entity_unique_id(SYNTHETIC.station_sn, key), config_entry=entry
+        )
+        for domain, key in (
+            (SENSOR_DOMAIN, DISK_USED_KEY),
+            (BINARY_SENSOR_DOMAIN, DISK_PROBLEM_KEY),
+        )
+    ]
+    removed = async_capture_events(hass, er.EVENT_ENTITY_REGISTRY_UPDATED)
+
+    assert await setup_entry(hass, entry)
+    await hass.async_block_till_done()
+
+    assert SYNTHETIC.station_sn in entry.runtime_data.storage
+    assert [e.data["entity_id"] for e in removed if e.data["action"] == "remove"] == []
+    for row in rows:
+        registered = registry.async_get(row.entity_id)
+        assert registered is not None
+        assert registered.id == row.id
 
     await _unload(hass, entry)
 

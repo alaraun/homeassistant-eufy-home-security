@@ -63,7 +63,10 @@ from custom_components.eufy_home_security.const import (
     CONF_EVENT_VIDEOS,
     CONF_SCAN_REGIONS,
     DETECTION_EVENT_KEY,
+    DISK_USED_KEY,
     DOMAIN,
+    EMMC_USABLE_KEY,
+    EMMC_USED_SPACE_KEY,
     GUARD_MODE_KEY,
     MODEL_KEY,
     MOTION_DETECTED_KEY,
@@ -723,6 +726,40 @@ async def test_a_live_capture_that_fails_while_the_session_is_replaced_names_the
     assert not error_records
 
     assert "login" not in fake_cloud.calls
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_storage_rows_of_a_station_reached_on_demand_are_forgotten(
+    hass: HomeAssistant, fake_cloud, seed_warm_cache, built_clients, fake_station
+):
+    """A station reached on demand has no storage schedule, so its storage rows from a
+    release that held a session to it are removed at setup; its other rows stay."""
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    stale = [
+        registry.async_get_or_create(
+            domain, DOMAIN, entity_unique_id(SN, key), config_entry=entry
+        ).entity_id
+        for domain, key in (
+            ("sensor", EMMC_USED_SPACE_KEY),
+            ("sensor", DISK_USED_KEY),
+            ("binary_sensor", EMMC_USABLE_KEY),
+        )
+    ]
+    kept = registry.async_get_or_create(
+        "sensor", DOMAIN, entity_unique_id(SN, BATTERY_KEY), config_entry=entry
+    ).entity_id
+
+    assert await setup_entry(hass, entry)
+    await hass.async_block_till_done()
+
+    assert entry.runtime_data.coordinators[SN].station.connects_on_demand
+    assert SN not in entry.runtime_data.storage
+    assert [entity_id for entity_id in stale if registry.async_get(entity_id)] == []
+    assert registry.async_get(kept) is not None
+
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 

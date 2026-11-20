@@ -75,6 +75,7 @@ from .storage import (
     StorageCoordinator,
     StoragePart,
     async_add_part_entities,
+    forget_unscheduled,
     reported_descriptions,
 )
 
@@ -502,6 +503,7 @@ async def async_setup_entry(
         )
     for storage in entry.runtime_data.storage.values():
         _async_add_storage_sensors(entry, storage, async_add_entities)
+    forget_unscheduled(hass, entry, Platform.SENSOR, (d.key for d in STORAGE_SENSORS))
 
 
 class EufyDiagnosticSensor(EufyDeviceEntity, SensorEntity):
