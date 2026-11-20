@@ -237,20 +237,22 @@ async def test_the_daily_prune_runs_on_the_event_loop(
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
     caplog: pytest.LogCaptureFixture,
+    freezer: Any,
 ) -> None:
-    """A day after setup the prune runs again and removes a file that expired meanwhile;
-    nothing is logged at ERROR."""
+    """A day after setup the prune runs again, from the event loop: a file the setup
+    prune kept (dated one day back, keeping 2 days) goes; nothing is logged at ERROR."""
     root = history.history_dir(hass) / CAMERA_NAME
     entry = await set_up_warm(hass, seed_warm_cache, options={CONF_EVENT_HISTORY_DAYS: 2})
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     today = dt_util.now().date()
     root.mkdir(parents=True, exist_ok=True)
-    day = today.fromordinal(today.toordinal() - 2).isoformat()
-    expired = root / f"{day}_10-00-00_{CAMERA_NAME}_motion.jpg"
-    expired.write_bytes(b"x")
+    day = today.fromordinal(today.toordinal() - 1).isoformat()
+    expiring = root / f"{day}_10-00-00_{CAMERA_NAME}_motion.jpg"
+    expiring.write_bytes(b"x")
 
-    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(days=1, seconds=1))
-    await wait_until(lambda: not expired.exists())
+    freezer.tick(timedelta(days=1, seconds=1))
+    async_fire_time_changed(hass)
+    await wait_until(lambda: not expiring.exists())
 
     assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
     await _unload(hass, entry)
