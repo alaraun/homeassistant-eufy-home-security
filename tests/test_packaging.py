@@ -683,12 +683,13 @@ def _option_texts(step: dict[str, Any], part: str) -> dict[str, str]:
     return {key: text for texts in step["sections"].values() for key, text in texts[part].items()}
 
 
-def test_the_options_flow_offers_exactly_its_fifteen_options() -> None:
-    """The entry's options are exactly these fifteen; a new one needs a deliberate change here.
+def test_the_options_flow_offers_exactly_its_sixteen_options() -> None:
+    """The entry's options are exactly these sixteen; a new one needs a deliberate change here.
 
     The detection hold (seconds) and the alarm safety-net timeout (minutes) default
     to 10. The mode-holds-detections repair shows by default. The live snapshot is
-    off by default: a live keyframe wakes a battery camera. The camera image defaults
+    off by default: a live keyframe wakes a battery camera. So is the full-resolution
+    capture, which keeps the camera awake longer. The camera image defaults
     to hd, the library's suggested configuration.
     The refresh keyframe defaults to 1, the recording's first.
     Cloud push is off by default: it uses eufy's cloud. The login country is empty by
@@ -719,6 +720,7 @@ def test_the_options_flow_offers_exactly_its_fifteen_options() -> None:
         CONF_EVENT_HISTORY_DAYS,
         CONF_EVENT_VIDEOS,
         CONF_EXTRA_COUNTRIES,
+        CONF_FULL_RESOLUTION_CAPTURE,
         CONF_LIVE_SNAPSHOT,
         CONF_MODE_HOLDS_DETECTIONS_REPAIR,
         CONF_RECORD_LENGTH,
@@ -749,6 +751,7 @@ def test_the_options_flow_offers_exactly_its_fifteen_options() -> None:
         CONF_CAMERA_IMAGE,
         CONF_REFRESH_KEYFRAME,
         CONF_LIVE_SNAPSHOT,
+        CONF_FULL_RESOLUTION_CAPTURE,
         CONF_STATION_SESSIONS,
         CONF_RECORD_LENGTH,
         CONF_EVENT_HISTORY_DAYS,
@@ -761,7 +764,7 @@ def test_the_options_flow_offers_exactly_its_fifteen_options() -> None:
     ]
     keys = [str(key) for key in OPTIONS_SCHEMA.schema]
     assert keys == expected, (
-        f"the options schema offers {keys}; this entry has exactly fifteen options, and "
+        f"the options schema offers {keys}; this entry has exactly sixteen options, and "
         f"another one added here without a decision would ship unannounced"
     )
     assert [key for keys in OPTIONS_SECTIONS.values() for key in keys] == expected, (
@@ -774,6 +777,7 @@ def test_the_options_flow_offers_exactly_its_fifteen_options() -> None:
         camera_image,
         refresh_keyframe,
         live,
+        full_resolution,
         sessions,
         length,
         history_days,
@@ -802,6 +806,9 @@ def test_the_options_flow_offers_exactly_its_fifteen_options() -> None:
     )
     assert refresh_keyframe.default() == DEFAULT_REFRESH_KEYFRAME
     assert live.default() is False, "the live snapshot must be opt-in: it wakes battery cameras"
+    assert full_resolution.default() is False, (
+        "the full-resolution capture must be opt-in: it keeps battery cameras awake longer"
+    )
     assert probe.default() is True, (
         "the session probe is on by default: a kick-out by another eufy client must "
         "surface as a repair without a user action"

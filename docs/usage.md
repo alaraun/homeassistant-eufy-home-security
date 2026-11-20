@@ -13,6 +13,7 @@ sit in six collapsible sections.
 | Camera images | Event image | Thumbnail, then HD | What a detection and **Refresh event image** show; see [Camera images](#camera-images) |
 | | Refresh event image keyframe | 1 | 1–5. Selects the keyframe for Refresh event image unless Event image is Thumbnail only. Later keyframes take longer and can delay image fetches for other cameras on the same HomeBase. Short recordings use their last keyframe; detection images are unchanged |
 | | Live snapshot for cameras without a detection image | Off | A camera with live video and without a detection image takes one live still, at most every 5 min. Wakes battery cameras |
+| | Capture live image at full resolution | Off | **Capture live image** waits until the stream reaches the camera's full resolution and shows that picture, not the first, smaller one a woken camera sends (a T8170 starts at 1280×720). Takes a few seconds longer, at most 30 s more, and keeps a battery camera awake that long |
 | Live view and recording | Sessions per HomeBase | 6 | 2–9. Connections Home Assistant holds to each HomeBase; each live view beyond the first needs one |
 | | Recording length (seconds) | 30 | 5–300. Length of a **Record clip** action that names no duration |
 | Event history | Event history (days) | 7 | 0–365. Days of camera images and videos kept in the media folder; 0 keeps none |
@@ -171,7 +172,8 @@ keyframes uses its last one. Detection images always use the first keyframe.
 
 A detection after a button press replaces the button's image. For a still at a fixed
 interval, an automation with a time pattern trigger can press **Capture live image**;
-each press wakes a battery camera.
+each press wakes a battery camera. For the camera's full picture size, turn on the option
+**Capture live image at full resolution**.
 
 **Attributes:** `image_source`, `triggered_at` (the event's time) and
 `image_updated` (changes with every new image, so a card can refetch).
