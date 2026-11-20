@@ -225,7 +225,8 @@ class EufySettingEntity(EufyDeviceEntity):
         self._attr_assumed_state = not spec.setting.readable
         self._attr_entity_category = spec.entity_category
         self._attr_entity_registry_enabled_default = spec.enabled_by_default
-        # The last value written, shown for a setting the dump never reports.
+        # The last value written, shown for a setting the dump never reports; dropped by a
+        # write that timed out.
         self._written: SettingValue | None = None
         # Set by a write that timed out: unknown until the next state arrives.
         self._unsettled = False
