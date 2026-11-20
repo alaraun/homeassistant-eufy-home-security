@@ -40,7 +40,7 @@ A HomeBase or mains camera on Home Assistant's own network whose replies that fi
 drops still connects: the link is set up through eufy's servers, about 2.5 s later, and
 commands and video stay on the LAN. But each reconnect then needs the internet and a
 working eufy session. The repair **eufy stations on this network connect through eufy's
-servers** names each such station with its address; it clears after the next link that
+servers** lists the address of each such station; it clears after the next link that
 comes up over the LAN, so reload the integration after changing the firewall. A station
 that answers the local search later than 2.5 s can show it once without a firewall in
 the way; it then clears at its next link. Ignore it to keep that path; the ignore lasts

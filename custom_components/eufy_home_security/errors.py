@@ -1607,7 +1607,8 @@ def sync_lan_reply_blocked_issue(
     A station is named while its ``lan_path`` warns ``PathWarning.LAN_REPLY_BLOCKED``: it
     is on one of this host's networks, but its last link (or the record kept from the last
     run) needed a punch through eufy's servers because its LAN reply did not arrive
-    (library guide). Each by its device name and the address a firewall rule needs.
+    (library guide). One markdown list line per station: the address a firewall rule
+    needs, then the device name.
     Not fixable, not persistent. With none named the issue is withdrawn, except an ignored
     one, so an ignore lasts until the entry is removed (:func:`delete_lan_reply_blocked_issue`).
     """
@@ -1622,7 +1623,7 @@ def sync_lan_reply_blocked_issue(
             station.serial
         )
         address = path.station_ip
-        blocked.append(f"{label} ({address})" if address else label)
+        blocked.append(f"- {address} ({label})" if address else f"- {label}")
     if not blocked:
         issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
         if issue is None or issue.dismissed_version is None:
@@ -1639,7 +1640,7 @@ def sync_lan_reply_blocked_issue(
         translation_key=ISSUE_LAN_REPLY_BLOCKED,
         translation_placeholders={
             "account": account_label(entry),
-            "stations": ", ".join(sorted(blocked)),
+            "stations": "\n".join(sorted(blocked)),
         },
         learn_more_url=FIREWALL_DOCS_URL,
     )

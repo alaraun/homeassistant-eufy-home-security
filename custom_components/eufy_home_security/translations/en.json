@@ -256,7 +256,7 @@
     },
     "lan_reply_blocked": {
       "title": "eufy stations on this network connect through eufy's servers for {account}",
-      "description": "These eufy stations of the account {account} are on Home Assistant's own network, but their replies to Home Assistant's local search do not arrive, so each connection is set up through eufy's servers: {stations}. Commands and video still run over the local network, but while this lasts a station that drops its connection reconnects only when Home Assistant can reach the internet and eufy's servers. A firewall on the Home Assistant host most likely drops the stations' UDP replies: allow all UDP from each address shown (the station's source port changes every session). This notice clears after the next connection that comes up over the local network. To keep connecting through eufy's servers, ignore it."
+      "description": "Home Assistant gets no reply from these stations on its own network, so they connect through eufy's servers and reconnect only while the internet is up:\n\n{stations}\n\nAllow all UDP from these addresses in the Home Assistant host's firewall, then reload the integration. This clears at the next connection over the local network; ignore it to keep connecting through eufy's servers."
     },
     "mode_holds_detections": {
       "title": "{station}: no detections from some cameras in {mode} mode",
