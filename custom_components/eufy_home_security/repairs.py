@@ -184,6 +184,8 @@ class PendingInvitesFix(RepairsFlow):
 
     Opening the fix reads the invitations afresh through the loaded client (login-free)
     and shows the first; each accepted one leads to the next, and the last ends the fix.
+    One Home Assistant cannot accept (a home appliance) is passed over and named at the
+    end, to accept in the eufy app.
     With none left (accepted in the eufy app meanwhile), or none readable, it opens on
     a confirmation that loads the devices. An accept goes through the library, which
     checks an inviter's code on this host and sends nothing when it is missing or
@@ -205,6 +207,7 @@ class PendingInvitesFix(RepairsFlow):
         self._removed = False
         self._reloaded = False
         self._in_app: list[CloudInvite] = []
+        self._read: list[CloudInvite] = []
 
     def _account(self) -> str:
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
@@ -258,6 +261,7 @@ class PendingInvitesFix(RepairsFlow):
         if entry is None:
             return self.async_abort(reason="entry_not_loaded")
         self._invites = list(await runtime.async_pending_invites(entry.runtime_data.eufy) or [])
+        self._read = list(self._invites)
         if not self._invites:
             return await self.async_step_confirm()
         self._chosen = self._invites[0]
@@ -335,7 +339,8 @@ class PendingInvitesFix(RepairsFlow):
             reason="accept_in_app",
             description_placeholders={
                 "invitation": errors.markdown_literal(
-                    "; ".join(errors.invite_choice_label(i, self._in_app) for i in self._in_app)
+                    # labelled against every invitation read, so two alike stay apart
+                    "; ".join(errors.invite_choice_label(i, self._read) for i in self._in_app)
                 )
             },
         )

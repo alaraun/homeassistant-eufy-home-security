@@ -297,7 +297,10 @@ async def test_an_invitation_left_to_the_eufy_app_does_not_block_the_next(
     result = await manager.async_configure(flow_id, {})
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "accept_in_app"
-    assert result["description_placeholders"] == {"invitation": f"SoloCam S340 from {_INVITER}"}
+    # named apart from the accepted invitation that reads alike
+    assert result["description_placeholders"] == {
+        "invitation": f"SoloCam S340 from {_INVITER} (T8170\\*\\*\\*1111)"
+    }
     await hass.async_block_till_done()
 
     assert _accepted_ids(fake_cloud) == [72]
@@ -318,7 +321,7 @@ async def test_a_second_submit_while_an_accept_runs_sends_nothing(
     entry, _ = await _set_up_invited(
         hass, fake_cloud, seed_warm_cache, devices=_two_devices(121, 122)
     )
-    manager, flow_id, _ = await _open_fix(hass, entry)
+    manager, flow_id, opened = await _open_fix(hass, entry)
     eufy = entry.runtime_data.eufy
     original = eufy.async_accept_invite
     entered = asyncio.Event()
@@ -335,6 +338,7 @@ async def test_a_second_submit_while_an_accept_runs_sends_nothing(
     async with asyncio.timeout(5):
         second = await manager.async_configure(flow_id, {})
     assert second["type"] is FlowResultType.FORM
+    assert (second["step_id"], _shown(second)) == (opened["step_id"], _shown(opened))
     release.set()
     result = await first
     assert _shown(result) == f"SoloCam S340 from {_INVITER}"
