@@ -1,10 +1,12 @@
 """Tests for standalone battery stations (T8170)."""
 
+import asyncio
 import base64
 import json
 import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from typing import Any
 from urllib.parse import urlparse
 
 import eufy_home_security.station
@@ -24,6 +26,7 @@ from conftest import (
     wait_until,
 )
 from eufy_home_security import (
+    CameraImage,
     CloudDevice,
     CommandNotAppliedError,
     CommunicationError,
@@ -55,7 +58,7 @@ from pytest_homeassistant.common import (
     async_fire_time_changed,
 )
 
-from custom_components.eufy_home_security import diagnostics, errors, history
+from custom_components.eufy_home_security import diagnostics, errors, history, snapshots
 from custom_components.eufy_home_security.const import (
     BATTERY_KEY,
     CAMERA_KEY,
@@ -1086,6 +1089,39 @@ async def test_in_thumbnail_mode_a_cloud_detection_fetches_its_still_after_the_d
     await wait_until(lambda: len(_history_stills(hass)) == 1)
     assert _history_stills(hass)[0].endswith("_person.jpg")
 
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_the_detection_hd_image_gets_the_librarys_full_resolution_hold(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    seed_warm_cache,
+    built_clients,
+    fake_station,
+    fake_cloud,
+):
+    """The detection's full-resolution live keyframe may take the live cap plus the
+    library's hold: a call slower than the live cap alone still lands."""
+    monkeypatch.setattr(snapshots, "LIVE_SNAPSHOT_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(snapshots, "FULL_RESOLUTION_TIMEOUT", 1.5)
+    real = Station.async_event_image
+
+    async def slow(self: Station, *args: Any, **kwargs: Any) -> CameraImage:
+        await asyncio.sleep(0.6)
+        return await real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Station, "async_event_image", slow)
+    entry = await set_up_warm(hass, seed_warm_cache, options={CONF_CAMERA_IMAGE: "hd_only"})
+    manager = entry.runtime_data.snapshots
+    t = now_ms()
+    _serve_newest_still(fake_station, t, _STILL)
+
+    _deliver(entry, _person_push(t, "a" * 32))
+    await wait_until(lambda: manager.image_for(SN) is not None, timeout=5)
+    await wait_until(lambda: not manager.busy)
+
+    assert manager.source_for(SN).value == "detection_live"
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 

@@ -62,6 +62,10 @@ MAX_REFRESH_KEYFRAME: Final = 5
 # wakes a battery camera, at most once per cooldown.
 CONF_LIVE_SNAPSHOT: Final = "live_snapshot"
 LIVE_SNAPSHOT_COOLDOWN_SECONDS: Final = 300
+# Off by default: Capture live image waits for the stream's picture size to settle and
+# shows the largest keyframe (the library's ``full_resolution``), which keeps a battery
+# camera awake longer. Off takes the first keyframe. A change reloads the entry.
+CONF_FULL_RESOLUTION_CAPTURE: Final = "full_resolution_capture"
 # On by default: one authenticated read with the saved session that says whether eufy
 # still accepts it, never a sign-in. Without it a kick-out by another client is noticed
 # only when a command next needs eufy, which on an account of HomeBases alone can be never.

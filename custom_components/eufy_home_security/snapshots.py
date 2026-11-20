@@ -79,7 +79,9 @@ only decides what Home Assistant shows, and when it asks:
   camera keeps only its newest pending event: a burst of detections costs one fetch.
 - **On demand.** A camera's "Capture live image" button asks for one
   live keyframe (``Station.async_camera_image`` with ``ImageSource.LIVE``), which wakes a
-  battery camera. A press only queues a job on the station's worker and returns; presses
+  battery camera: the first keyframe, or with the full-resolution option the largest
+  once the picture size has settled (``full_resolution``), with the camera awake that
+  much longer. A press only queues a job on the station's worker and returns; presses
   while that camera's capture is queued or running join it, and there is no cooldown.
   Presses and detections are ordered by a per-camera arrival counter, never by clocks: a
   detection accepted after a press replaces the pressed image, and a pressed image that
@@ -279,6 +281,15 @@ async def async_open_media[T](
     return await call(True)
 
 
+def capture_timeout(full_resolution: bool) -> float:
+    """The cap on one live image call: the live keyframe's, plus with ``full_resolution``
+    the library's longest hold for the picture size to settle (``FULL_RESOLUTION_TIMEOUT``,
+    counted from the first keyframe), so the cap never cuts that hold short."""
+    if full_resolution:
+        return LIVE_SNAPSHOT_TIMEOUT_SECONDS + FULL_RESOLUTION_TIMEOUT
+    return LIVE_SNAPSHOT_TIMEOUT_SECONDS
+
+
 async def async_keyframe_to_jpeg(
     command: Sequence[str], keyframe: bytes, codec: VideoCodec | None, timeout: float
 ) -> bytes | None:
@@ -449,6 +460,7 @@ class SnapshotManager:
         *,
         live_snapshot: bool,
         camera_image: CameraImageMode,
+        full_resolution_capture: bool = False,
         yield_media: Callable[[str], Awaitable[None]],
         refresh_keyframe: int = DEFAULT_REFRESH_KEYFRAME,
         cache: StillCache | None = None,
@@ -465,6 +477,8 @@ class SnapshotManager:
         one way only. ``cache`` receives every stored still (``still_cache.py``), and so
         does ``history`` (``history.py``), with the still's own moment and kind.
         ``push_image`` is the client's ``async_push_image``; None shows no push picture.
+        ``full_resolution_capture`` makes a "Capture live image" press wait for the full
+        picture size (:func:`capture_timeout`).
         """
         self._hass = hass
         self._push_image = push_image
@@ -472,6 +486,7 @@ class SnapshotManager:
         self._cache = cache
         self._history = history
         self._live_snapshot = live_snapshot
+        self._full_resolution_capture = full_resolution_capture
         self._camera_image = camera_image
         self._refresh_keyframe = refresh_keyframe
         self._yield_media = yield_media
@@ -1429,14 +1444,19 @@ class SnapshotManager:
             self._store(camera, device_sn, jpeg, StillSource.LIVE, None, None, seq=camera.seq)
 
     async def _async_capture(self, station: Station, camera: _CameraStill, device_sn: str) -> None:
-        """One pressed live keyframe; only its JPEG is stored."""
+        """One pressed live keyframe, the full-size one with the option; only its JPEG is stored."""
         serial = redact_serial(device_sn)
-        _LOGGER.debug("Live capture of %s: fetching", serial)
+        full = self._full_resolution_capture
+        _LOGGER.debug(
+            "Live capture of %s: fetching%s", serial, " at full resolution" if full else ""
+        )
         start = time.monotonic()
 
         async def fetch(wait: bool) -> CameraImage:
-            async with asyncio.timeout(LIVE_SNAPSHOT_TIMEOUT_SECONDS):
-                return await station.async_camera_image(device_sn, ImageSource.LIVE, wait=wait)
+            async with asyncio.timeout(capture_timeout(full)):
+                return await station.async_camera_image(
+                    device_sn, ImageSource.LIVE, wait=wait, full_resolution=full
+                )
 
         try:
             image = await async_open_media(station, self._yield_media, fetch)
@@ -1456,8 +1476,9 @@ class SnapshotManager:
             )
             return
         _LOGGER.debug(
-            "Live capture of %s: fetched %d bytes in %.1f s, decode started",
+            "Live capture of %s: fetched %s (%d bytes) in %.1f s, decode started",
             serial,
+            _picture_size(image),
             len(image.data),
             _elapsed(start),
         )
@@ -1743,8 +1764,7 @@ class SnapshotManager:
 
         async def fetch(_wait: bool) -> CameraImage:
             # A standalone camera: async_open_media passes wait=True, what this call does.
-            # The cap adds the library's longest hold for the full size to a live image's.
-            async with asyncio.timeout(LIVE_SNAPSHOT_TIMEOUT_SECONDS + FULL_RESOLUTION_TIMEOUT):
+            async with asyncio.timeout(capture_timeout(True)):
                 return await station.async_event_image(
                     event, ImageSource.LIVE, full_resolution=True
                 )
