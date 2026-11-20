@@ -62,6 +62,7 @@ from eufy_home_security import (
     ClipWriter,
     EufySecurityError,
     HistoryRecord,
+    IncompleteReason,
     MediaClip,
     SecurityEvent,
     Station,
@@ -84,6 +85,12 @@ if TYPE_CHECKING:
     from .runtime import EufyConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+
+# The log wording of a clip the library reports not whole, by its reason.
+_INCOMPLETE_WORDS: Final[dict[IncompleteReason | None, str]] = {
+    IncompleteReason.MISSING_FRAMES: "incomplete: frames missing",
+    IncompleteReason.NO_END_FRAME: "incomplete: the station never ended the download",
+}
 
 _STORE_VERSION: Final = 1
 # 2: records keyed by station and record id (record_key), not by record id alone.
@@ -677,7 +684,7 @@ class RecordingManager:
         if cut:
             reason = "cut at a video-codec change"
         elif isinstance(err, IncompleteClipError):
-            reason = "incomplete"
+            reason = _INCOMPLETE_WORDS.get(err.clip.incomplete_reason, "incomplete")
         else:
             reason = errors.failure_reason(err)
         _LOGGER.debug(

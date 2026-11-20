@@ -24,8 +24,8 @@ differ. This module only decides what Home Assistant shows, and when it asks:
   HA-side cap, decodes the keyframe with Home Assistant's ffmpeg, stores the JPEG in
   memory and tells the preset's image entity through the dispatcher. A failure keeps
   the previous image, is logged at DEBUG only, and is never retried.
-- **Refresh presets recaptures.** A "Refresh presets" press reads the slots, then
-  captures every enabled slot in index order, one at a time, each exactly as its
+- **Refresh presets recaptures.** A "Refresh presets" press reads the slots, then,
+  where the camera can take a preset picture, captures every enabled slot in index order, one at a time, each exactly as its
   "Capture preset n" press would. The camera stays awake for the whole run (one turn
   and settle per slot) and returns to its default preset once idle. While the run
   captures a slot, that slot counts as the running capture: a press for it joins, a
@@ -265,8 +265,8 @@ class PresetManager:
 
         Nothing is sent from here. A camera the library holds for another capture
         raises the busy toast, a slot the last read showed unset raises
-        ``preset_not_set``, a model without presets ``presets_unsupported``
-        (reachable from the action only). A press for the slot already being captured
+        ``preset_not_set``, a model without presets ``presets_unsupported``, a camera
+        that cannot take a preset picture ``preset_image_unsupported``. A press for the slot already being captured
         joins that capture. Otherwise the capture starts as a background task.
         """
         serial = redact_serial(device_sn)
@@ -280,6 +280,13 @@ class PresetManager:
                 "Capture preset %d of %s refused: the model has no presets", index, serial
             )
             raise errors.presets_unsupported()
+        if not detections.has_preset_image(station, device_sn):
+            _LOGGER.debug(
+                "Capture preset %d of %s refused: no preset picture behind this station",
+                index,
+                serial,
+            )
+            raise errors.preset_image_unsupported()
         known = station.presets(device_sn)
         if known is not None and index not in enabled_indexes(station, device_sn):
             _LOGGER.debug(
@@ -441,7 +448,8 @@ class PresetManager:
 
     @callback
     def async_request_refresh_presets(self, station: Station, device_sn: str) -> None:
-        """A "Refresh presets" press: one slot read, then one capture per enabled slot.
+        """A "Refresh presets" press: one slot read, then one capture per enabled slot
+        where the camera can take a preset picture (``detections.has_preset_image``).
 
         Wakes a battery camera. Returns at once. A press while this camera's refresh
         runs joins it. The entities of new slots are added by the ``PresetsChanged``
@@ -492,7 +500,13 @@ class PresetManager:
                 enabled,
                 _elapsed(start),
             )
-            await self._async_recapture(station, device_sn, enabled)
+            if detections.has_preset_image(station, device_sn):
+                await self._async_recapture(station, device_sn, enabled)
+            else:
+                _LOGGER.debug(
+                    "Refresh presets of %s: no preset picture behind this station, none taken",
+                    serial,
+                )
         finally:
             if self._refreshes.get(device_sn) is asyncio.current_task():
                 del self._refreshes[device_sn]

@@ -298,6 +298,8 @@ EXC_CAPTURE_IN_PROGRESS: Final = "capture_in_progress"
 EXC_PRESET_NOT_SET: Final = "preset_not_set"
 # A preset action on a camera whose model has no pan/tilt presets.
 EXC_PRESETS_UNSUPPORTED: Final = "presets_unsupported"
+# A preset capture on a camera that has presets but no preset picture behind its station.
+EXC_PRESET_IMAGE_UNSUPPORTED: Final = "preset_image_unsupported"
 # A default-preset write the camera refused with -502, its "set anyway?" question.
 # Never answered with confirm on the user's behalf.
 EXC_DEFAULT_PRESET_NEEDS_CONFIRMATION: Final = "default_preset_needs_confirmation"

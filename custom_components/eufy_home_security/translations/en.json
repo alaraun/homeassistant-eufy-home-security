@@ -418,6 +418,9 @@
     "presets_unsupported": {
       "message": "This camera has no pan/tilt presets, so nothing was sent."
     },
+    "preset_image_unsupported": {
+      "message": "This camera cannot take a picture of a preset, so nothing was sent."
+    },
     "default_preset_needs_confirmation": {
       "message": "The camera asks to confirm before making this preset its default, so nothing was changed. Choose the default preset in the eufy app, then press Refresh presets."
     },

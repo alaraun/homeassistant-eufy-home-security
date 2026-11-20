@@ -1529,11 +1529,16 @@ async def test_only_a_device_the_library_can_open_live_advertises_a_stream(
     hass: HomeAssistant, fake_cloud, seed_warm_cache, built_clients, fake_station
 ) -> None:
     """The gate is the library's live support on the device's station, never a prefix."""
+    eufycam_3c = "T8161P0000000001"
+    fake_cloud.devices.append(
+        camera_device(eufycam_3c, station_sn=fake_station.serial, channel=1, name="3C")
+    )
     entry = await set_up_warm(hass, seed_warm_cache)
     station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
 
     assert detections.has_live_stream(station, SYNTHETIC.camera_sn) is True
-    assert detections.has_live_stream(station, "T8161P0000000001") is True  # eufyCam 3C
+    assert detections.has_live_stream(station, eufycam_3c) is True
+    assert detections.has_live_stream(station, "T8161P0000000002") is False  # not paired here
     assert detections.has_live_stream(station, SENSOR_SN) is False
     assert detections.has_live_stream(station, SYNTHETIC.station_sn) is False
 

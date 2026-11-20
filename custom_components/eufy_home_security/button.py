@@ -16,8 +16,8 @@ translated error (the library allows one capture per camera). The buttons follow
 station's session, never a running capture.
 
 A pan/tilt camera also gets **Refresh presets** (one slot read per press, which wakes
-a battery camera; setup never reads them) and one **Capture preset n** per slot the
-last read showed set (unavailable while unset). A press for another slot while a
+a battery camera; setup never reads them) and, where it can take a preset picture, one
+**Capture preset n** per slot the last read showed set (unavailable while unset). A press for another slot while a
 capture runs is a translated error, never a queue. With ``Capability.PTZ_CONTROL``:
 **Pan left/right**, **Tilt up/down** (one step per press; the camera returns to its
 default preset once idle). Where the model stores presets behind its station
@@ -162,7 +162,7 @@ async def async_setup_entry(
     async_add_entities(entities)
     for coordinator in entry.runtime_data.coordinators.values():
         for device_sn in detections.paired_device_kinds(coordinator.station):
-            if detections.has_preset_entities(coordinator.station, device_sn):
+            if detections.has_preset_image(coordinator.station, device_sn):
                 _add_preset_capture_buttons(
                     hass, entry, coordinator, device_sn, preset_manager, async_add_entities
                 )
