@@ -571,6 +571,9 @@ the camera and its settings. The limits above apply.
     last reported.
   - No answer in time: error *setting unconfirmed*; the entity shows unknown until
     the next update shows the value in force.
+  - A control the device never reports back is marked as assumed state: unknown until
+    you set it from Home Assistant, then the value you set; unknown again after a
+    restart or reload.
 - `applies_when` attribute (for example `power_manager_mode=3`, with
   `applies_when_label` "Custom recording"): the setting applies only in that state and
   is unavailable otherwise. On a T8160, clip length, trigger interval and end clip

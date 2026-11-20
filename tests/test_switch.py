@@ -6,6 +6,7 @@ inverted setting (wire 0 = on) needs nothing here.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
 from typing import Any, Final
 
@@ -18,11 +19,13 @@ from conftest import (
     setting_param,
     state_of,
 )
-from eufy_home_security import EufySecurity, entity_unique_id
+from eufy_home_security import EufySecurity, Station, entity_unique_id
+from eufy_home_security.devices import Setting
 from eufy_home_security.devices.model_settings import settings_of
 from eufy_home_security.testing import SYNTHETIC, FakeStation
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.const import (
+    ATTR_ASSUMED_STATE,
     ATTR_ENTITY_ID,
     SERVICE_TURN_OFF,
     SERVICE_TURN_ON,
@@ -104,6 +107,60 @@ async def test_switches_follow_the_station_including_inverted_ones(
     from custom_components.eufy_home_security import switch
 
     assert switch.PARALLEL_UPDATES == 1
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_a_write_only_switch_is_assumed_and_shows_only_what_it_wrote(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A setting the library cannot read back (``readable`` False) is assumed state:
+    unknown until written here, then the written value through later polls, and unknown
+    again after a reload. A value in the station's dump is never shown for it."""
+    real = Station.settings_for
+
+    def settings_for(self: Station, device_sn: str | None = None) -> tuple[Setting, ...]:
+        return tuple(
+            dataclasses.replace(s, readable=False) if s.key == _STATUS_LED else s
+            for s in real(self, device_sn)
+        )
+
+    monkeypatch.setattr(Station, "settings_for", settings_for)
+    seed_setting(fake_station, _STATUS_LED, 1)
+    fake_station.reply_to_settings = True
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = _switch_id(hass, _STATUS_LED)
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.state == STATE_UNKNOWN
+    assert state.attributes.get(ATTR_ASSUMED_STATE) is True
+
+    await set_switch(hass, entity_id, False)
+    await hass.async_block_till_done()
+    assert _param(fake_station, _STATUS_LED) == "0"
+    assert state_of(hass, entity_id) == STATE_OFF
+
+    # The dump says on; the entity keeps the value it wrote.
+    seed_setting(fake_station, _STATUS_LED, 1)
+    await entry.runtime_data.coordinators[SYNTHETIC.station_sn].async_refresh()
+    await hass.async_block_till_done()
+    assert state_of(hass, entity_id) == STATE_OFF
+
+    await set_switch(hass, entity_id, True)
+    await hass.async_block_till_done()
+    assert state_of(hass, entity_id) == STATE_ON
+
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.state == STATE_UNKNOWN
+    assert state.attributes.get(ATTR_ASSUMED_STATE) is True
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
