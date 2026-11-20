@@ -24,8 +24,8 @@ differ. This module only decides what Home Assistant shows, and when it asks:
   HA-side cap, decodes the keyframe with Home Assistant's ffmpeg, stores the JPEG in
   memory and tells the preset's image entity through the dispatcher. A failure keeps
   the previous image, is logged at DEBUG only, and is never retried.
-- **Refresh presets recaptures.** A "Refresh presets" press reads the slots, then
-  captures every enabled slot in index order, one at a time, each exactly as its
+- **Refresh presets recaptures.** A "Refresh presets" press reads the slots, then,
+  where the camera can take a preset picture, captures every enabled slot in index order, one at a time, each exactly as its
   "Capture preset n" press would. The camera stays awake for the whole run (one turn
   and settle per slot) and returns to its default preset once idle. While the run
   captures a slot, that slot counts as the running capture: a press for it joins, a
@@ -266,8 +266,7 @@ class PresetManager:
         Nothing is sent from here. A camera the library holds for another capture
         raises the busy toast, a slot the last read showed unset raises
         ``preset_not_set``, a model without presets ``presets_unsupported``, a camera
-        that cannot take a preset picture ``preset_image_unsupported`` (both reachable
-        from the action only). A press for the slot already being captured
+        that cannot take a preset picture ``preset_image_unsupported``. A press for the slot already being captured
         joins that capture. Otherwise the capture starts as a background task.
         """
         serial = redact_serial(device_sn)

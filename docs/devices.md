@@ -125,9 +125,10 @@ app, not tested, except the T8170 [above](#tested-models):
 
 A camera the eufy app sends every command to over WebRTC (such as some standalone T8170
 from firmware 3.4.0.0) gets none of these; their entities from an earlier setup are
-removed when the integration starts. A camera with presets but no live video (such as a
-T8172 behind a HomeBase mini) gets the preset entities without **Capture preset n**
-buttons: a preset picture is taken from live video.
+removed when the integration starts or reloads (a firmware update takes effect after a
+reload). A camera with presets but no live video (such as a T8172 behind a HomeBase mini)
+gets the preset entities without **Capture preset n** buttons, and its **Preset n image**
+entities stay empty: a preset picture is taken from live video.
 
 A T8173 cannot save a view as a preset, and a T8419, T8423 or T8W11 cannot change its
 default preset (their eufy app handlers have no such action). The station matters

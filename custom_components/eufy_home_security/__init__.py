@@ -1179,6 +1179,13 @@ def _async_forget_capture_live_entities(
 
 
 _PAN_TILT_STEP_KEYS: Final = frozenset({PAN_LEFT_KEY, PAN_RIGHT_KEY, TILT_UP_KEY, TILT_DOWN_KEY})
+# Every fixed-key pan/tilt or preset row; the slot rows are matched by their index.
+_PAN_TILT_KEYS: Final = _PAN_TILT_STEP_KEYS | {
+    REFRESH_PRESETS_KEY,
+    DEFAULT_PRESET_KEY,
+    LIVE_PRESET_KEY,
+    LIVE_ZOOM_KEY,
+}
 
 
 def _async_forget_pan_tilt_entities(
@@ -1217,6 +1224,9 @@ def _pan_tilt_row_built(station: Station, serial: str, domain: str, key: str) ->
     live-preset select presets and a live stream; the step buttons pan/tilt control;
     the live zoom zoom and a live stream.
     """
+    index = _preset_slot_index(key)
+    if index is None and key not in _PAN_TILT_KEYS:
+        return None
     presets = detections.has_preset_entities(station, serial)
     live = detections.has_live_stream(station, serial)
     built: bool | None = None
@@ -1231,10 +1241,7 @@ def _pan_tilt_row_built(station: Station, serial: str, domain: str, key: str) ->
         built = presets and live
     elif domain == Platform.NUMBER and key == LIVE_ZOOM_KEY:
         built = detections.has_zoom(station, serial) and live
-    else:
-        index = _preset_slot_index(key)
-        if index is None:
-            return None
+    elif index is not None:
         if domain == Platform.IMAGE and key == preset_image_key(index):
             built = presets
         elif domain == Platform.BUTTON and key == preset_capture_key(index):

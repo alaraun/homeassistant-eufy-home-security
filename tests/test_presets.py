@@ -32,7 +32,7 @@ from eufy_home_security import (
     UnsupportedError,
     redact_serial,
 )
-from eufy_home_security.devices import Evidence, Support
+from eufy_home_security.devices import Capability, Evidence, Support
 from eufy_home_security.p2p.messages import STANDALONE_RECEIPT_LEN
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
 from homeassistant.components.image import async_get_image
@@ -2834,6 +2834,8 @@ async def test_refresh_presets_takes_the_pictures_where_the_camera_has_a_live_st
 _PTZ_ROWS: list[tuple[str, str]] = [
     ("button", "refresh_presets"),
     ("button", "pan_left"),
+    ("button", "pan_right"),
+    ("button", "tilt_up"),
     ("button", "tilt_down"),
     ("button", "preset_1_capture"),
     ("image", "preset_1_image"),
@@ -2841,20 +2843,40 @@ _PTZ_ROWS: list[tuple[str, str]] = [
     ("select", "live_preset"),
     ("number", "live_zoom"),
 ]
+_STEP_ROWS: set[tuple[str, str]] = {
+    ("button", "pan_left"),
+    ("button", "pan_right"),
+    ("button", "tilt_up"),
+    ("button", "tilt_down"),
+}
+
+
+def _no_ptz_capability(monkeypatch: pytest.MonkeyPatch, capability: Capability) -> None:
+    """Grade one pan/tilt capability of the camera ``UNKNOWN``; the others stay."""
+    real = Station.ptz_support
+
+    def support(self, device_sn, asked):
+        if device_sn == SN and asked is capability:
+            return Evidence(Support.UNKNOWN, "graded unknown by the test")
+        return real(self, device_sn, asked)
+
+    monkeypatch.setattr(Station, "ptz_support", support)
 
 
 @pytest.mark.parametrize(
-    ("firmware", "no_live", "forgotten"),
+    ("firmware", "unknown", "forgotten"),
     [
-        ("3.3.9.9", False, set()),
+        ("3.3.9.9", None, set()),
         (
             "3.3.9.9",
-            True,
+            "live",
             {("button", "preset_1_capture"), ("select", "live_preset"), ("number", "live_zoom")},
         ),
-        ("3.4.0.0", False, set(_PTZ_ROWS)),
+        ("3.3.9.9", Capability.PTZ_CONTROL, _STEP_ROWS),
+        ("3.3.9.9", Capability.PTZ_ZOOM, {("number", "live_zoom")}),
+        ("3.4.0.0", None, set(_PTZ_ROWS)),
     ],
-    ids=["over-p2p", "no-live-stream", "over-webrtc"],
+    ids=["over-p2p", "no-live-stream", "no-pan-tilt-control", "no-zoom", "over-webrtc"],
 )
 async def test_setup_forgets_the_pan_tilt_rows_the_platforms_no_longer_build(
     hass: HomeAssistant,
@@ -2864,15 +2886,17 @@ async def test_setup_forgets_the_pan_tilt_rows_the_platforms_no_longer_build(
     fake_station,
     monkeypatch,
     firmware: str,
-    no_live: bool,
+    unknown: str | Capability | None,
     forgotten: set[tuple[str, str]],
 ):
     """An earlier setup's pan/tilt and preset rows are removed where the grade they rest
-    on reads unknown: a firmware the eufy app streams over WebRTC, no live stream. Rows
-    of another entry and other rows of the camera stay."""
+    on reads unknown: a firmware the eufy app streams over WebRTC, no live stream, no
+    pan/tilt control, no zoom. Rows of another entry and other rows of the camera stay."""
     fake_cloud.devices[0]["main_sw_version"] = firmware
-    if no_live:
+    if unknown == "live":
         _no_live_stream(monkeypatch)
+    elif isinstance(unknown, Capability):
+        _no_ptz_capability(monkeypatch, unknown)
     seed_warm_cache()
     entry = add_entry(hass)
     other = MockConfigEntry(domain=DOMAIN, unique_id="other@example.invalid")
@@ -2885,7 +2909,7 @@ async def test_setup_forgets_the_pan_tilt_rows_the_platforms_no_longer_build(
         for domain, key in _PTZ_ROWS
     }
     foreign = registry.async_get_or_create(
-        "button", DOMAIN, f"{SN}_pan_right", config_entry=other
+        "button", DOMAIN, f"{SN}_preset_2_capture", config_entry=other
     ).entity_id
     unlisted = registry.async_get_or_create(
         "button", DOMAIN, "T8170P0000000009_pan_left", config_entry=entry

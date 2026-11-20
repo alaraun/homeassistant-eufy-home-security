@@ -17,7 +17,8 @@ Preset entities are built from the slots the station holds in its cache; nothing
 wakes a camera to learn them. A camera never read gets no preset image entity until its
 first "Refresh presets" press (or any capture) reads the slots, at which point
 ``PresetsChanged`` adds them without a restart. A slot the latest read shows
-disabled makes its entity unavailable; nothing is ever removed.
+disabled makes its entity unavailable. Setup removes them only for a camera whose
+presets the library no longer supports behind its station (``__init__.py``).
 """
 
 from __future__ import annotations
