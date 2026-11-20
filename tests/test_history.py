@@ -42,7 +42,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.eufy_home_security import errors, history
 from custom_components.eufy_home_security.const import (
@@ -228,6 +228,33 @@ async def test_setup_prunes_days_beyond_the_kept_ones(
     await wait_until(lambda: not files[2].exists())
 
     assert files[1].exists()
+    await _unload(hass, entry)
+
+
+async def test_the_daily_prune_runs_on_the_event_loop(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    caplog: pytest.LogCaptureFixture,
+    freezer: Any,
+) -> None:
+    """A day after setup the prune runs again, from the event loop: a file the setup
+    prune kept (dated one day back, keeping 2 days) goes; nothing is logged at ERROR."""
+    root = history.history_dir(hass) / CAMERA_NAME
+    entry = await set_up_warm(hass, seed_warm_cache, options={CONF_EVENT_HISTORY_DAYS: 2})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    today = dt_util.now().date()
+    root.mkdir(parents=True, exist_ok=True)
+    day = today.fromordinal(today.toordinal() - 1).isoformat()
+    expiring = root / f"{day}_10-00-00_{CAMERA_NAME}_motion.jpg"
+    expiring.write_bytes(b"x")
+
+    freezer.tick(timedelta(days=1, seconds=1))
+    async_fire_time_changed(hass)
+    await wait_until(lambda: not expiring.exists())
+
+    assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
     await _unload(hass, entry)
 
 

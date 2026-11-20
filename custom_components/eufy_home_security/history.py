@@ -242,10 +242,13 @@ class EventHistory:
             return
         self._async_schedule_prune()
         self._entry.async_on_unload(
-            async_track_time_interval(
-                self._hass, lambda _now: self._async_schedule_prune(), _PRUNE_INTERVAL
-            )
+            async_track_time_interval(self._hass, self._async_prune_daily, _PRUNE_INTERVAL)
         )
+
+    @callback
+    def _async_prune_daily(self, _now: datetime) -> None:
+        """The daily prune; a callback, so it runs on the event loop."""
+        self._async_schedule_prune()
 
     @callback
     def async_save(
