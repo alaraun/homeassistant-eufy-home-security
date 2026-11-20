@@ -103,8 +103,6 @@ app does; e.g. some standalone T8170 from firmware 3.4.0.0, and a C30 behind a H
 app streams it over WebRTC), and a camera the library opens
 only as a standalone camera (such as the T8410) when it is paired to a HomeBase. Such a camera gets
 no **Capture live image** button, and the card shows `No live view for this model`. The
-exception is such a standalone T8170: the library still grades it as live, so its
-live view and capture fail. The
 diagnostics download names each camera's grade and its reason under `live_support`.
 A camera with several lenses opens its live view as the eufy app does: with its lenses
 stacked in one picture where the app does so, 8:9 (taller than wide). The card's default
@@ -124,6 +122,12 @@ app, not tested, except the T8170 [above](#tested-models):
 | pan/tilt, presets | T8115, T8171, T8173, T817L, T8417, T8419, T8426, T86P2, T8W11, T8W11C |
 | pan/tilt only | T8401, T8410, T8411, T8414 |
 | presets only | T8423 |
+
+A camera the eufy app sends every command to over WebRTC (such as some standalone T8170
+from firmware 3.4.0.0) gets none of these; their entities from an earlier setup are
+removed when the integration starts. A camera with presets but no live video (such as a
+T8172 behind a HomeBase mini) gets the preset entities without **Capture preset n**
+buttons: a preset picture is taken from live video.
 
 A T8173 cannot save a view as a preset, and a T8419, T8423 or T8W11 cannot change its
 default preset (their eufy app handlers have no such action). The station matters

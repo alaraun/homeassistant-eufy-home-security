@@ -36,7 +36,7 @@ from eufy_home_security.devices import Evidence, Support
 from eufy_home_security.p2p.messages import STANDALONE_RECEIPT_LEN
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
 from homeassistant.components.image import async_get_image
-from homeassistant.core import HomeAssistant, State
+from homeassistant.core import Event, HomeAssistant, State, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from PIL import Image
@@ -2745,3 +2745,173 @@ async def test_a_picture_for_another_entity_or_a_camera_without_presets_is_refus
     await hass.async_block_till_done()
     reply = await _send_picture(hass, hass_ws_client, 1, _JPEG_B64)
     assert reply["error"]["code"] in {"not_found", "unavailable"}
+
+
+def _no_live_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Grade the camera's live stream ``UNKNOWN``: presets stay, preset pictures go."""
+    real = Station.live_support
+
+    def support(self, device_sn):
+        if device_sn == SN:
+            return Evidence(Support.UNKNOWN, "graded unknown by the test")
+        return real(self, device_sn)
+
+    monkeypatch.setattr(Station, "live_support", support)
+
+
+async def test_a_camera_with_presets_and_no_live_stream_gets_no_capture_buttons(
+    hass: HomeAssistant,
+    fake_cloud,
+    seed_warm_cache,
+    built_clients,
+    fake_station,
+    monkeypatch,
+    recapture,
+):
+    """Refresh presets reads the slots and adds their images, but no capture buttons, and
+    takes no picture; the capture_preset action is refused and nothing is sent."""
+    _no_live_stream(monkeypatch)
+    pictures: list[int] = []
+    real_picture = Station.async_preset_image
+
+    async def picture(self, device_sn, preset, **kwargs):
+        pictures.append(preset)
+        return await real_picture(self, device_sn, preset, **kwargs)
+
+    monkeypatch.setattr(Station, "async_preset_image", picture)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    station = entry.runtime_data.coordinators[SN].station
+    assert detections.has_preset_entities(station, SN)
+    assert not detections.has_preset_image(station, SN)
+
+    await _read_slots(hass)
+
+    registry = er.async_get(hass)
+    for i in (0, 1, 2):
+        assert registry.async_get_entity_id("image", DOMAIN, f"{SN}_preset_{i}_image") is not None
+        assert registry.async_get_entity_id("button", DOMAIN, f"{SN}_preset_{i}_capture") is None
+    with pytest.raises(ServiceValidationError) as exc:
+        await _camera_action(hass, "capture_preset", preset=1)
+    assert exc.value.translation_key == "preset_image_unsupported"
+    await hass.async_block_till_done()
+    assert pictures == []
+    assert fake_station.preset_gotos == []
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_refresh_presets_takes_the_pictures_where_the_camera_has_a_live_stream(
+    hass: HomeAssistant,
+    fake_cloud,
+    seed_warm_cache,
+    built_clients,
+    fake_station,
+    monkeypatch,
+    recapture,
+):
+    """The control of the case above: with a live stream the read slots are captured."""
+    pictures: list[int] = []
+
+    async def picture(self, device_sn, preset, **kwargs):
+        pictures.append(preset)
+        raise UnsupportedError("not taken by the test")
+
+    monkeypatch.setattr(Station, "async_preset_image", picture)
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    await _read_slots(hass)
+    await wait_until(lambda: len(pictures) == 3)
+
+    assert sorted(pictures) == [0, 1, 2]
+    assert entity_id_for(hass, "button", SN, "preset_1_capture") is not None
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+# Every pan/tilt and preset row of the camera: (domain, key).
+_PTZ_ROWS: list[tuple[str, str]] = [
+    ("button", "refresh_presets"),
+    ("button", "pan_left"),
+    ("button", "tilt_down"),
+    ("button", "preset_1_capture"),
+    ("image", "preset_1_image"),
+    ("select", "default_preset"),
+    ("select", "live_preset"),
+    ("number", "live_zoom"),
+]
+
+
+@pytest.mark.parametrize(
+    ("firmware", "no_live", "forgotten"),
+    [
+        ("3.3.9.9", False, set()),
+        (
+            "3.3.9.9",
+            True,
+            {("button", "preset_1_capture"), ("select", "live_preset"), ("number", "live_zoom")},
+        ),
+        ("3.4.0.0", False, set(_PTZ_ROWS)),
+    ],
+    ids=["over-p2p", "no-live-stream", "over-webrtc"],
+)
+async def test_setup_forgets_the_pan_tilt_rows_the_platforms_no_longer_build(
+    hass: HomeAssistant,
+    fake_cloud,
+    seed_warm_cache,
+    built_clients,
+    fake_station,
+    monkeypatch,
+    firmware: str,
+    no_live: bool,
+    forgotten: set[tuple[str, str]],
+):
+    """An earlier setup's pan/tilt and preset rows are removed where the grade they rest
+    on reads unknown: a firmware the eufy app streams over WebRTC, no live stream. Rows
+    of another entry and other rows of the camera stay."""
+    fake_cloud.devices[0]["main_sw_version"] = firmware
+    if no_live:
+        _no_live_stream(monkeypatch)
+    seed_warm_cache()
+    entry = add_entry(hass)
+    other = MockConfigEntry(domain=DOMAIN, unique_id="other@example.invalid")
+    other.add_to_hass(hass)
+    registry = er.async_get(hass)
+    rows = {
+        (domain, key): registry.async_get_or_create(
+            domain, DOMAIN, f"{SN}_{key}", config_entry=entry
+        ).entity_id
+        for domain, key in _PTZ_ROWS
+    }
+    foreign = registry.async_get_or_create(
+        "button", DOMAIN, f"{SN}_pan_right", config_entry=other
+    ).entity_id
+    unlisted = registry.async_get_or_create(
+        "button", DOMAIN, "T8170P0000000009_pan_left", config_entry=entry
+    ).entity_id
+    camera = registry.async_get_or_create(
+        "camera", DOMAIN, f"{SN}_camera", config_entry=entry
+    ).entity_id
+
+    removed: list[str] = []
+
+    @callback
+    def _on_update(event: Event[er.EventEntityRegistryUpdatedData]) -> None:
+        if event.data["action"] == "remove":
+            removed.append(event.data["entity_id"])
+
+    hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, _on_update)
+
+    assert await setup_entry(hass, entry)
+
+    gone = {row for row, entity_id in rows.items() if registry.async_get(entity_id) is None}
+    assert gone == forgotten
+    # Nothing else of the camera is removed, not even a row its platform builds again.
+    assert sorted(removed) == sorted(rows[row] for row in forgotten)
+    assert registry.async_get(foreign) is not None
+    assert registry.async_get(camera) is not None
+    assert registry.async_get(unlisted) is not None
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

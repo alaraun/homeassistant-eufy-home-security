@@ -65,19 +65,27 @@ from .const import (
     CONF_REFRESH_KEYFRAME,
     CONF_SCAN_REGIONS,
     DEFAULT_EVENT_HISTORY_DAYS,
+    DEFAULT_PRESET_KEY,
     DEFAULT_REFRESH_KEYFRAME,
     DOMAIN,
+    LIVE_PRESET_KEY,
+    LIVE_ZOOM_KEY,
     MAX_REFRESH_KEYFRAME,
+    PAN_LEFT_KEY,
+    PAN_RIGHT_KEY,
+    REFRESH_PRESETS_KEY,
     SAVE_VIEW_KEY,
     SIREN_KEY,
     SOLAR_CHARGING_KEY,
     SOLAR_INTENSITY_KEY,
+    TILT_DOWN_KEY,
+    TILT_UP_KEY,
     WORKING_DAYS_KEY,
 )
 from .coordinator import StationCoordinator
 from .entity import device_block
 from .events import EventRouter
-from .presets import PresetManager
+from .presets import PresetManager, preset_capture_key, preset_image_key
 from .runtime import EufyConfigEntry
 from .settings import (
     SettingEntitySpec,
@@ -598,6 +606,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     _async_forget_siren_entities(hass, entry, coordinators.values())
     _async_forget_save_view_entities(hass, entry, coordinators.values())
     _async_forget_capture_live_entities(hass, entry, coordinators.values())
+    _async_forget_pan_tilt_entities(hass, entry, coordinators.values())
     _async_follow_variants_in_use(hass, entry, coordinators.values())
     _async_enable_status_rows(hass, entry, coordinators.values())
     known = {
@@ -1167,6 +1176,77 @@ def _async_forget_capture_live_entities(
             registered = registry.async_get(entity_id)
             if registered is not None and registered.config_entry_id == entry.entry_id:
                 registry.async_remove(entity_id)
+
+
+_PAN_TILT_STEP_KEYS: Final = frozenset({PAN_LEFT_KEY, PAN_RIGHT_KEY, TILT_UP_KEY, TILT_DOWN_KEY})
+
+
+def _async_forget_pan_tilt_entities(
+    hass: HomeAssistant, entry: EufyConfigEntry, coordinators: Iterable[StationCoordinator]
+) -> None:
+    """Forget the pan/tilt and preset rows of a listed camera the platforms no longer
+    build them for, as a grade they rest on reads ``UNKNOWN`` (see
+    :func:`_pan_tilt_row_built`).
+
+    A firmware or station change can move a camera onto a route the library does not
+    implement; a row an earlier setup built would stay as an unavailable orphan. Only
+    this entry's rows, only devices the station lists.
+    """
+    registry = er.async_get(hass)
+    listed: dict[str, Station] = {
+        serial: coordinator.station
+        for coordinator in coordinators
+        for serial in detections.paired_device_kinds(coordinator.station)
+    }
+    for registered in er.async_entries_for_config_entry(registry, entry.entry_id):
+        serial, _, key = registered.unique_id.partition("_")
+        station = listed.get(serial)  # entity_unique_id: the first "_" ends the serial
+        if (
+            station is not None
+            and _pan_tilt_row_built(station, serial, registered.domain, key) is False
+        ):
+            registry.async_remove(registered.entity_id)
+
+
+def _pan_tilt_row_built(station: Station, serial: str, domain: str, key: str) -> bool | None:
+    """Whether the platforms build the pan/tilt or preset row ``domain``/``key`` of
+    ``serial``; None for any other row.
+
+    The same gates as the platforms: preset images, the preset refresh button and the
+    default-preset select need presets; a slot's capture button a preset picture; the
+    live-preset select presets and a live stream; the step buttons pan/tilt control;
+    the live zoom zoom and a live stream.
+    """
+    presets = detections.has_preset_entities(station, serial)
+    live = detections.has_live_stream(station, serial)
+    built: bool | None = None
+    if domain == Platform.BUTTON and key in _PAN_TILT_STEP_KEYS:
+        built = detections.has_pan_tilt_control(station, serial)
+    elif (domain, key) in {
+        (Platform.BUTTON, REFRESH_PRESETS_KEY),
+        (Platform.SELECT, DEFAULT_PRESET_KEY),
+    }:
+        built = presets
+    elif domain == Platform.SELECT and key == LIVE_PRESET_KEY:
+        built = presets and live
+    elif domain == Platform.NUMBER and key == LIVE_ZOOM_KEY:
+        built = detections.has_zoom(station, serial) and live
+    else:
+        index = _preset_slot_index(key)
+        if index is None:
+            return None
+        if domain == Platform.IMAGE and key == preset_image_key(index):
+            built = presets
+        elif domain == Platform.BUTTON and key == preset_capture_key(index):
+            built = detections.has_preset_image(station, serial)
+    return built
+
+
+def _preset_slot_index(key: str) -> int | None:
+    """The slot index of a ``preset_<n>_...`` row key; None for any other key."""
+    prefix, _, rest = key.partition("_")
+    index, _, _ = rest.partition("_")
+    return int(index) if prefix == "preset" and index.isdigit() else None
 
 
 def _async_forget_parentless_setting_entities(

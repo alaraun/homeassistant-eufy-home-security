@@ -268,6 +268,15 @@ def has_preset_entities(station: Station, serial: str) -> bool:
     return _ptz_supported(station, serial, Capability.PTZ_PRESETS)
 
 
+def has_preset_image(station: Station, serial: str) -> bool:
+    """Whether the camera ``serial`` on ``station`` can take a preset's picture.
+
+    ``Station.preset_image_support`` grades it other than ``UNKNOWN``: the camera has
+    presets and a live stream the library opens behind this station.
+    """
+    return station.preset_image_support(serial).support is not Support.UNKNOWN
+
+
 def has_pan_tilt_control(station: Station, serial: str) -> bool:
     """Whether the camera ``serial`` on ``station`` gets the pan/tilt step buttons.
 

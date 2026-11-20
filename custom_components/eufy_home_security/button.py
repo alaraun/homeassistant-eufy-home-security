@@ -162,7 +162,7 @@ async def async_setup_entry(
     async_add_entities(entities)
     for coordinator in entry.runtime_data.coordinators.values():
         for device_sn in detections.paired_device_kinds(coordinator.station):
-            if detections.has_preset_entities(coordinator.station, device_sn):
+            if detections.has_preset_image(coordinator.station, device_sn):
                 _add_preset_capture_buttons(
                     hass, entry, coordinator, device_sn, preset_manager, async_add_entities
                 )

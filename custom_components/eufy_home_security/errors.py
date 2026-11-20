@@ -112,6 +112,7 @@ from .const import (
     EXC_PRESET_DEFAULT_UNSUPPORTED,
     EXC_PRESET_DELETE_UNSUPPORTED,
     EXC_PRESET_IMAGE_INVALID,
+    EXC_PRESET_IMAGE_UNSUPPORTED,
     EXC_PRESET_NOT_DELETED,
     EXC_PRESET_NOT_SAVED,
     EXC_PRESET_NOT_SET,
@@ -868,6 +869,13 @@ def presets_unsupported() -> ServiceValidationError:
     """A preset action on a camera whose model has no presets; nothing sent."""
     return ServiceValidationError(
         translation_domain=DOMAIN, translation_key=EXC_PRESETS_UNSUPPORTED
+    )
+
+
+def preset_image_unsupported() -> ServiceValidationError:
+    """A preset capture on a camera that cannot take a preset picture; nothing sent."""
+    return ServiceValidationError(
+        translation_domain=DOMAIN, translation_key=EXC_PRESET_IMAGE_UNSUPPORTED
     )
 
 

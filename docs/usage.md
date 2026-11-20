@@ -354,7 +354,7 @@ Which cameras get these: [devices.md](devices.md#pan-tilt-presets-and-zoom).
 
 | Entity or action | Effect |
 |---|---|
-| **Refresh presets** button | Reads the camera's presets and captures each one. Press it on a fresh install and after changing presets in the eufy app |
+| **Refresh presets** button | Reads the camera's presets and captures each one (only reads them on a camera without live video). Press it on a fresh install and after changing presets in the eufy app |
 | **Capture preset n** button, **Preset n image** | Turn to preset n and take a still (about 10 s) |
 | **Pan left / right**, **Tilt up / down** buttons | Move one step (about 1.5 s). The camera returns to its default preset when idle |
 | **Save current view** button | Store the current view in the lowest free slot (5 slots) |
@@ -379,6 +379,8 @@ Which cameras get these: [devices.md](devices.md#pan-tilt-presets-and-zoom).
 - The actions target the camera entity, for camera cards with PTZ controls.
 - A camera without presets (T8410) gets only the pan/tilt buttons and `pan_tilt`; the
   preset actions are refused, and `zoom` on a camera without zoom too. Nothing is sent.
+- A camera with presets but no live video gets no **Capture preset n** buttons and
+  refuses `capture_preset`; nothing is sent.
 - A camera that cannot save a view (T8173) gets no **Save current view** button (nor
   the card's Save view tile) and refuses `save_preset`. One that cannot change its
   default preset (T8419, T8423, T8W11) shows its **Default preset** but refuses a

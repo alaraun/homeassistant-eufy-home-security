@@ -258,7 +258,8 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
         """The ``capture_preset`` action: start the preset capture and return at once.
 
         The same path as the slot's "Capture preset n" button. A model without presets
-        raises ``presets_unsupported``, an unset slot ``preset_not_set``, a camera held
+        raises ``presets_unsupported``, a camera without a preset picture
+        ``preset_image_unsupported``, an unset slot ``preset_not_set``, a camera held
         by another capture ``capture_in_progress``; nothing is sent in any of them.
         """
         self._presets.async_request_preset(self.coordinator.station, self._serial, preset)
