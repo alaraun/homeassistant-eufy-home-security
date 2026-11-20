@@ -26,5 +26,5 @@
   "requirements": [
     "eufy-home-security==0.4.16"
   ],
-  "version": "0.4.18"
+  "version": "0.4.19"
 }

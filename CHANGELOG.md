@@ -5,6 +5,28 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.19](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.18...v0.4.19) (2026-11-20)
+
+
+### Features
+
+* **snapshots:** option to take Capture live image at full resolution ([issue 184](https://github.com/alaraun/homeassistant-eufy-home-security/issues/184)) ([d931544](https://github.com/alaraun/homeassistant-eufy-home-security/commit/d9315442b9b70a4c03f124e08ccb24da047b2c13))
+* **switch:** the Wall Light Cam S100 (T84A1) without a HomeBase gets a Spotlight switch that turns the light on and off, and a write-only Microphone switch; declared from the eufy app, not tested (library 0.4.15) ([issue 191](https://github.com/alaraun/homeassistant-eufy-home-security/issues/191)) ([784cf8f](https://github.com/alaraun/homeassistant-eufy-home-security/commit/784cf8f3961b97b253a691fda3516afc8a111d70))
+
+
+### Bug Fixes
+
+* **button:** no Capture live image button for a camera without a live stream; its live-stream grade and reason are in the diagnostics ([issue 182](https://github.com/alaraun/homeassistant-eufy-home-security/issues/182)) ([671b4ec](https://github.com/alaraun/homeassistant-eufy-home-security/commit/671b4ec1d056b805d2632e6e089fb3e638dddd33))
+* **camera:** live view of a camera behind a HomeBase 2 no longer makes go2rtc restart every few seconds ([issue 183](https://github.com/alaraun/homeassistant-eufy-home-security/issues/183)) ([d3375b4](https://github.com/alaraun/homeassistant-eufy-home-security/commit/d3375b43bc2e4f916875dd4830672f0c58109e2e))
+* **camera:** the live snapshot option asks no live still of a camera without a live stream ([671b4ec](https://github.com/alaraun/homeassistant-eufy-home-security/commit/671b4ec1d056b805d2632e6e089fb3e638dddd33))
+* **devices:** most battery cameras and doorbells without a HomeBase (SoloCam E50, Solar Wall Light Cam S120, most battery doorbells, most eufyCams on their own) connect on demand like the T8170: no held connection, they wake per command (library 0.4.15) ([issue 178](https://github.com/alaraun/homeassistant-eufy-home-security/issues/178)) ([784cf8f](https://github.com/alaraun/homeassistant-eufy-home-security/commit/784cf8f3961b97b253a691fda3516afc8a111d70))
+* **entity:** a control the device never reports back shows unknown after a write with no answer in time, instead of the value written before it ([d2fa2b8](https://github.com/alaraun/homeassistant-eufy-home-security/commit/d2fa2b8196ca7fac4fd7bbbd0d14b887dda7aff9))
+* **history:** the event history is pruned once a day again, not only at startup ([issue 189](https://github.com/alaraun/homeassistant-eufy-home-security/issues/189)) ([1d9fd87](https://github.com/alaraun/homeassistant-eufy-home-security/commit/1d9fd87ec99dd03f15e4d6f91573cdfbd578f313))
+* **presets:** a camera the eufy app controls over WebRTC gets no pan/tilt, preset or zoom entities, and one with presets but no live video no Capture preset buttons ([d3375b4](https://github.com/alaraun/homeassistant-eufy-home-security/commit/d3375b43bc2e4f916875dd4830672f0c58109e2e))
+* **recordings:** playbacks and event-video downloads end when the station ends them; a recording the sync gives up says why it was incomplete ([d3375b4](https://github.com/alaraun/homeassistant-eufy-home-security/commit/d3375b43bc2e4f916875dd4830672f0c58109e2e))
+* **storage:** a station reached on demand loses the storage entities an earlier release built while it held a session, since its storage is not read ([784cf8f](https://github.com/alaraun/homeassistant-eufy-home-security/commit/784cf8f3961b97b253a691fda3516afc8a111d70))
+* **switch:** the Light switch of 25 camera models (such as the eufyCam 3 and eufyCam S3 Pro) is sent as the eufy app sends it, so a HomeBase 3 no longer refuses it ([issue 190](https://github.com/alaraun/homeassistant-eufy-home-security/issues/190)) ([d3375b4](https://github.com/alaraun/homeassistant-eufy-home-security/commit/d3375b43bc2e4f916875dd4830672f0c58109e2e))
+
 ## [0.4.18](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.17...v0.4.18) (2026-11-20)
 
 
