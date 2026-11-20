@@ -384,8 +384,10 @@ Which cameras get these: [devices.md](devices.md#pan-tilt-presets-and-zoom).
 
 ## Standalone battery cameras
 
-- A camera without a HomeBase (for example the T8170) is its own device with an
-  alarm panel, battery, signal, camera and buttons.
+- A battery camera or doorbell without a HomeBase (for example the T8170, a SoloCam
+  E50, a Solar Wall Light Cam S120 or a battery doorbell) is its own device with an
+  alarm panel, battery, signal, camera and buttons. The wired doorbells (T8203, T8224)
+  and wired cameras keep a connection instead.
 - Home Assistant keeps no connection to it, so it sleeps. Guard mode, battery and
   signal come from eufy's cloud and can be up to an hour old.
 - Arming, every button, every capture and each detection's picture wake it (about
