@@ -211,17 +211,41 @@ def reported_descriptions[DescT: StorageDescription](
 
 
 def _forget(coordinator: StorageCoordinator, domain: str, keys: Sequence[str]) -> None:
-    registry = er.async_get(coordinator.hass)
+    _forget_rows(
+        coordinator.hass,
+        coordinator.config_entry.entry_id,
+        coordinator.station.serial,
+        domain,
+        keys,
+    )
+
+
+def forget_unscheduled(
+    hass: HomeAssistant, entry: EufyConfigEntry, domain: str, keys: Iterable[str]
+) -> None:
+    """Remove ``domain`` rows of the storage ``keys`` for each station of ``entry`` with no
+    storage schedule (one reached on demand, which a read would wake).
+
+    A release that held a session to the station may have built them; they would stay as
+    unavailable orphans. This entry's rows only.
+    """
+    keys = tuple(keys)
+    runtime = entry.runtime_data
+    for serial in runtime.coordinators.keys() - runtime.storage.keys():
+        _forget_rows(hass, entry.entry_id, serial, domain, keys)
+
+
+def _forget_rows(
+    hass: HomeAssistant, entry_id: str, serial: str, domain: str, keys: Iterable[str]
+) -> None:
+    registry = er.async_get(hass)
     for key in keys:
-        unique_id = entity_unique_id(coordinator.station.serial, key)
+        unique_id = entity_unique_id(serial, key)
         entity_id = registry.async_get_entity_id(domain, DOMAIN, unique_id)
         if entity_id is None:
             continue
         registered = registry.async_get(entity_id)
-        if (
-            registered is not None
-            and registered.config_entry_id == coordinator.config_entry.entry_id
-        ):
+        if registered is not None and registered.config_entry_id == entry_id:
             registry.async_remove(entity_id)
 
 

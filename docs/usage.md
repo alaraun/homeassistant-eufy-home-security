@@ -382,14 +382,23 @@ Which cameras get these: [devices.md](devices.md#pan-tilt-presets-and-zoom).
   default preset (T8419, T8423, T8W11) shows its **Default preset** but refuses a
   change and `make_default`. Nothing is sent.
 
-## Standalone battery cameras
+## Standalone battery cameras and doorbells
 
-- A camera without a HomeBase (for example the T8170) is its own device with an
-  alarm panel, battery, signal, camera and buttons.
+- A camera or doorbell without a HomeBase is its own device with an alarm panel,
+  battery, signal, camera and buttons.
+- It is reached on demand when its model is on the eufy app's on-demand list (such as
+  the T8170, the SoloCam C20 or a 4G Starlight Camera) or is marked as a battery device
+  (such as the SoloCam E50, the Solar Wall Light Cam S120 or most battery doorbells).
+  Other models keep a connection: models not marked as battery devices, such as the
+  wired doorbells, the Wall Light Cam S100 or the eufyCam C31, and battery models
+  without bundled settings, such as the Battery Doorbell 8212 or the eufyCam E52. The
+  points below are for one reached on demand.
 - Home Assistant keeps no connection to it, so it sleeps. Guard mode, battery and
   signal come from eufy's cloud and can be up to an hour old.
 - Arming, every button, every capture and each detection's picture wake it (about
   10 s) and cost battery.
+- Its local storage is not read, since each read would wake it: no storage entities.
+  Their rows from an earlier release are removed at the next start.
 - Its detections reach Home Assistant only with
   [Cloud push](#cloud-push) on; without it, its detection sensors stay off.
 
@@ -459,8 +468,9 @@ Each HomeBase gets only the figures its record carries: a HomeBase 2 from firmwa
 eMMC only. A HomeBase that refuses the storage query gets none.
 An entity an earlier release created for a figure the HomeBase does not report is removed.
 
-A camera without a HomeBase (not a battery camera, which is never woken for it), a
-HomeBase 2 on firmware below 3.3.7.7 and the models T8001, T8002, T8020 and T8023 report
+A camera without a HomeBase (not one reached on demand, see
+[above](#standalone-battery-cameras-and-doorbells)), a HomeBase 2 on firmware below
+3.3.7.7 and the models T8001, T8002, T8020 and T8023 report
 their local medium, a microSD card or a built-in eMMC, as a status with a size. They
 get **eMMC used space**, **eMMC free** and **eMMC size** (off by default), named eMMC
 whatever the medium, **Local storage usable** (diagnostic binary sensor) and **Local

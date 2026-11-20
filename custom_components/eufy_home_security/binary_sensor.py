@@ -74,6 +74,7 @@ from .storage import (
     StorageCoordinator,
     StoragePart,
     async_add_part_entities,
+    forget_unscheduled,
     reported_descriptions,
 )
 
@@ -264,7 +265,6 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Add read-only settings and camera or motion-sensor detection sensors."""
-    del hass  # the coordinators carry everything this platform needs
     hold = int(entry.options.get(CONF_DETECTION_HOLD, DEFAULT_DETECTION_HOLD_SECONDS))
     entities: list[BinarySensorEntity] = [
         EufySettingBinarySensor(coordinator, spec)
@@ -288,6 +288,7 @@ async def async_setup_entry(
         _async_add_state_binary_sensors(entry, coordinator, async_add_entities)
     for storage in entry.runtime_data.storage.values():
         _async_add_storage_binary_sensors(entry, storage, async_add_entities)
+    forget_unscheduled(hass, entry, Platform.BINARY_SENSOR, (d.key for d in STORAGE_BINARY_SENSORS))
 
 
 class EufySettingBinarySensor(EufySettingEntity, BinarySensorEntity):

@@ -79,8 +79,9 @@ an account where no device was found too.
 1. Its **Detections in current mode** sensor reads `not_sent_in_mode`: the security mode
    in force holds its detections back; see
    [usage.md](usage.md#detections-in-the-security-mode).
-2. A standalone battery camera or a camera on a HomeBase 2 needs
-   [Cloud push](usage.md#cloud-push).
+2. A camera or doorbell reached on demand (see
+   [usage.md](usage.md#standalone-battery-cameras-and-doorbells)) or a camera on a
+   HomeBase 2 needs [Cloud push](usage.md#cloud-push).
 3. Check the camera's detection settings in the eufy app (motion detection on, the
    detection types).
 4. Still nothing: open an issue with the diagnostics download (it has
@@ -102,7 +103,7 @@ link took.
   [network.md](network.md#homebase-sessions).
 - **Sign-out by another client** is noticed within 6 hours, or at the next command
   that needs eufy.
-- **Standalone battery cameras and a HomeBase 2** report detections only with
+- **Cameras and doorbells reached on demand and a HomeBase 2** report detections only with
   [Cloud push](usage.md#cloud-push) on.
 - **A camera that changes video codec during live view** (a battery doorbell that opens
   on HEVC and goes on in H.264) restarts the stream at the change on the open camera,
