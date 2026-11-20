@@ -387,8 +387,8 @@ async def test_the_invitation_fix_rescans_and_sets_up_the_shared_station(
     seed_warm_cache: Callable[..., None],
     discover_calls: list[dict[str, Any]],
 ) -> None:
-    """Accepted in the eufy app, then confirmed: the reload asks every scope once, the
-    station is served and the issue is gone."""
+    """Accepted in the eufy app, then the fix opened: it confirms loading the devices,
+    the reload asks every scope once, the station is served and the issue is gone."""
     listed = list(fake_cloud.devices)
     fake_cloud.devices = []
     fake_cloud.house_invites = [dict(_HOUSE_INVITE)]
@@ -398,18 +398,12 @@ async def test_the_invitation_fix_rescans_and_sets_up_the_shared_station(
     manager = await _repairs(hass)
     issue_id = errors.pending_invites_issue_id(entry.entry_id)
 
-    result = await manager.async_init(DOMAIN, data={"issue_id": issue_id})
-    assert result["type"] is FlowResultType.MENU
-    assert result["menu_options"] == ["pick", "confirm"]
-    result = await manager.async_configure(result["flow_id"], {"next_step_id": "confirm"})
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "confirm"
-    placeholders = result["description_placeholders"]
-    assert placeholders is not None
-    assert placeholders["invites"] == f"“{_HOME_NAME}” from {_INVITER}"
     # The user accepts in the eufy app: the invitation leaves, the devices are listed.
     fake_cloud.house_invites = []
     fake_cloud.devices = listed
+    result = await manager.async_init(DOMAIN, data={"issue_id": issue_id})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "confirm"
     result = await manager.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
@@ -561,19 +555,18 @@ async def test_finishing_the_fix_with_devices_reads_the_invitations_at_the_reloa
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """A station served and an invitation accepted in the eufy app, then confirmed in
-    the fix: even when the reload's rescan falls back to the cached list, its setup
+    """A station served and an invitation accepted in the eufy app, then the fix
+    confirmed: even when the reload's rescan falls back to the cached list, its setup
     reads the invitations and the accepted one is not named again."""
     entry = await set_up_warm(hass, seed_warm_cache)
     fake_cloud.house_invites = [dict(_HOUSE_INVITE)]
     await _press(hass, entry)
     manager = await _repairs(hass)
     issue_id = errors.pending_invites_issue_id(entry.entry_id)
+    fake_cloud.house_invites = []
     result = await manager.async_init(DOMAIN, data={"issue_id": issue_id})
-    result = await manager.async_configure(result["flow_id"], {"next_step_id": "confirm"})
     assert result["step_id"] == "confirm"
 
-    fake_cloud.house_invites = []
     fake_cloud.call_errors = [CommunicationError("synthetic")] * 2
     result = await manager.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.CREATE_ENTRY

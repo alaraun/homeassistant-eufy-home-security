@@ -19,8 +19,10 @@ the two write paths cannot drift.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import timedelta
+from ipaddress import ip_address
 from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.const import CONF_EMAIL
@@ -1463,12 +1465,23 @@ def invites_text(invites: Iterable[CloudInvite]) -> str:
     return "; ".join(invite_text(invite) for invite in invites)
 
 
-def invite_choice_label(invite: CloudInvite) -> str:
-    """One invitation as the repair's picker shows it: :func:`invite_text`, plus the
-    device's redacted serial, so two shared devices of one model differ."""
-    if invite.kind == "device" and invite.device_sn:
-        return f"{invite_text(invite)} ({redact_serial(invite.device_sn)})"
-    return invite_text(invite)
+def invite_choice_label(invite: CloudInvite, others: Iterable[CloudInvite] = ()) -> str:
+    """One invitation as the repair's form names it: :func:`invite_text`, plus the
+    device's redacted serial when another of ``others`` reads the same."""
+    text = invite_text(invite)
+    same = any(other is not invite and invite_text(other) == text for other in others)
+    if same and invite.kind == "device" and invite.device_sn:
+        return f"{text} ({redact_serial(invite.device_sn)})"
+    return text
+
+
+_MARKDOWN_SPECIAL: Final = re.compile(r"([\\`*_\[\]<>])")
+
+
+def markdown_literal(text: str) -> str:
+    """``text`` escaped for a placeholder of a markdown-rendered repair description, so
+    a redacted ``***`` or an ``_`` in a name shows as written."""
+    return _MARKDOWN_SPECIAL.sub(r"\\\1", text)
 
 
 def sync_pending_invites_issue(
@@ -1613,7 +1626,7 @@ def sync_lan_reply_blocked_issue(
     one, so an ignore lasts until the entry is removed (:func:`delete_lan_reply_blocked_issue`).
     """
     issue_id = lan_reply_blocked_issue_id(entry.entry_id)
-    blocked: list[str] = []
+    blocked: list[tuple[tuple[bool, int, str], str]] = []
     for station in stations:
         path = station.lan_path
         if PathWarning.LAN_REPLY_BLOCKED not in path.warnings:
@@ -1623,7 +1636,11 @@ def sync_lan_reply_blocked_issue(
             station.serial
         )
         address = path.station_ip
-        blocked.append(f"- {address} ({label})" if address else f"- {label}")
+        shown = markdown_literal(label)
+        if address:
+            blocked.append(((False, int(ip_address(address)), label), f"- {address} ({shown})"))
+        else:
+            blocked.append(((True, 0, label), f"- {shown}"))
     if not blocked:
         issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
         if issue is None or issue.dismissed_version is None:
@@ -1640,7 +1657,8 @@ def sync_lan_reply_blocked_issue(
         translation_key=ISSUE_LAN_REPLY_BLOCKED,
         translation_placeholders={
             "account": account_label(entry),
-            "stations": "\n".join(sorted(blocked)),
+            # addresses in numeric order, stations without one last
+            "stations": "\n".join(line for _, line in sorted(blocked)),
         },
         learn_more_url=FIREWALL_DOCS_URL,
     )

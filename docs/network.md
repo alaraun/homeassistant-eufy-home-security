@@ -100,10 +100,10 @@ location /api/hls/ {
 - The account must see the HomeBase: the owner's, or one the owner shared it with
   in the eufy app. A shared home or device shows only after the invitation is
   accepted; until then the repair **eufy invitation not accepted** names it, also
-  when the account already lists other devices. Its **Fix** accepts the invitation
-  from Home Assistant, with the code the sender shared when eufy asks for one, or
-  looks for the devices again after you accepted it in the eufy app signed in with
-  that account. Signing Home Assistant's account in on a phone can end Home
+  when the account already lists other devices. Its **Fix** shows each open
+  invitation in turn and accepts it from Home Assistant, with the code the sender
+  shared when eufy asks for one, then loads the shared devices; after an accept in
+  the eufy app signed in with that account, **Fix** only loads them. Signing Home Assistant's account in on a phone can end Home
   Assistant's session; accepting from the repair avoids that. Invitations are read
   when the account lists no devices, when a start fetches the device list, on
   **Refresh device list** and at the reload it starts: press it after a new invitation
