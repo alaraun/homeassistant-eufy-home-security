@@ -9,6 +9,7 @@ profile (every capability unknown) gets no live stream.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import AsyncIterator, Callable
 from typing import Final
 
@@ -25,8 +26,9 @@ from eufy_home_security.devices import (
 )
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation, camera_device
 from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
-from homeassistant.components.camera import CameraEntityFeature
+from homeassistant.components.camera import CameraEntityFeature, async_get_image
 from homeassistant.core import HomeAssistant, State
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
@@ -35,6 +37,7 @@ from custom_components.eufy_home_security.const import (
     BATTERY_KEY,
     CAMERA_KEY,
     CAPTURE_LIVE_IMAGE_KEY,
+    CONF_LIVE_SNAPSHOT,
     DEFAULT_PRESET_KEY,
     DETECTION_EVENT_KEY,
     DOMAIN,
@@ -51,6 +54,7 @@ from custom_components.eufy_home_security.const import (
     SIGNAL_STRENGTH_KEY,
     VEHICLE_DETECTED_KEY,
 )
+from custom_components.eufy_home_security.snapshots import SnapshotManager
 
 # Synthetic serials on real product prefixes of the library's model list.
 KEYPAD_SN: Final = "T8960P0000000001"
@@ -301,3 +305,31 @@ async def test_a_camera_whose_handler_declares_pan_tilt_presets_and_zoom_gets_th
         assert station.ptz_support(FLOODLIGHT_PTZ_SN, capability).support is Support.DECLARED
     keys = {key for _, key in _entities_of(hass, FLOODLIGHT_PTZ_SN)}
     assert _PTZ_KEYS | {PAN_LEFT_KEY} <= keys
+
+
+async def test_the_live_snapshot_option_asks_no_live_still_of_a_camera_without_a_live_stream(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """With Live snapshot on, a view of a camera without an image asks for a live still
+    only where the camera has a live stream: the library would refuse the rest."""
+    _pair(fake_station, fake_cloud, WEBRTC_BEHIND_HB3_SN)
+    entry = await set_up_warm(hass, seed_warm_cache, options={CONF_LIVE_SNAPSHOT: True})
+    asked: list[str] = []
+    monkeypatch.setattr(
+        SnapshotManager,
+        "async_request_live",
+        lambda _self, _station, serial: asked.append(serial),
+    )
+
+    for serial in (WEBRTC_BEHIND_HB3_SN, SYNTHETIC.camera_sn):
+        with contextlib.suppress(HomeAssistantError):
+            await async_get_image(hass, _camera_state(hass, serial).entity_id)
+
+    assert asked == [SYNTHETIC.camera_sn]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

@@ -102,7 +102,9 @@ eufy app streams only over WebRTC (decided per camera, station and firmware as t
 app does; e.g. some standalone T8170 from firmware 3.4.0.0, and a C30 behind a HomeBase 3 on the firmware the
 app streams it over WebRTC), and a camera the library opens
 only as a standalone camera (such as the T8410) when it is paired to a HomeBase. Such a camera gets
-no **Capture live image** button, and the card shows `No live view for this model`. The
+no **Capture live image** button, and the card shows `No live view for this model`; not yet
+a standalone T8170 from firmware 3.4.0.0, which the library still grades as live, so its live
+view and capture fail. The
 diagnostics download names each camera's grade and its reason under `live_support`.
 A camera with several lenses opens its live view as the eufy app does: with its lenses
 stacked in one picture where the app does so, 8:9 (taller than wide). The card's default

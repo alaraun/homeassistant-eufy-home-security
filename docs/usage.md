@@ -12,7 +12,7 @@ sit in six collapsible sections.
 | | Repair when a security mode holds detections back | On | The repair naming cameras whose detections the security mode in force holds back. Off removes it and raises none; each camera's **Detections in current mode** sensor still shows it. See [Detections in the security mode](#detections-in-the-security-mode) |
 | Camera images | Event image | Thumbnail, then HD | What a detection and **Refresh event image** show; see [Camera images](#camera-images) |
 | | Refresh event image keyframe | 1 | 1–5. Selects the keyframe for Refresh event image unless Event image is Thumbnail only. Later keyframes take longer and can delay image fetches for other cameras on the same HomeBase. Short recordings use their last keyframe; detection images are unchanged |
-| | Live snapshot for cameras without a detection image | Off | A camera without a detection image takes one live still, at most every 5 min. Wakes battery cameras |
+| | Live snapshot for cameras without a detection image | Off | A camera with live video and without a detection image takes one live still, at most every 5 min. Wakes battery cameras |
 | Live view and recording | Sessions per HomeBase | 6 | 2–9. Connections Home Assistant holds to each HomeBase; each live view beyond the first needs one |
 | | Recording length (seconds) | 30 | 5–300. Length of a **Record clip** action that names no duration |
 | Event history | Event history (days) | 7 | 0–365. Days of camera images and videos kept in the media folder; 0 keeps none |
