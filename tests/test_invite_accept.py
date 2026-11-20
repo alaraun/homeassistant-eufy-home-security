@@ -261,11 +261,132 @@ async def test_an_appliance_invitation_is_left_to_the_eufy_app(
     result = await manager.async_configure(flow_id, {})
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "accept_in_app"
+    assert result["description_placeholders"] == {"invitation": f"SoloCam S340 from {_INVITER}"}
     await hass.async_block_till_done()
 
     assert _accepts(fake_cloud) == []
     assert len(built_clients) == clients
     assert _issue(hass, entry) is not None
+
+
+async def test_an_invitation_left_to_the_eufy_app_does_not_block_the_next(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    discover_calls: list[dict[str, Any]],
+) -> None:
+    """An appliance invitation first, a camera after it: the camera's form follows, it
+    is accepted, and the end names the appliance; one reload, the issue stays."""
+    entry, _ = await _set_up_invited(
+        hass,
+        fake_cloud,
+        seed_warm_cache,
+        devices=[
+            _device_invite(71, _SHARED_CAMERA, owner="synthetic-owner-a", category="eufy_home"),
+            _device_invite(72, _SHARED_DOORBELL, owner="synthetic-owner-b"),
+        ],
+    )
+    manager, flow_id, _ = await _open_fix(hass, entry)
+    clients = len(built_clients)
+
+    result = await manager.async_configure(flow_id, {})
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {}
+    assert _shown(result) == f"SoloCam S340 from {_INVITER}"
+    result = await manager.async_configure(flow_id, {})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "accept_in_app"
+    assert result["description_placeholders"] == {"invitation": f"SoloCam S340 from {_INVITER}"}
+    await hass.async_block_till_done()
+
+    assert _accepted_ids(fake_cloud) == [72]
+    assert len(built_clients) == clients + 1, "reloaded once"
+    assert discover_calls[-1] == {"rescan_regions": True}
+    assert _issue(hass, entry) is not None
+
+
+async def test_a_second_submit_while_an_accept_runs_sends_nothing(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two submits of one form at once: one accept is sent; the second submit shows
+    the form again."""
+    entry, _ = await _set_up_invited(
+        hass, fake_cloud, seed_warm_cache, devices=_two_devices(121, 122)
+    )
+    manager, flow_id, _ = await _open_fix(hass, entry)
+    eufy = entry.runtime_data.eufy
+    original = eufy.async_accept_invite
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def held(invite: Any, *, code: str | None = None) -> None:
+        entered.set()
+        await release.wait()
+        await original(invite, code=code)
+
+    monkeypatch.setattr(eufy, "async_accept_invite", held)
+    first = asyncio.get_running_loop().create_task(manager.async_configure(flow_id, {}))
+    await entered.wait()
+    async with asyncio.timeout(5):
+        second = await manager.async_configure(flow_id, {})
+    assert second["type"] is FlowResultType.FORM
+    release.set()
+    result = await first
+    assert _shown(result) == f"SoloCam S340 from {_INVITER}"
+    assert _accepted_ids(fake_cloud) == [121]
+    manager.async_abort(flow_id)
+    await hass.async_block_till_done()
+
+
+async def test_a_lapsed_session_after_an_earlier_accept_reloads_once(
+    hass: HomeAssistant,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first accepted, the second meets a lapsed session: one reload in all."""
+    entry, _ = await _set_up_invited(
+        hass, fake_cloud, seed_warm_cache, devices=_two_devices(131, 132)
+    )
+    manager, flow_id, _ = await _open_fix(hass, entry)
+    await manager.async_configure(flow_id, {})
+
+    async def lapsed(*args: Any, **kwargs: Any) -> None:
+        raise NoCachedSessionError("synthetic")
+
+    monkeypatch.setattr(entry.runtime_data.eufy, "async_accept_invite", lapsed)
+    clients = len(built_clients)
+    result = await manager.async_configure(flow_id, {})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "session_lapsed"
+    await hass.async_block_till_done()
+    assert len(built_clients) == clients + 1, "reloaded once"
+
+
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        ("Plain Name", "Plain Name"),
+        ("T8170***1111", "T8170\\*\\*\\*1111"),
+        ("a\\b`c_d[e]f<g>h~i", "a\\\\b\\`c\\_d\\[e\\]f\\<g\\>h\\~i"),
+        ("# Garage", "\\# Garage"),
+        ("- Garage", "\\- Garage"),
+        ("+Garage", "\\+Garage"),
+        ("1. Garage", "1\\. Garage"),
+        ("2) Garage", "2\\) Garage"),
+        ("  Garage  ", "Garage"),
+    ],
+)
+def test_markdown_literal_shows_a_name_as_written(text: str, shown: str) -> None:
+    """Markdown characters, a leading block marker and outer spaces are neutralised;
+    a plain name passes unchanged."""
+    assert errors.markdown_literal(text) == shown
 
 
 @pytest.mark.parametrize(
@@ -521,6 +642,8 @@ async def test_closing_during_a_later_accept_reloads_once_after_it(
         (False, CloudApiError(1, "synthetic"), 0),
         (True, CloudApiError(1, "synthetic"), 1),
         (True, InviteCodeError("synthetic", missing=False), 1),
+        (False, NoCachedSessionError("synthetic"), 1),
+        (True, NoCachedSessionError("synthetic"), 1),
     ],
 )
 async def test_closing_during_a_failing_accept_reloads_only_for_an_earlier_one(
@@ -535,7 +658,7 @@ async def test_closing_during_a_failing_accept_reloads_only_for_an_earlier_one(
     reloads: int,
 ) -> None:
     """Closed while an accept runs that then fails: one reload after it when an earlier
-    accept succeeded, none otherwise; never while it runs."""
+    accept succeeded or the session lapsed, none otherwise; never while it runs."""
     entry, _ = await _set_up_invited(
         hass, fake_cloud, seed_warm_cache, devices=_two_devices(111, 112)
     )

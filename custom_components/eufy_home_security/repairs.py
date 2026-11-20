@@ -62,7 +62,7 @@ from .runtime import EufyConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
-# The pending-invitations fix's form fields: the chosen invitation, the inviter's code.
+# The pending-invitations fix's code field.
 _CODE: Final = "code"
 
 
@@ -203,6 +203,8 @@ class PendingInvitesFix(RepairsFlow):
         self._accepted = False
         self._accepting = False
         self._removed = False
+        self._reloaded = False
+        self._in_app: list[CloudInvite] = []
 
     def _account(self) -> str:
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
@@ -213,8 +215,9 @@ class PendingInvitesFix(RepairsFlow):
         is being set up or waits to retry, never setting up an entry the user unloaded.
         Nothing while Home Assistant stops."""
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
-        if entry is None or self.hass.is_stopping:
+        if entry is None or self.hass.is_stopping or self._reloaded:
             return
+        self._reloaded = True
         runtime.request_rescan_at_setup(self.hass, self._entry_id)
         runtime.request_invites_at_setup(self.hass, self._entry_id)
         if entry.state in (
@@ -264,11 +267,15 @@ class PendingInvitesFix(RepairsFlow):
         self, user_input: dict[str, str] | None = None
     ) -> RepairsFlowResult:
         """Accept the shown invitation, with the inviter's code when it needs one; then
-        the next one, or finish after the last."""
+        the next one. One Home Assistant cannot accept is passed over and named when the
+        last one is done; with none passed over, the fix finishes."""
         invite = self._chosen
         entry = _loaded_entry(self.hass, self._entry_id)
         if invite is None or entry is None:
             return self.async_abort(reason="entry_not_loaded")
+        if self._accepting:
+            # A second submit while the first accept runs only shows the form again.
+            user_input = None
         form_errors: dict[str, str] = {}
         if user_input is not None:
             try:
@@ -276,7 +283,7 @@ class PendingInvitesFix(RepairsFlow):
             except InviteCodeError as err:
                 form_errors[_CODE] = "code_missing" if err.missing else "wrong_code"
             except UnsupportedError:
-                return self.async_abort(reason="accept_in_app")
+                self._in_app.append(invite)
             except NoCachedSessionError:
                 # The reload signs in to the region again; the invitation stays open.
                 self._reload()
@@ -290,10 +297,10 @@ class PendingInvitesFix(RepairsFlow):
                     type(err).__name__,
                 )
                 return self.async_abort(reason="accept_failed")
-            else:
+            if not form_errors:
                 self._invites = [other for other in self._invites if other is not invite]
                 if not self._invites:
-                    return self.async_create_entry(data={})
+                    return self._async_done()
                 invite = self._chosen = self._invites[0]
         schema = (
             vol.Schema(
@@ -319,6 +326,19 @@ class PendingInvitesFix(RepairsFlow):
         )
 
     async_step_accept_code = async_step_accept
+
+    def _async_done(self) -> RepairsFlowResult:
+        """Every invitation shown: finish, or name the ones left to the eufy app."""
+        if not self._in_app:
+            return self.async_create_entry(data={})
+        return self.async_abort(
+            reason="accept_in_app",
+            description_placeholders={
+                "invitation": errors.markdown_literal(
+                    "; ".join(errors.invite_choice_label(i, self._in_app) for i in self._in_app)
+                )
+            },
+        )
 
     async def async_step_confirm(
         self, user_input: dict[str, str] | None = None

@@ -317,7 +317,7 @@
           },
           "confirm": {
             "title": "Load the shared devices",
-            "description": "No invitation is open for the eufy account {account} any more. Submit, and Home Assistant reloads the account and asks eufy for its devices."
+            "description": "Home Assistant finds no open invitation for the eufy account {account}. Submit, and Home Assistant reloads the account and asks eufy for its devices."
           }
         },
         "error": {
@@ -326,7 +326,7 @@
         },
         "abort": {
           "entry_not_loaded": "The eufy account is not loaded in Home Assistant right now. Wait until it has finished loading, then open this repair again.",
-          "accept_in_app": "Home Assistant cannot accept this invitation. Accept it in the eufy app signed in with this account, then open this repair again to load the devices.",
+          "accept_in_app": "Home Assistant cannot accept **{invitation}**. Accept it in the eufy app signed in with this account, then open this repair again to load the devices.",
           "session_lapsed": "Home Assistant's eufy session for this invitation's region had ended, so the invitation was not accepted. Home Assistant reloads the eufy account to sign in there again; then open this repair again.",
           "accept_failed": "eufy did not accept the invitation, or could not be reached. Try again later, or accept it in the eufy app signed in with this account.",
           "session_replaced": "Another app, device or integration signed in with this eufy account and eufy ended Home Assistant's session, so the invitation was not accepted. Sign Home Assistant in again with the repair \"eufy ended Home Assistant's session\" or Reconfigure, then open this repair again."

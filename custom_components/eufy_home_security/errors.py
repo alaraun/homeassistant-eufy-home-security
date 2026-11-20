@@ -1475,13 +1475,19 @@ def invite_choice_label(invite: CloudInvite, others: Iterable[CloudInvite] = ())
     return text
 
 
-_MARKDOWN_SPECIAL: Final = re.compile(r"([\\`*_\[\]<>])")
+_MARKDOWN_SPECIAL: Final = re.compile(r"([\\`*_~\[\]<>])")
+# A block marker at the start: a heading, a list item or a rule.
+_MARKDOWN_LEADING: Final = re.compile(r"^([#+\-])")
+_MARKDOWN_ORDERED: Final = re.compile(r"^(\d+)([.)])")
 
 
 def markdown_literal(text: str) -> str:
-    """``text`` escaped for a placeholder of a markdown-rendered repair description, so
-    a redacted ``***`` or an ``_`` in a name shows as written."""
-    return _MARKDOWN_SPECIAL.sub(r"\\\1", text)
+    """``text`` stripped and escaped for a placeholder of a markdown-rendered repair
+    description, so a redacted ``***``, an ``_`` or a leading ``#`` or ``1.`` in a
+    name shows as written."""
+    escaped = _MARKDOWN_SPECIAL.sub(r"\\\1", text.strip())
+    escaped = _MARKDOWN_LEADING.sub(r"\\\1", escaped)
+    return _MARKDOWN_ORDERED.sub(r"\1\\\2", escaped)
 
 
 def sync_pending_invites_issue(
@@ -1491,8 +1497,10 @@ def sync_pending_invites_issue(
 
     ``None`` (the invitations could not be read) leaves the issue as it is. Fixable:
     the fix accepts an invitation, or asks every login scope again after the user
-    accepted in the eufy app (``repairs.PendingInvitesFix``). Not persistent, so the
-    home names and inviters it shows are never stored or put in a diagnostics download.
+    accepted in the eufy app (``repairs.PendingInvitesFix``). The ``invites``
+    placeholder names what the issue was raised for (the text shows only the
+    account; the fix reads the invitations afresh). Not persistent, so the home names
+    and inviters it holds are never stored or put in a diagnostics download.
     """
     if invites is None:
         return
