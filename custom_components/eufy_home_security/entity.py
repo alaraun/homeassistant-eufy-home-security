@@ -225,7 +225,8 @@ class EufySettingEntity(EufyDeviceEntity):
         self._attr_assumed_state = not spec.setting.readable
         self._attr_entity_category = spec.entity_category
         self._attr_entity_registry_enabled_default = spec.enabled_by_default
-        # The last value written, shown for a setting the dump never reports.
+        # The last value written, shown for a setting the dump never reports; dropped by a
+        # write that timed out.
         self._written: SettingValue | None = None
         # Set by a write that timed out: unknown until the next state arrives.
         self._unsettled = False
@@ -360,12 +361,14 @@ class EufySettingEntity(EufyDeviceEntity):
         super()._handle_coordinator_update()
 
     async def async_write_setting(self, value: SettingValue) -> None:
-        """Write the setting; the entity shows the written value until the next dump.
+        """Write the setting; the entity shows the written value until the next dump (a
+        setting the dump never reports: until a reload or a later write).
 
         A rejected or undeliverable write raises a translated error naming this entity,
         and the entity keeps its last value; so does a value the library refuses
         (``ValueError``), as a validation error. A write that timed out may still apply
-        later: the entity shows unknown until the next state and the error says so.
+        later: the entity shows unknown until the next state (a setting the dump never
+        reports: until it is written again) and the error says so.
         """
         self._require_addressable()
         try:
@@ -387,6 +390,8 @@ class EufySettingEntity(EufyDeviceEntity):
             raise
         except DeviceTimeoutError as err:
             self._unsettled = True
+            # The write may still apply: a value written earlier is no longer known to hold.
+            self._written = None
             self.async_write_ha_state()
             raise errors.setting_write_unconfirmed(self._write_target()) from err
         except EufySecurityError as err:
