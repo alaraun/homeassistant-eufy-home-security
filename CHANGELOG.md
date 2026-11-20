@@ -5,6 +5,14 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.18](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.17...v0.4.18) (2026-11-20)
+
+
+### Bug Fixes
+
+* **repairs:** "eufy stations on this network connect through eufy's servers" is shorter and lists each station's address ([75ab17b](https://github.com/alaraun/homeassistant-eufy-home-security/commit/75ab17bbd6de9ff01928da3f3fe2c9e3856614af))
+* **repairs:** the "eufy invitation not accepted" fix shows each open invitation in turn, with a code field only where eufy needs one, and loads the shared devices after the last; an invitation only the eufy app can accept no longer blocks the others ([75ab17b](https://github.com/alaraun/homeassistant-eufy-home-security/commit/75ab17bbd6de9ff01928da3f3fe2c9e3856614af))
+
 ## [0.4.17](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.16...v0.4.17) (2026-11-19)
 
 
