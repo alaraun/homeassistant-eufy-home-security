@@ -197,15 +197,21 @@ def test_the_capture_cap_adds_the_librarys_full_resolution_hold_only_when_asked(
 
 
 def test_the_option_text_names_the_librarys_longest_hold() -> None:
-    """The form says how much longer a capture may keep the camera awake: the library's
-    bound, in whole seconds, in strings.json and en.json alike."""
+    """The form and the usage guide say how much longer a capture may keep the camera
+    awake: the library's bound, in whole seconds, in strings.json, en.json and usage.md."""
     component = Path(snapshots.__file__).parent
+    bound = f"at most {FULL_RESOLUTION_TIMEOUT:g} s more"
     for path in (component / "strings.json", component / "translations" / "en.json"):
         step = json.loads(path.read_text())["options"]["step"][OPTIONS_STEP_INIT]
         texts = step["sections"][OPTIONS_SECTION_CAMERA_IMAGES]
         assert texts["data"][CONF_FULL_RESOLUTION_CAPTURE]
         description = texts["data_description"][CONF_FULL_RESOLUTION_CAPTURE]
-        assert f"at most {FULL_RESOLUTION_TIMEOUT:g} more" in description, path.name
+        assert bound in description, path.name
+    usage = (component.parents[1] / "docs" / "usage.md").read_text()
+    row = next(
+        line for line in usage.splitlines() if "Capture live image at full resolution" in line
+    )
+    assert bound in row
 
 
 async def _stream_path(hass: HomeAssistant) -> str:
