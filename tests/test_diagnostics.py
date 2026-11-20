@@ -44,6 +44,7 @@ from eufy_home_security.testing import (
     SYNTHETIC,
     FakeCloud,
     FakeStation,
+    camera_device,
     security_device,
     security_station,
 )
@@ -78,6 +79,10 @@ _HB2_SN: Final = "T8010P2000054321"
 _HB2_CAMERA_SN: Final = "T8114P2000054321"
 _HB2_DID: Final = "EUPRAMA-654321-ABCDE"
 _ECC_KEY: Final = "ab" * 32
+# A T8223 behind the synthetic HomeBase 3, which the library opens no live stream for there.
+_NO_LIVE_CAMERA_SN: Final = "T8223P0000000001"
+# An entry sensor on the same HomeBase: no camera, so no live-stream grade.
+_ENTRY_SENSOR_SN: Final = "T8900P0000000001"
 # The owner account a mismatched station stamps on its records: synthetic, 40 hex
 # characters, and never the account id the library sends.
 _OTHER_ACCOUNT_ID: Final = "f" * 40
@@ -253,6 +258,46 @@ async def test_the_download_has_the_storage_figures_and_nothing_that_names_the_d
         "synthetic-emmc-label",
     ):
         assert secret not in text
+
+    await _unload(hass, entry)
+
+
+async def test_the_download_grades_each_cameras_live_stream_with_its_reason(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """``Station.live_support`` per camera, by its redacted label: the grade, the source
+    and the note, as the library gives them; never a serial, and nothing for a sensor."""
+    fake_cloud.devices.append(
+        camera_device(
+            _NO_LIVE_CAMERA_SN, station_sn=fake_station.serial, channel=1, name="Doorbell"
+        )
+    )
+    fake_cloud.devices.append(
+        camera_device(_ENTRY_SENSOR_SN, station_sn=fake_station.serial, channel=2, name="Door")
+    )
+    entry = await set_up_warm(hass, seed_warm_cache)
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+
+    data = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+
+    live = _station_block(data)["live_support"]
+    assert set(live) == {redact_serial(SYNTHETIC.camera_sn), redact_serial(_NO_LIVE_CAMERA_SN)}
+    for serial in (SYNTHETIC.camera_sn, _NO_LIVE_CAMERA_SN):
+        evidence = station.live_support(serial)
+        assert live[redact_serial(serial)] == {
+            "support": evidence.support.value,
+            "source": evidence.source,
+            "note": evidence.note,
+        }
+    assert live[redact_serial(SYNTHETIC.camera_sn)]["support"] != "unknown"
+    assert live[redact_serial(_NO_LIVE_CAMERA_SN)]["support"] == "unknown"
+    assert "WebRTC" in live[redact_serial(_NO_LIVE_CAMERA_SN)]["source"]
+    assert _NO_LIVE_CAMERA_SN not in json.dumps(data)
 
     await _unload(hass, entry)
 

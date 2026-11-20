@@ -122,7 +122,8 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   to it the camera's name chip when the header is hidden or in full screen, then the battery chip (charging and
   solar charging shown on its icon). Top right: the full-screen button.
   - Idle: a play button (timed live view) and ∞ (continuous). A camera without live video shows
-    `No live view for this model` instead, and its menu has no live view or `Record a clip`.
+    `No live view for this model` instead, and its menu has no live view, `Record a clip` or `New still`
+    (unless the card sets `capture_entity`).
   - Live: a bar with Stop, ∞, Record, sound (starts muted) and presets.
   - Full screen: the button at the top right of the picture, idle or live (during live view also in the header
     menu). Where the browser lets the page go full screen, the picture fills the screen; where it does not (the

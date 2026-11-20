@@ -54,6 +54,7 @@ from .const import (
     ACCOUNT_DEVICE_NAME,
     BATTERY_KEY,
     BATTERY_TEMPERATURE_KEY,
+    CAPTURE_LIVE_IMAGE_KEY,
     CHARGING_KEY,
     CONF_CAMERA_IMAGE,
     CONF_CLOUD_PUSH,
@@ -594,6 +595,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     _async_forget_battery_entities(hass, entry, coordinators.values())
     _async_forget_siren_entities(hass, entry, coordinators.values())
     _async_forget_save_view_entities(hass, entry, coordinators.values())
+    _async_forget_capture_live_entities(hass, entry, coordinators.values())
     _async_follow_variants_in_use(hass, entry, coordinators.values())
     _async_enable_status_rows(hass, entry, coordinators.values())
     known = {
@@ -1132,6 +1134,31 @@ def _async_forget_save_view_entities(
                 continue
             entity_id = registry.async_get_entity_id(
                 Platform.BUTTON, DOMAIN, entity_unique_id(serial, SAVE_VIEW_KEY)
+            )
+            if entity_id is None:
+                continue
+            registered = registry.async_get(entity_id)
+            if registered is not None and registered.config_entry_id == entry.entry_id:
+                registry.async_remove(entity_id)
+
+
+def _async_forget_capture_live_entities(
+    hass: HomeAssistant, entry: EufyConfigEntry, coordinators: Iterable[StationCoordinator]
+) -> None:
+    """Forget the Capture live image row of a listed device without a live stream
+    (``detections.has_live_stream``).
+
+    The button platform builds none for it; a row an earlier release built would stay as
+    an unavailable orphan. Only this entry's rows, only devices the station lists.
+    """
+    registry = er.async_get(hass)
+    for coordinator in coordinators:
+        station = coordinator.station
+        for serial in detections.paired_device_kinds(station):
+            if detections.has_live_stream(station, serial):
+                continue
+            entity_id = registry.async_get_entity_id(
+                Platform.BUTTON, DOMAIN, entity_unique_id(serial, CAPTURE_LIVE_IMAGE_KEY)
             )
             if entity_id is None:
                 continue

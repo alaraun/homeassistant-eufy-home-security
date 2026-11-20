@@ -34,7 +34,9 @@ station on Home Assistant's network needed eufy's servers because its LAN reply 
 arrive), LAN warnings,
 storage figures, event-video copy counters (`recording_sync`), cloud push state
 (`push`), whether the security mode in force sends each device's detections
-(`detection_delivery`), options, `models` (how the library knows each product code; see
+(`detection_delivery`), whether each camera gets a live stream and why (`live_support`:
+its grade, `verified`, `declared` or `unknown`, and the library's reason), options,
+`models` (how the library knows each product code; see
 [devices.md](devices.md#other-models)) and `account_report`: every device eufy's lists
 name for the account, whether the integration serves it, its firmware, and whether
 eufy's keys for it are usable. Serials are shortened and device names removed; no key

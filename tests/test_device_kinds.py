@@ -9,6 +9,7 @@ profile (every capability unknown) gets no live stream.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import AsyncIterator, Callable
 from typing import Final
 
@@ -25,8 +26,9 @@ from eufy_home_security.devices import (
 )
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation, camera_device
 from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
-from homeassistant.components.camera import CameraEntityFeature
+from homeassistant.components.camera import CameraEntityFeature, async_get_image
 from homeassistant.core import HomeAssistant, State
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
@@ -35,6 +37,7 @@ from custom_components.eufy_home_security.const import (
     BATTERY_KEY,
     CAMERA_KEY,
     CAPTURE_LIVE_IMAGE_KEY,
+    CONF_LIVE_SNAPSHOT,
     DEFAULT_PRESET_KEY,
     DETECTION_EVENT_KEY,
     DOMAIN,
@@ -51,6 +54,7 @@ from custom_components.eufy_home_security.const import (
     SIGNAL_STRENGTH_KEY,
     VEHICLE_DETECTED_KEY,
 )
+from custom_components.eufy_home_security.snapshots import SnapshotManager
 
 # Synthetic serials on real product prefixes of the library's model list.
 KEYPAD_SN: Final = "T8960P0000000001"
@@ -81,10 +85,11 @@ _CAMERA_ENTITIES: Final = frozenset(
         ("binary_sensor", PET_DETECTED_KEY),
         ("binary_sensor", VEHICLE_DETECTED_KEY),
         ("event", DETECTION_EVENT_KEY),
-        ("button", CAPTURE_LIVE_IMAGE_KEY),
         ("button", REFRESH_IMAGE_KEY),
     }
 )
+# The button only a camera with a live stream gets.
+_LIVE_CAPTURE: Final = ("button", CAPTURE_LIVE_IMAGE_KEY)
 
 # The status diagnostics and firmware entity every paired device gets.
 _STATUS_ENTITIES: Final = frozenset(
@@ -163,7 +168,7 @@ async def test_a_device_other_than_a_camera_gets_status_entities_and_nothing_of_
     assert _STATUS_ENTITIES <= entities
     assert not {domain for domain, _ in entities} & _CAMERA_ONLY_DOMAINS
     assert not {key for _, key in entities} & (
-        {key for _, key in _CAMERA_ENTITIES} | _PTZ_KEYS | {DOORBELL_EVENT_KEY}
+        {key for _, key in _CAMERA_ENTITIES | {_LIVE_CAPTURE}} | _PTZ_KEYS | {DOORBELL_EVENT_KEY}
     )
 
 
@@ -179,7 +184,10 @@ async def test_a_doorbell_gets_the_camera_entities_and_the_ring_event(
     await set_up_warm(hass, seed_warm_cache)
 
     entities = _entities_of(hass, DOORBELL_SN)
-    assert _CAMERA_ENTITIES | _STATUS_ENTITIES | {("event", DOORBELL_EVENT_KEY)} <= entities
+    assert (
+        _CAMERA_ENTITIES | _STATUS_ENTITIES | {_LIVE_CAPTURE, ("event", DOORBELL_EVENT_KEY)}
+        <= entities
+    )
     assert not {key for _, key in entities} & _PTZ_KEYS
 
 
@@ -194,6 +202,7 @@ async def test_a_video_smart_lock_gets_the_camera_entities_and_stays_a_lock(
     event (the eufy app rings it as a video doorbell).
 
     Its kind stays the library's LOCK (the HomeBase card's per-mode actions read it).
+    Behind a HomeBase 3 it has no live stream, so no Capture live image button.
     """
     model = model_for_serial(VIDEO_LOCK_SN)
     assert model is not None and model.kind is DeviceKind.LOCK
@@ -201,10 +210,13 @@ async def test_a_video_smart_lock_gets_the_camera_entities_and_stays_a_lock(
     assert detections.entity_kind(VIDEO_LOCK_SN) is DeviceKind.CAMERA
     assert detections.entity_kind(LOCK_SN) is DeviceKind.LOCK
     _pair(fake_station, fake_cloud, VIDEO_LOCK_SN)
-    await set_up_warm(hass, seed_warm_cache)
+    entry = await set_up_warm(hass, seed_warm_cache)
 
+    station = entry.runtime_data.coordinators[fake_station.serial].station
+    assert station.live_support(VIDEO_LOCK_SN).support is Support.UNKNOWN
     entities = _entities_of(hass, VIDEO_LOCK_SN)
     assert _CAMERA_ENTITIES | _STATUS_ENTITIES <= entities
+    assert _LIVE_CAPTURE not in entities
     assert ("event", DOORBELL_EVENT_KEY) in entities
 
 
@@ -235,7 +247,7 @@ async def test_a_generic_camera_behind_a_homebase_2_gets_a_live_stream(
     entry = await set_up_warm(hass, seed_warm_cache)
 
     entities = _entities_of(hass, GENERIC_CAMERA_SN)
-    assert _CAMERA_ENTITIES | _STATUS_ENTITIES <= entities
+    assert _CAMERA_ENTITIES | _STATUS_ENTITIES | {_LIVE_CAPTURE} <= entities
     assert not {key for _, key in entities} & _PTZ_KEYS
     state = _camera_state(hass, GENERIC_CAMERA_SN)
     assert state.attributes["supported_features"] & CameraEntityFeature.STREAM
@@ -255,7 +267,8 @@ async def test_a_camera_whose_open_the_library_lacks_behind_its_station_gets_no_
     """The gate is the device on its station, not the model alone.
 
     A T8223's profile grades live video declared, but the library has no open for it
-    behind a HomeBase 3: camera entity, no stream feature, no broadcast.
+    behind a HomeBase 3: camera entity, no stream feature, no broadcast, no Capture live
+    image button.
     """
     model_profile = profile_for_serial(WEBRTC_BEHIND_HB3_SN)
     assert model_profile is not None
@@ -265,7 +278,9 @@ async def test_a_camera_whose_open_the_library_lacks_behind_its_station_gets_no_
 
     station = entry.runtime_data.coordinators[fake_station.serial].station
     assert station.live_support(WEBRTC_BEHIND_HB3_SN).support is Support.UNKNOWN
-    assert _CAMERA_ENTITIES <= _entities_of(hass, WEBRTC_BEHIND_HB3_SN)
+    entities = _entities_of(hass, WEBRTC_BEHIND_HB3_SN)
+    assert _CAMERA_ENTITIES <= entities
+    assert _LIVE_CAPTURE not in entities
     state = _camera_state(hass, WEBRTC_BEHIND_HB3_SN)
     assert not state.attributes["supported_features"] & CameraEntityFeature.STREAM
     streams = runtime.streaming(entry)
@@ -290,3 +305,31 @@ async def test_a_camera_whose_handler_declares_pan_tilt_presets_and_zoom_gets_th
         assert station.ptz_support(FLOODLIGHT_PTZ_SN, capability).support is Support.DECLARED
     keys = {key for _, key in _entities_of(hass, FLOODLIGHT_PTZ_SN)}
     assert _PTZ_KEYS | {PAN_LEFT_KEY} <= keys
+
+
+async def test_the_live_snapshot_option_asks_no_live_still_of_a_camera_without_a_live_stream(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """With Live snapshot on, a view of a camera without an image asks for a live still
+    only where the camera has a live stream: the library would refuse the rest."""
+    _pair(fake_station, fake_cloud, WEBRTC_BEHIND_HB3_SN)
+    entry = await set_up_warm(hass, seed_warm_cache, options={CONF_LIVE_SNAPSHOT: True})
+    asked: list[str] = []
+    monkeypatch.setattr(
+        SnapshotManager,
+        "async_request_live",
+        lambda _self, _station, serial: asked.append(serial),
+    )
+
+    for serial in (WEBRTC_BEHIND_HB3_SN, SYNTHETIC.camera_sn):
+        with contextlib.suppress(HomeAssistantError):
+            await async_get_image(hass, _camera_state(hass, serial).entity_id)
+
+    assert asked == [SYNTHETIC.camera_sn]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

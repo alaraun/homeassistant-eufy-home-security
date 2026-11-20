@@ -35,6 +35,7 @@ from conftest import (
     wait_until,
 )
 from eufy_home_security import DetectionType, EufySecurity, Station, entity_unique_id
+from eufy_home_security.devices import Evidence, Support
 from eufy_home_security.testing import FakeCloud, FakeStation, camera_device
 from homeassistant.components.alarm_control_panel import DOMAIN as ALARM_DOMAIN
 from homeassistant.components.alarm_control_panel import SERVICE_ALARM_ARM_HOME
@@ -918,3 +919,121 @@ async def test_setup_forgets_a_paired_cameras_save_view_row_and_keeps_an_unliste
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+def _no_live_stream_for(monkeypatch: pytest.MonkeyPatch, serial: str) -> None:
+    """``Station.live_support`` grades ``serial`` unknown; every other device as before."""
+    real = Station.live_support
+
+    def support(self: Station, device_sn: str) -> Evidence:
+        if device_sn == serial:
+            return Evidence(Support.UNKNOWN, "graded unknown by the test")
+        return real(self, device_sn)
+
+    monkeypatch.setattr(Station, "live_support", support)
+
+
+def _capture_row(hass: HomeAssistant, serial: str) -> str | None:
+    return er.async_get(hass).async_get_entity_id(
+        BUTTON_DOMAIN, DOMAIN, entity_unique_id(serial, CAPTURE_LIVE_IMAGE_KEY)
+    )
+
+
+async def test_a_camera_without_a_live_stream_gets_no_capture_live_image_button(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live support graded unknown: no Capture live image, Refresh event image stays; a
+    camera with a live stream on the same station keeps its capture button."""
+    fake_cloud.devices.append(
+        camera_device(OTHER_CAMERA_SN, station_sn=fake_station.serial, channel=1, name="Back")
+    )
+    _no_live_stream_for(monkeypatch, SYNTHETIC.camera_sn)
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    assert _capture_row(hass, SYNTHETIC.camera_sn) is None
+    assert hass.states.get(_button_id(hass, REFRESH_IMAGE_KEY)) is not None
+    assert _capture_row(hass, OTHER_CAMERA_SN) is not None
+
+    await _unload(hass, entry)
+
+
+async def test_setup_forgets_the_capture_row_of_a_camera_without_a_live_stream(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An earlier release's Capture live image row of a camera without a live stream is
+    removed; the row of a camera with one and of a serial the station does not list stay."""
+    fake_cloud.devices.append(
+        camera_device(OTHER_CAMERA_SN, station_sn=fake_station.serial, channel=1, name="Back")
+    )
+    _no_live_stream_for(monkeypatch, SYNTHETIC.camera_sn)
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+
+    def row(serial: str) -> er.RegistryEntry:
+        return registry.async_get_or_create(
+            BUTTON_DOMAIN,
+            DOMAIN,
+            entity_unique_id(serial, CAPTURE_LIVE_IMAGE_KEY),
+            config_entry=entry,
+        )
+
+    no_live = row(SYNTHETIC.camera_sn)
+    live = row(OTHER_CAMERA_SN)
+    unlisted = row("T8160P2000000009")
+    # A removed row the platform builds again comes back under its entity id and id.
+    removed: list[str] = []
+
+    @callback
+    def _on_update(event: Event[er.EventEntityRegistryUpdatedData]) -> None:
+        if event.data["action"] == "remove":
+            removed.append(event.data["entity_id"])
+
+    hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, _on_update)
+
+    assert await setup_entry(hass, entry)
+
+    assert registry.async_get(no_live.entity_id) is None
+    assert registry.async_get(live.entity_id) is not None
+    assert registry.async_get(unlisted.entity_id) is not None
+    assert removed == [no_live.entity_id]
+
+    await _unload(hass, entry)
+
+
+async def test_setup_keeps_a_capture_row_another_entry_owns(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only this entry's rows are forgotten, even for a camera without a live stream."""
+    _no_live_stream_for(monkeypatch, SYNTHETIC.camera_sn)
+    seed_warm_cache()
+    other = MockConfigEntry(domain=DOMAIN, unique_id="other@example.invalid")
+    other.add_to_hass(hass)
+    registry = er.async_get(hass)
+    foreign = registry.async_get_or_create(
+        BUTTON_DOMAIN,
+        DOMAIN,
+        entity_unique_id(SYNTHETIC.camera_sn, CAPTURE_LIVE_IMAGE_KEY),
+        config_entry=other,
+    )
+    entry = add_entry(hass)
+
+    assert await setup_entry(hass, entry)
+
+    assert registry.async_get(foreign.entity_id) is not None
+
+    await _unload(hass, entry)

@@ -461,13 +461,18 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
-        """The cached image; with none, maybe a live keyframe in the background.
+        """The cached image; with none, maybe a live keyframe in the background, only
+        where the camera has a live stream (the library refuses a live open otherwise).
 
         A ``width``/``height`` request the small copy fits is answered with it, else
         the full image, which Home Assistant scales.
         """
         image = self._manager.image_for(self._serial)
-        if image is None and self.available:
+        if (
+            image is None
+            and self.available
+            and self.supported_features & CameraEntityFeature.STREAM
+        ):
             self._manager.async_request_live(self.coordinator.station, self._serial)
         if image is not None and small_images.fits_small(width, height):
             return await self._manager.small_image_for(self._serial) or image

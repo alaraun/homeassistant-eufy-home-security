@@ -85,6 +85,23 @@ def _preset_figures(station: Station) -> dict[str, dict[str, Any] | None]:
     return figures
 
 
+def _live_figures(station: Station) -> dict[str, dict[str, str]]:
+    """Each camera's ``Station.live_support`` by its :func:`_device_labels` label: the
+    grade, and the library's source and note, which name a model, never a device."""
+    labels = _device_labels(station)
+    figures: dict[str, dict[str, str]] = {}
+    for serial, kind in detections.paired_device_kinds(station).items():
+        if not detections.has_detection_entities(kind):
+            continue
+        evidence = station.live_support(serial)
+        figures[labels[serial]] = {
+            "support": evidence.support.value,
+            "source": evidence.source,
+            "note": evidence.note,
+        }
+    return figures
+
+
 def _mode_key(mode: GuardMode | int) -> str | int:
     """A mode as diagnostics name it: the code's name, or the bare code GuardMode lacks."""
     return mode.name.lower() if isinstance(mode, GuardMode) else mode
@@ -189,6 +206,8 @@ async def async_get_config_entry_diagnostics(
             "events_received_by_cipher": data.router.events_received_by_cipher(station.serial),
             "storage": _storage_figures(station.storage),
             "presets": _preset_figures(station),
+            # Whether each camera gets a live stream and Capture live image, and why.
+            "live_support": _live_figures(station),
             # Whether the mode in force lets each device's detections out.
             "detection_delivery": _delivery_figures(station),
             "recording_sync": (
