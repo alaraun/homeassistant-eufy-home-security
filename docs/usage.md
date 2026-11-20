@@ -389,9 +389,10 @@ Which cameras get these: [devices.md](devices.md#pan-tilt-presets-and-zoom).
 - It is reached on demand when its model is on the eufy app's on-demand list (such as
   the T8170, the SoloCam C20 or a 4G Starlight Camera) or is marked as a battery device
   (such as the SoloCam E50, the Solar Wall Light Cam S120 or most battery doorbells).
-  Other models keep a connection: the wired doorbells, mains cameras such as the Wall
-  Light Cam S100, and battery models without bundled settings (such as the Battery
-  Doorbell 8212 or the eufyCam E52). The points below are for one reached on demand.
+  Other models keep a connection: models not marked as battery devices, such as the
+  wired doorbells, the Wall Light Cam S100 or the eufyCam C31, and battery models
+  without bundled settings, such as the Battery Doorbell 8212 or the eufyCam E52. The
+  points below are for one reached on demand.
 - Home Assistant keeps no connection to it, so it sleeps. Guard mode, battery and
   signal come from eufy's cloud and can be up to an hour old.
 - Arming, every button, every capture and each detection's picture wake it (about

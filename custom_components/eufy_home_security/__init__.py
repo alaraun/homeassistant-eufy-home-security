@@ -350,8 +350,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     # Each station's storage record, on a schedule of its own (see storage.py). Not for
     # a station that connects on demand: a storage read is a P2P command, every
     # command wakes a battery camera, and a 30-minute timer would wake it 48 times a
-    # day. Its storage entities are deferred; every consumer of this dict
-    # tolerates a station missing from it.
+    # day. It gets no storage entities (storage.forget_unscheduled removes earlier rows);
+    # every consumer of this dict tolerates a station missing from it.
     storage: dict[str, StorageCoordinator] = {
         serial: StorageCoordinator(hass, entry, station)
         for serial, station in eufy.stations.items()
