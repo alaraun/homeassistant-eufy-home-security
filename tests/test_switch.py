@@ -19,7 +19,7 @@ from conftest import (
     setting_param,
     state_of,
 )
-from eufy_home_security import EufySecurity, Station, entity_unique_id
+from eufy_home_security import DeviceTimeoutError, EufySecurity, Station, entity_unique_id
 from eufy_home_security.devices import Setting
 from eufy_home_security.devices.model_settings import settings_of
 from eufy_home_security.testing import SYNTHETIC, FakeStation
@@ -112,16 +112,9 @@ async def test_switches_follow_the_station_including_inverted_ones(
     await hass.async_block_till_done()
 
 
-async def test_a_write_only_switch_is_assumed_and_shows_only_what_it_wrote(
-    hass: HomeAssistant,
-    fake_station: FakeStation,
-    built_clients: list[EufySecurity],
-    seed_warm_cache: Callable[..., None],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A setting the library cannot read back (``readable`` False) is assumed state:
-    unknown until written here, then the written value through later polls, and unknown
-    again after a reload. A value in the station's dump is never shown for it."""
+@pytest.fixture
+def write_only_led(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The status LED as a setting the library cannot read back (``readable`` False)."""
     real = Station.settings_for
 
     def settings_for(self: Station, device_sn: str | None = None) -> tuple[Setting, ...]:
@@ -131,6 +124,18 @@ async def test_a_write_only_switch_is_assumed_and_shows_only_what_it_wrote(
         )
 
     monkeypatch.setattr(Station, "settings_for", settings_for)
+
+
+@pytest.mark.usefixtures("write_only_led")
+async def test_a_write_only_switch_is_assumed_and_shows_only_what_it_wrote(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A setting the library cannot read back is assumed state: unknown until written
+    here, then the written value through later polls, and unknown again after a reload.
+    A value in the station's dump is never shown for it."""
     seed_setting(fake_station, _STATUS_LED, 1)
     fake_station.reply_to_settings = True
     entry = await set_up_warm(hass, seed_warm_cache)
@@ -161,6 +166,50 @@ async def test_a_write_only_switch_is_assumed_and_shows_only_what_it_wrote(
     assert state is not None
     assert state.state == STATE_UNKNOWN
     assert state.attributes.get(ATTR_ASSUMED_STATE) is True
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+@pytest.mark.usefixtures("write_only_led")
+async def test_a_write_only_switch_whose_write_timed_out_shows_unknown(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timed-out write may still apply: the earlier written value is dropped, and the
+    switch stays unknown through later polls until it is written again."""
+    seed_setting(fake_station, _STATUS_LED, 1)
+    fake_station.reply_to_settings = True
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = _switch_id(hass, _STATUS_LED)
+    coordinator = entry.runtime_data.coordinators[SYNTHETIC.station_sn]
+    await set_switch(hass, entity_id, True)
+    await hass.async_block_till_done()
+    assert state_of(hass, entity_id) == STATE_ON
+
+    async def timed_out(*args: object, **kwargs: object) -> None:
+        raise DeviceTimeoutError("no answer")
+
+    real_write = coordinator.station.async_set_setting
+    monkeypatch.setattr(coordinator.station, "async_set_setting", timed_out)
+    with pytest.raises(HomeAssistantError) as raised:
+        await set_switch(hass, entity_id, False)
+    assert raised.value.translation_key == _UNCONFIRMED
+    assert state_of(hass, entity_id) == STATE_UNKNOWN
+
+    # A dump that changes the station's state ends the unconfirmed write.
+    seed_setting(fake_station, _STATUS_LED, 0)
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert state_of(hass, entity_id) == STATE_UNKNOWN
+
+    monkeypatch.setattr(coordinator.station, "async_set_setting", real_write)
+    await set_switch(hass, entity_id, False)
+    await hass.async_block_till_done()
+    assert state_of(hass, entity_id) == STATE_OFF
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

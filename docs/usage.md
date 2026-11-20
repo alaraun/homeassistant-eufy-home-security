@@ -573,7 +573,7 @@ the camera and its settings. The limits above apply.
     the next update shows the value in force.
   - A control the device never reports back is marked as assumed state: unknown until
     you set it from Home Assistant, then the value you set; unknown again after a
-    restart or reload.
+    restart or reload, and after a write with no answer in time until you set it again.
 - `applies_when` attribute (for example `power_manager_mode=3`, with
   `applies_when_label` "Custom recording"): the setting applies only in that state and
   is unavailable otherwise. On a T8160, clip length, trigger interval and end clip
