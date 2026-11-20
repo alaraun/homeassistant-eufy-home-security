@@ -83,6 +83,7 @@ are offered, but none is tested:
 | T90M0 | eufy Motion Sensor E20 | as the T8910: Motion and a motion-only Detection event |
 | T8900 | Entry Sensor, on a HomeBase | door (binary sensor, on = open; follows each open and close), low battery |
 | T90E0 | eufy Entry Sensor E20, on a HomeBase | door (binary sensor, on = open; follows each open and close), tamper |
+| T84A1 | Wall Light Cam S100, standalone | **Spotlight** switch turns the light on and off (the **Lighting** switch is a separate setting); **Microphone** switch, write-only (assumed state), also behind a HomeBase |
 
 Report what works and what does not ([below](#reporting-a-new-device)).
 

@@ -382,12 +382,13 @@ Which cameras get these: [devices.md](devices.md#pan-tilt-presets-and-zoom).
   default preset (T8419, T8423, T8W11) shows its **Default preset** but refuses a
   change and `make_default`. Nothing is sent.
 
-## Standalone battery cameras
+## Standalone battery cameras and doorbells
 
 - A battery camera or doorbell without a HomeBase (for example the T8170, a SoloCam
   E50, a Solar Wall Light Cam S120 or a battery doorbell) is its own device with an
-  alarm panel, battery, signal, camera and buttons. The wired doorbells (T8203, T8224)
-  and wired cameras keep a connection instead.
+  alarm panel, battery, signal, camera and buttons. Doorbells and cameras whose model
+  is not marked as a battery device keep a connection, such as the wired doorbells
+  (T8200, T8201, T8203, T8224) and mains cameras like the Wall Light Cam S100.
 - Home Assistant keeps no connection to it, so it sleeps. Guard mode, battery and
   signal come from eufy's cloud and can be up to an hour old.
 - Arming, every button, every capture and each detection's picture wake it (about
@@ -461,7 +462,7 @@ Each HomeBase gets only the figures its record carries: a HomeBase 2 from firmwa
 eMMC only. A HomeBase that refuses the storage query gets none.
 An entity an earlier release created for a figure the HomeBase does not report is removed.
 
-A camera without a HomeBase (not a battery camera, which is never woken for it), a
+A camera without a HomeBase (not a battery camera or doorbell, which is never woken for it), a
 HomeBase 2 on firmware below 3.3.7.7 and the models T8001, T8002, T8020 and T8023 report
 their local medium, a microSD card or a built-in eMMC, as a status with a size. They
 get **eMMC used space**, **eMMC free** and **eMMC size** (off by default), named eMMC
