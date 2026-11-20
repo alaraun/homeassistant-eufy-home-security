@@ -596,12 +596,18 @@ async def test_an_incomplete_recording_keeps_nothing_and_is_retried(
 
 
 @pytest.mark.parametrize(
-    ("ended_early", "frame_num", "tries", "phrase"),
+    ("changes", "frame_num", "tries", "phrase"),
     [
-        (True, 6, 1, "after 1 attempt (cut at a video-codec change)"),
-        (False, 40, RECORDING_MAX_ATTEMPTS, "after 3 attempts (incomplete)"),
+        ({"ended_early": True}, 6, 1, "after 1 attempt (cut at a video-codec change)"),
+        ({}, 40, RECORDING_MAX_ATTEMPTS, "after 3 attempts (incomplete: frames missing)"),
+        (
+            {"expected_frames": None, "end_frame": False},
+            6,
+            RECORDING_MAX_ATTEMPTS,
+            "after 3 attempts (incomplete: the station never ended the download)",
+        ),
     ],
-    ids=["cut-at-codec-change", "short"],
+    ids=["cut-at-codec-change", "short", "no-end-frame"],
 )
 async def test_a_recording_cut_at_a_codec_change_is_given_up_at_once(
     hass: HomeAssistant,
@@ -611,13 +617,14 @@ async def test_a_recording_cut_at_a_codec_change_is_given_up_at_once(
     hass_storage: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
-    ended_early: bool,
+    changes: dict[str, Any],
     frame_num: int,
     tries: int,
     phrase: str,
 ) -> None:
     """A download cut at a codec change is final: not tried again, one warning naming
-    why; a short one is tried until the attempts run out."""
+    why; a short one, or one the station never ended, is tried until the attempts run
+    out, and the warning says which."""
     calls: list[int] = []
     real = Station.async_download_recording
 
@@ -626,7 +633,7 @@ async def test_a_recording_cut_at_a_codec_change_is_given_up_at_once(
     ) -> MediaClip:
         calls.append(record.record_id)
         clip = await real(self, record, write, wait=wait)
-        return dataclasses.replace(clip, ended_early=ended_early)
+        return dataclasses.replace(clip, **changes)
 
     monkeypatch.setattr(Station, "async_download_recording", download)
     fake_station.recording_frames = 6
