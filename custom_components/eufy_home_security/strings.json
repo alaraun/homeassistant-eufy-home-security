@@ -385,6 +385,9 @@
     "setting_value_invalid": {
       "message": "{target} does not accept this value, so nothing was sent. Choose a value the setting allows: a number must sit on one of its steps from the minimum, as the slider offers."
     },
+    "light_control_off": {
+      "message": "{target} was not switched, and nothing was sent: the eufy app turns the lamp's control off while {setting} is off. Turn {setting} on first, in the eufy app or with its switch here."
+    },
     "station_unreachable": {
       "message": "The station did not answer, so {target} was not set. Home Assistant keeps reconnecting; check that it is powered on and reachable, on this network or through eufy's servers."
     },

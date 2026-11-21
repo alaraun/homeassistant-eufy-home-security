@@ -90,7 +90,7 @@ So does a card per HomeBase: **eufy HomeBase**
 
 | | |
 |---|---|
-| [Usage](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/usage.md) | options, alarm panel, camera images, event history and videos, live video, pan/tilt, settings, signing in again, removal |
+| [Usage](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/usage.md) | options, alarm panel, camera images, event history and videos, live video, pan/tilt, settings and lights, signing in again, removal |
 | [Camera card](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/card.md) | the dashboard card that comes with the integration: install, options, layout, writes |
 | [HomeBase card](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/homebase-card.md) | the HomeBase's dashboard card: security mode, what each device does per mode, arming groups, settings, status |
 | [Supported devices](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/devices.md) | tested models, settings, adding a device, reporting a new device |

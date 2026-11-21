@@ -546,7 +546,7 @@ the camera and its settings. The limits above apply.
   disabled.
 - A setting the library can write is a control of the kind the library names for it:
   switch (on/off), select (a choice), number (a slider, or a box for a long range),
-  or text.
+  or text. A camera's lamp is a light (below).
   - A numbered scale is a number, not a choice: detection sensitivity 1–7 is a slider.
   - A setting with several choices on at once is one switch per choice, named
     "Detection types: Pet". A toggle changes that one choice; the others stay. This
@@ -570,6 +570,35 @@ the camera and its settings. The limits above apply.
 
   A setting sensor has no state class, so Home Assistant keeps no long-term
   statistics for it and a unit change never raises a statistics issue.
+- A camera's lamp is a **light**, named as the eufy app names its switch (**Light**,
+  **Spotlight**; a track light's second lamp **Zoom spotlight**), wherever the library
+  can switch it in the camera's setup. It turns the lamp on and off and, where the
+  camera's brightness setting is writable, sets the brightness: a brightness with
+  levels (Low, Medium, High = 40, 70, 100 % on a eufyCam 3) takes the nearest level, a
+  range the percent within its bounds, and 1 % or less turns the lamp off, as the eufy
+  app does. A
+  turn-on with a brightness writes the brightness first, then switches the lamp on if it
+  is off. On and off are verified on a eufyCam 3 behind a HomeBase 3 and a standalone
+  SoloCam S340, the brightness on the eufyCam 3; other models are declared from the
+  eufy app.
+  - The light replaces the lamp's switch of earlier releases: `switch.<camera>_light`
+    becomes `light.<camera>_light` (`switch.<camera>_spotlight` becomes
+    `light.<camera>_spotlight`), and the switch's registry entry is removed at the next
+    start. Automations, scripts and dashboards that used the
+    switch need the light entity and `light.turn_on` / `light.turn_off`.
+  - The lamp's brightness setting stays an entity, disabled on a new install (the
+    light sets it); one you already have stays as it is. The lamp's colour temperature
+    and its other settings (**Lighting**, motion-activated lighting, schedules) stay
+    their own entities; the light offers no colour temperature.
+  - Where the eufy app disables the lamp's control while a setting such as
+    **Lighting** is off, the light refuses to switch, with nothing sent, until that
+    setting is on. While that setting is not reported, the light switches.
+  - A lamp whose switch is not read from the camera's lamp report (the T8442 and
+    T8L60) is marked as assumed state. One the camera never reports (the T870G) is too,
+    and shows the value set from Home Assistant, as any control the device never reports
+    back.
+  - A lamp the camera can only report in its setup (a Wall Light Cam S100 behind a
+    HomeBase) gets no light: its read-only sensor stays.
 - A status it can only read is enabled: one the eufy app shows on the device card
   (an entry sensor's door, tamper or low battery) is a sensor or binary sensor, with
   the device class above where its value has a meaning; one the app shows on a

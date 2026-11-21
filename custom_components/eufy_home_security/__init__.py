@@ -107,6 +107,7 @@ PLATFORMS: list[Platform] = [
     Platform.CAMERA,
     Platform.EVENT,
     Platform.IMAGE,
+    Platform.LIGHT,
     Platform.NUMBER,
     Platform.SELECT,
     Platform.SENSOR,
@@ -696,9 +697,11 @@ async def async_remove_config_entry_device(
     )
 
 
-# Every platform a setting entity can be built on (settings.setting_platform).
+# Every platform a setting entity can be built on (settings.setting_platform, and a
+# lamp's on/off setting as a light: settings.setting_specs).
 _SETTING_DOMAINS: frozenset[str] = frozenset(
     {
+        Platform.LIGHT,
         Platform.SWITCH,
         Platform.SELECT,
         Platform.NUMBER,

@@ -124,6 +124,7 @@ def test_setting_specs_leave_out_every_paired_devices_per_mode_settings() -> Non
     station = SimpleNamespace(
         sub_devices=subs,
         settings_for=lambda device_sn: [*_MODE_TABLE, other] if device_sn else [],
+        lights_for=lambda device_sn: (),
     )
 
     specs = setting_specs(station)  # type: ignore[arg-type]
@@ -244,8 +245,9 @@ async def test_controls_are_config_statuses_on_and_other_read_only_values_diagno
     seed_warm_cache: Callable[..., None],
 ) -> None:
     """Category and default enablement follow the platform and the role: a status is on,
-    without a category on the device card; variants and settings the app puts behind a
-    warning (``advanced``) start off."""
+    without a category on the device card; variants, settings the app puts behind a
+    warning (``advanced``) and a brightness the lamp's light sets start off. The lamp's
+    light is on, without a category."""
     entry = await set_up_warm(hass, seed_warm_cache)
     registry = er.async_get(hass)
     station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
@@ -258,12 +260,19 @@ async def test_controls_are_config_statuses_on_and_other_read_only_values_diagno
     }
     advanced: list[str] = []
     statuses: list[str] = []
+    lights: list[str] = []
+    covered: list[str] = []
     for spec in specs:
         unique_id = entity_unique_id(spec.device_sn or station.serial, spec.key)
         entity_id = registry.async_get_entity_id(spec.platform, DOMAIN, unique_id)
         assert entity_id is not None, spec.key
         entity = registry.async_get(entity_id)
         assert entity is not None
+        if spec.platform is Platform.LIGHT:
+            lights.append(spec.key)
+            assert entity.entity_category is None, spec.key
+            assert entity.disabled_by is None, spec.key
+            continue
         if spec.is_control:
             assert entity.entity_category is EntityCategory.CONFIG, spec.key
         elif spec.setting.role is SettingRole.STATUS:
@@ -275,8 +284,8 @@ async def test_controls_are_config_statuses_on_and_other_read_only_values_diagno
         else:
             assert entity.entity_category is EntityCategory.DIAGNOSTIC, spec.key
         if spec.is_control and not spec.variant:
-            if spec.setting.advanced:
-                advanced.append(spec.key)
+            if spec.setting.advanced or spec.covered:
+                (covered if spec.covered else advanced).append(spec.key)
                 assert entity.disabled_by is er.RegistryEntryDisabler.INTEGRATION, spec.key
                 continue
             assert entity.disabled_by is None, spec.key
@@ -284,6 +293,8 @@ async def test_controls_are_config_statuses_on_and_other_read_only_values_diagno
             assert entity.disabled_by is er.RegistryEntryDisabler.INTEGRATION, spec.key
     # The HomeBase's working mode is the library's advanced control on this fixture.
     assert "working_mode_value" in advanced
+    # The camera's lamp, and its brightness.
+    assert (lights, covered) == (["spotlight_switch"], ["spotlight_brightness_level"])
     # The keypad's password state and the alarm delay are statuses of a settings page.
     assert {"hb_keypad_is_password_set", "notification_alarm_delay_value"} <= set(statuses)
 

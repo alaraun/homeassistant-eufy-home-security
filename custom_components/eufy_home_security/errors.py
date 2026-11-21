@@ -105,6 +105,7 @@ from .const import (
     EXC_GUARD_MODE_NOT_APPLIED,
     EXC_GUARD_MODE_NOT_SUPPORTED,
     EXC_GUARD_MODE_REJECTED,
+    EXC_LIGHT_CONTROL_OFF,
     EXC_LIVE_STREAM_LIMIT,
     EXC_ON_DEMAND_UNREACHABLE,
     EXC_PAN_TILT_NOT_APPLIED,
@@ -472,6 +473,18 @@ def setting_value_invalid(target: str) -> ServiceValidationError:
         translation_domain=DOMAIN,
         translation_key=EXC_SETTING_VALUE_INVALID,
         translation_placeholders={"target": target},
+    )
+
+
+def light_control_off(target: str, setting: str) -> ServiceValidationError:
+    """A lamp turned on or off while ``setting``, which enables its control, reads off; the
+    eufy app disables the lamp's control then. Nothing sent. ``target`` is the light's
+    name, ``setting`` the enabling setting's; never a serial.
+    """
+    return ServiceValidationError(
+        translation_domain=DOMAIN,
+        translation_key=EXC_LIGHT_CONTROL_OFF,
+        translation_placeholders={"target": target, "setting": setting},
     )
 
 
