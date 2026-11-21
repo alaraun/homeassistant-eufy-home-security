@@ -584,11 +584,17 @@ the camera and its settings. The limits above apply.
   - The light replaces the lamp's switch of earlier releases: `switch.<camera>_light`
     becomes `light.<camera>_light` (`switch.<camera>_spotlight` becomes
     `light.<camera>_spotlight`), and the switch's registry entry is removed at the next
-    start. What you set on the switch carries over to the light: its name, icon, area,
-    labels and voice assistant aliases, hidden or disabled by you, and an entity id you
-    changed (`switch.garden_lamp` becomes `light.garden_lamp`). Automations, scripts and
-    dashboards that used the switch still need the light entity and `light.turn_on` /
-    `light.turn_off`.
+    start. What you set on the switch carries over to the light: its entity id, also one
+    you changed (`switch.garden_lamp` becomes `light.garden_lamp`; Home Assistant adds
+    `_2` when another light already has that id, and the log names the id the light
+    got), its name, icon, area, labels and voice assistant aliases, which voice
+    assistants it is exposed to, and whether you hid it. An enabled switch gives an
+    enabled light, also with **Enable newly added entities** turned off in the
+    integration's system options; a switch you disabled gives a disabled light.
+    Automations, scripts and dashboards that used the switch still need the light entity
+    and `light.turn_on` / `light.turn_off`.
+  - A light you made from the lamp's switch with **Switch as X** goes unavailable once
+    the switch is gone; use the integration's light instead.
   - The lamp's brightness setting stays an entity, disabled on a new install (the
     light sets it); one you already have stays as it is. The lamp's colour temperature
     and its other settings (**Lighting**, motion-activated lighting, schedules) stay
