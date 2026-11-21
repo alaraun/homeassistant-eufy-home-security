@@ -558,7 +558,7 @@ the camera and its settings. The limits above apply.
   and recording.
 - A setting's device class and unit follow what the library says its value means,
   never its identifier:
-  - a length of time is a duration in the library's unit (seconds or milliseconds);
+  - a length of time is a duration in the library's unit (seconds on every bundled model);
   - a percentage is in %;
   - a temperature has no unit and no device class: the model data does not say
     Celsius or Fahrenheit;

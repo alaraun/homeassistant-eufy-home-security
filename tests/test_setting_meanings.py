@@ -14,7 +14,7 @@ from typing import Any, Final
 
 import pytest
 from conftest import entity_id_for, seed_setting, set_up_warm, state_of
-from eufy_home_security import EufySecurity
+from eufy_home_security import EufySecurity, Station
 from eufy_home_security.devices import SettingMeaning, SettingUnit
 from eufy_home_security.devices.model_settings import (
     BINARY_MEANINGS,
@@ -24,7 +24,9 @@ from eufy_home_security.devices.model_settings import (
 )
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation, camera_device
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.components.number import DEVICE_CLASS_UNITS as NUMBER_UNITS
 from homeassistant.components.number import NumberDeviceClass
+from homeassistant.components.sensor import DEVICE_CLASS_UNITS as SENSOR_UNITS
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import ATTR_DEVICE_CLASS, ATTR_UNIT_OF_MEASUREMENT, Platform
 from homeassistant.core import HomeAssistant
@@ -55,6 +57,8 @@ _PAIRED: Final = (
     (INDOOR_SN, 5, "T8352"),
 )
 _BATTERY_PARAM: Final = 1101
+_VOLUME: Final = "speaker_volume"
+_TEMPERATURE: Final = "device_indoor_temperatur_alarm_max_value"
 # A device timestamp in milliseconds since the epoch, and the UTC datetime it stands for.
 _STAMP_MS: Final = 1_700_000_000_123
 _STAMP: Final = datetime(2023, 11, 14, 22, 13, 20, 123000, tzinfo=UTC)
@@ -180,8 +184,8 @@ def test_no_meaning_keeps_the_setting_unit_without_a_class() -> None:
 
 
 def test_every_bundled_typed_entity_has_a_unit_its_class_accepts() -> None:
-    """Home Assistant refuses a duration in a unit it cannot convert; the bundled data
-    gives none."""
+    """Home Assistant refuses a value in a unit its device class does not list; the bundled
+    data gives none, on a sensor or a number."""
     seen: set[SettingMeaning] = set()
     for code in bundled_codes():
         for setting in settings_of(code).values():
@@ -189,8 +193,10 @@ def test_every_bundled_typed_entity_has_a_unit_its_class_accepts() -> None:
                 continue
             seen.add(setting.meaning)
             typing = entity_typing(setting)
-            if typing.sensor is SensorDeviceClass.DURATION:
-                assert typing.unit in {"s", "ms", "d"}, (code, setting.key)
+            if typing.sensor in SENSOR_UNITS:
+                assert typing.unit in SENSOR_UNITS[typing.sensor], (code, setting.key)
+            if typing.number in NUMBER_UNITS:
+                assert typing.unit in NUMBER_UNITS[typing.number], (code, setting.key)
     assert seen >= {SettingMeaning.DURATION, SettingMeaning.TIMESTAMP}
 
 
@@ -276,6 +282,19 @@ async def _enable(
 async def _stop(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+def _replace_settings(monkeypatch: pytest.MonkeyPatch, changes: dict[str, dict[str, Any]]) -> None:
+    """Serve each setting named in ``changes`` with those fields replaced, on every device."""
+    real = Station.settings_for
+
+    def settings_for(self: Station, device_sn: str | None = None) -> tuple[Setting, ...]:
+        return tuple(
+            dataclasses.replace(s, **changes[s.key]) if s.key in changes else s
+            for s in real(self, device_sn)
+        )
+
+    monkeypatch.setattr(Station, "settings_for", settings_for)
 
 
 async def test_binary_statuses_carry_their_meaning_class(
@@ -406,4 +425,68 @@ async def test_a_duration_sensor_whose_value_is_not_a_number_is_unknown(
     entry = await set_up_warm(hass, seed_warm_cache)
     await _enable(hass, entry, [(Platform.SENSOR, DOORBELL_SN, key)])
     assert state_of(hass, entity_id_for(hass, Platform.SENSOR, DOORBELL_SN, key)) == "unknown"
+    await _stop(hass, entry)
+
+
+@pytest.mark.parametrize("platform", [Platform.NUMBER, Platform.SENSOR])
+async def test_the_entity_unit_is_the_table_s_not_the_setting_s(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    platform: Platform,
+) -> None:
+    """A percentage whose setting has no unit is in %; a temperature whose setting has one
+    has none. On a number, and on a sensor when the setting is read-only."""
+    writable = platform is Platform.NUMBER
+    _replace_settings(
+        monkeypatch,
+        {
+            _VOLUME: {"unit": None, "writable": writable},
+            _TEMPERATURE: {"unit": SettingUnit.SECONDS, "writable": writable},
+        },
+    )
+    _pair(fake_station, fake_cloud)
+    _seed(fake_station, INDOOR_SN, _VOLUME, 40)
+    _seed(fake_station, INDOOR_SN, _TEMPERATURE, 83)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    if platform is Platform.SENSOR:
+        await _enable(
+            hass, entry, [(platform, INDOOR_SN, _VOLUME), (platform, INDOOR_SN, _TEMPERATURE)]
+        )
+    for key, value, unit in ((_VOLUME, "40", "%"), (_TEMPERATURE, "83", None)):
+        state = hass.states.get(entity_id_for(hass, platform, INDOOR_SN, key))
+        assert state is not None, key
+        assert state.state == value, key
+        assert state.attributes.get(ATTR_UNIT_OF_MEASUREMENT) == unit, key
+        assert state.attributes.get(ATTR_DEVICE_CLASS) is None, key
+    await _stop(hass, entry)
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("40", "40"), ("abc", "unknown")])
+async def test_a_read_only_percentage_without_a_class_is_a_number_or_unknown(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    raw: str,
+    expected: str,
+) -> None:
+    """A unit makes the state a number even with no device class. The stand-in is a
+    read-only setting the library passes through as text, typed as a percentage."""
+    key = "device_response_timeout_delay_time"
+    _replace_settings(monkeypatch, {key: {"meaning": SettingMeaning.PERCENT, "unit": None}})
+    _pair(fake_station, fake_cloud)
+    _seed(fake_station, DOORBELL_SN, key, raw)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    await _enable(hass, entry, [(Platform.SENSOR, DOORBELL_SN, key)])
+    state = hass.states.get(entity_id_for(hass, Platform.SENSOR, DOORBELL_SN, key))
+    assert state is not None
+    assert state.attributes.get(ATTR_DEVICE_CLASS) is None
+    assert state.attributes.get(ATTR_UNIT_OF_MEASUREMENT) == "%"
+    assert state.state == expected
     await _stop(hass, entry)

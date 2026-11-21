@@ -645,7 +645,11 @@ class EufySettingSensor(EufySettingEntity, SensorEntity):
     @property
     @override
     def native_value(self) -> StateType | datetime:
-        """The decoded value; an enum by its label, None for a value outside its values."""
+        """The decoded value; an enum by its label, None for a value outside its values.
+
+        A timestamp is a datetime, a value with a unit a number; either is None when the
+        value is not one.
+        """
         value = self.setting_value
         setting = self._spec.setting
         if value is None or setting.structured:
