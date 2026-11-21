@@ -9,9 +9,10 @@ from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 from typing import Any, Final, NamedTuple
 
+import attr
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_EMAIL, EVENT_HOMEASSISTANT_STOP, Platform
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.core import Event, HomeAssistant, callback, split_entity_id
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
@@ -599,6 +600,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         recordings=recording_manager,
         station_recordings=station_recordings.StationRecordings(hass, stored_recordings, plays),
     )
+    _async_move_lamp_switch_rows(hass, entry, coordinators.values())
     _async_forget_moved_setting_entities(hass, entry, coordinators.values())
     _async_forget_dropped_setting_entities(hass, entry, coordinators.values())
     _async_forget_parentless_setting_entities(hass, entry, coordinators.values())
@@ -710,6 +712,77 @@ _SETTING_DOMAINS: frozenset[str] = frozenset(
         Platform.BINARY_SENSOR,
     }
 )
+
+
+def _async_move_lamp_switch_rows(
+    hass: HomeAssistant, entry: EufyConfigEntry, coordinators: Iterable[StationCoordinator]
+) -> None:
+    """Register a lamp's light row with the user's settings of the lamp's switch row.
+
+    For each light this setup builds that has no light row yet while this entry has a
+    switch row of the same unique id: the light row is created with the switch row's
+    name, icon, area, labels and aliases, its user-set disabled and hidden marks, and its
+    object id when the user changed it (``switch.garden_lamp`` -> ``light.garden_lamp``);
+    an unchanged one leaves Home Assistant's own naming. The switch row is left to
+    :func:`_async_forget_moved_setting_entities`. Logs one INFO line per moved row.
+    """
+    registry = er.async_get(hass)
+    for coordinator in coordinators:
+        station = coordinator.station
+        for spec in setting_specs(station):
+            light = spec.light
+            if spec.platform is not Platform.LIGHT or light is None:
+                continue
+            unique_id = entity_unique_id(spec.device_sn or station.serial, spec.key)
+            if registry.async_get_entity_id(Platform.LIGHT, DOMAIN, unique_id) is not None:
+                continue
+            switch_id = registry.async_get_entity_id(Platform.SWITCH, DOMAIN, unique_id)
+            old = registry.async_get(switch_id) if switch_id is not None else None
+            if old is None or old.config_entry_id != entry.entry_id:
+                continue
+            # The id Home Assistant gives the switch row without the user's name and area;
+            # any other is the user's.
+            default_id = registry.async_regenerate_entity_id(
+                attr.evolve(old, name=None, area_id=None)
+            )
+            # The user's disabling carries over; any other leaves the light's own default.
+            disabled_by: er.RegistryEntryDisabler | UndefinedType = UNDEFINED
+            if old.disabled_by is er.RegistryEntryDisabler.USER:
+                disabled_by = er.RegistryEntryDisabler.USER
+            elif not spec.enabled_by_default:
+                disabled_by = er.RegistryEntryDisabler.INTEGRATION
+            new = registry.async_get_or_create(
+                Platform.LIGHT,
+                DOMAIN,
+                unique_id,
+                config_entry=entry,
+                device_id=old.device_id,
+                object_id_base=light.name,
+                original_name=light.name,
+                suggested_object_id=(
+                    UNDEFINED if old.entity_id == default_id else split_entity_id(old.entity_id)[1]
+                ),
+                disabled_by=disabled_by,
+                hidden_by=(
+                    er.RegistryEntryHider.USER
+                    if old.hidden_by is er.RegistryEntryHider.USER
+                    else None
+                ),
+            )
+            registry.async_update_entity(
+                new.entity_id,
+                name=old.name,
+                icon=old.icon,
+                area_id=old.area_id,
+                labels=set(old.labels),
+                aliases=list(old.aliases),
+            )
+            _LOGGER.info(
+                "Lamp of %s: %s moved to %s with its name, area, labels and visibility",
+                redact_serial(spec.device_sn or station.serial),
+                old.entity_id,
+                new.entity_id,
+            )
 
 
 def _async_forget_moved_setting_entities(

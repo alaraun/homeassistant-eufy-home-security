@@ -584,8 +584,11 @@ the camera and its settings. The limits above apply.
   - The light replaces the lamp's switch of earlier releases: `switch.<camera>_light`
     becomes `light.<camera>_light` (`switch.<camera>_spotlight` becomes
     `light.<camera>_spotlight`), and the switch's registry entry is removed at the next
-    start. Automations, scripts and dashboards that used the
-    switch need the light entity and `light.turn_on` / `light.turn_off`.
+    start. What you set on the switch carries over to the light: its name, icon, area,
+    labels and voice assistant aliases, hidden or disabled by you, and an entity id you
+    changed (`switch.garden_lamp` becomes `light.garden_lamp`). Automations, scripts and
+    dashboards that used the switch still need the light entity and `light.turn_on` /
+    `light.turn_off`.
   - The lamp's brightness setting stays an entity, disabled on a new install (the
     light sets it); one you already have stays as it is. The lamp's colour temperature
     and its other settings (**Lighting**, motion-activated lighting, schedules) stay

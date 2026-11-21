@@ -8,13 +8,21 @@ by its Lighting setting; made a T84A1, its lamp switch is read-only.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from collections.abc import Callable
 from typing import Any, Final
 
 import pytest
 from conftest import add_entry, entity_id_for, seed_setting, set_up_warm, setting_param, setup_entry
 from conftest import state_of as _state_of
-from eufy_home_security import DeviceTimeoutError, EufySecurity, Light, Station, entity_unique_id
+from eufy_home_security import (
+    DeviceTimeoutError,
+    EufySecurity,
+    Light,
+    Station,
+    entity_unique_id,
+    redact_serial,
+)
 from eufy_home_security.devices import Setting
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
 from homeassistant.components.light import (
@@ -25,6 +33,7 @@ from homeassistant.components.light import (
     LightEntity,
 )
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
+from homeassistant.config_entries import ConfigEntryDisabler
 from homeassistant.const import (
     ATTR_ASSUMED_STATE,
     ATTR_ENTITY_ID,
@@ -37,12 +46,15 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import label_registry as lr
 from homeassistant.util.color import value_to_brightness
 from pytest_homeassistant.common import MockConfigEntry, async_capture_events
 
 from custom_components.eufy_home_security.const import DOMAIN
-from custom_components.eufy_home_security.settings import setting_specs
+from custom_components.eufy_home_security.settings import SettingEntitySpec, setting_specs
 
 _CAMERA: Final = SYNTHETIC.camera_sn
 _SWITCH: Final = "spotlight_switch"
@@ -295,6 +307,247 @@ async def test_a_light_row_is_removed_when_the_lamps_switch_is_read_only_here(
     assert await setup_entry(hass, entry)
     assert registry.async_get(old.entity_id) is None
     assert registry.async_get_entity_id(Platform.BINARY_SENSOR, DOMAIN, unique_id) is not None
+    await _unload(hass, entry)
+
+
+# ── the switch row's customisations carry over to the light row ──────────────
+
+
+def _camera_device(hass: HomeAssistant, entry: MockConfigEntry) -> dr.DeviceEntry:
+    """The camera's device as setup registers it (the fake cloud names it Front)."""
+    return dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, _CAMERA)}, name="Front"
+    )
+
+
+def _old_switch(
+    hass: HomeAssistant, entry: MockConfigEntry, name: str = "Spotlight"
+) -> er.RegistryEntry:
+    """The lamp's switch row of an install from before lights, named ``name`` by the
+    integration: ``switch.front_<name>``."""
+    return er.async_get(hass).async_get_or_create(
+        Platform.SWITCH,
+        DOMAIN,
+        entity_unique_id(_CAMERA, _SWITCH),
+        config_entry=entry,
+        device_id=_camera_device(hass, entry).id,
+        has_entity_name=True,
+        object_id_base=name,
+        original_name=name,
+    )
+
+
+def _moved_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "custom_components.eufy_home_security" and "moved to" in r.getMessage()
+    ]
+
+
+@pytest.mark.parametrize("object_id", ["garden_lamp", "front_garden_lamp"])
+async def test_the_switch_rows_customisations_carry_over_to_the_light_row(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    caplog: pytest.LogCaptureFixture,
+    object_id: str,
+) -> None:
+    """Name, icon, area, labels, aliases, the user's hidden and disabled marks and a changed
+    object id move to the light row; the switch row is removed. An id Home Assistant derives
+    from the user's name (``front_garden_lamp``) is a changed one too."""
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    area = ar.async_get(hass).async_create("Garden")
+    label = lr.async_get(hass).async_create("Outdoor")
+    old = _old_switch(hass, entry)
+    assert old.entity_id == "switch.front_spotlight"
+    old = registry.async_update_entity(
+        old.entity_id,
+        new_entity_id=f"switch.{object_id}",
+        name="Garden lamp",
+        icon="mdi:lamp",
+        area_id=area.id,
+        labels={label.label_id},
+        aliases=["yard light"],
+        hidden_by=er.RegistryEntryHider.USER,
+        disabled_by=er.RegistryEntryDisabler.USER,
+    )
+    caplog.set_level(logging.INFO, logger="custom_components.eufy_home_security")
+
+    assert await setup_entry(hass, entry)
+    assert registry.async_get(old.entity_id) is None
+    light = registry.async_get(_light_id(hass))
+    assert light is not None
+    assert light.entity_id == f"light.{object_id}"
+    assert light.config_entry_id == entry.entry_id
+    assert light.name == "Garden lamp"
+    assert light.icon == "mdi:lamp"
+    assert light.area_id == area.id
+    assert light.labels == {label.label_id}
+    assert light.aliases == ["yard light"]
+    assert light.hidden_by is er.RegistryEntryHider.USER
+    assert light.disabled_by is er.RegistryEntryDisabler.USER
+    assert light.original_name == "Light"
+    assert light.device_id == old.device_id
+    (line,) = _moved_lines(caplog)
+    assert old.entity_id in line
+    assert f"light.{object_id}" in line
+    assert redact_serial(_CAMERA) in line
+    assert _CAMERA not in line
+    await _unload(hass, entry)
+
+
+async def test_an_unchanged_switch_row_leaves_the_light_its_default_id(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``switch.front_spotlight`` as Home Assistant named it, in an area set later: the light
+    gets the id Home Assistant gives it (``light.front_light``), enabled and shown, in that
+    area; the integration's own disabled and hidden marks of the switch do not carry over."""
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    area = ar.async_get(hass).async_create("Garden")
+    old = _old_switch(hass, entry)
+    registry.async_update_entity(
+        old.entity_id,
+        area_id=area.id,
+        disabled_by=er.RegistryEntryDisabler.INTEGRATION,
+        hidden_by=er.RegistryEntryHider.INTEGRATION,
+    )
+    caplog.set_level(logging.INFO, logger="custom_components.eufy_home_security")
+
+    assert await setup_entry(hass, entry)
+    assert registry.async_get(old.entity_id) is None
+    light = registry.async_get(_light_id(hass))
+    assert light is not None
+    assert light.entity_id == "light.front_light"
+    assert light.area_id == area.id
+    assert light.name is None
+    assert light.disabled_by is None
+    assert light.hidden_by is None
+    assert hass.states.get(light.entity_id) is not None
+    assert len(_moved_lines(caplog)) == 1
+    await _unload(hass, entry)
+
+
+async def test_a_user_name_with_its_home_assistant_id_carries_the_id(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The user named the switch and took the id Home Assistant derives from that name
+    (``switch.front_garden_lamp``): the light keeps both."""
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    old = _old_switch(hass, entry)
+    registry.async_update_entity(
+        old.entity_id, new_entity_id="switch.front_garden_lamp", name="Garden lamp"
+    )
+
+    assert await setup_entry(hass, entry)
+    light = registry.async_get(_light_id(hass))
+    assert light is not None
+    assert light.entity_id == "light.front_garden_lamp"
+    assert light.name == "Garden lamp"
+    await _unload(hass, entry)
+
+
+async def test_a_moved_light_follows_its_own_enabled_default(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An enabled switch row of a light registered disabled by default: the light row is
+    registered disabled by the integration, as a new one would be."""
+    monkeypatch.setattr(SettingEntitySpec, "enabled_by_default", property(lambda _: False))
+    seed_warm_cache()
+    entry = add_entry(hass)
+    _old_switch(hass, entry)
+
+    assert await setup_entry(hass, entry)
+    light = er.async_get(hass).async_get(_light_id(hass))
+    assert light is not None
+    assert light.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+    await _unload(hass, entry)
+
+
+async def test_another_entrys_switch_row_is_not_moved(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A switch row of the lamp's unique id held by another entry stays as it is, and the
+    light row takes none of its settings."""
+    seed_warm_cache()
+    entry = add_entry(hass)
+    other = MockConfigEntry(
+        domain=DOMAIN, title="other", unique_id="other", disabled_by=ConfigEntryDisabler.USER
+    )
+    other.add_to_hass(hass)
+    registry = er.async_get(hass)
+    foreign = registry.async_get_or_create(
+        Platform.SWITCH, DOMAIN, entity_unique_id(_CAMERA, _SWITCH), config_entry=other
+    )
+    foreign = registry.async_update_entity(foreign.entity_id, name="Other", icon="mdi:lamp")
+    caplog.set_level(logging.INFO, logger="custom_components.eufy_home_security")
+
+    assert await setup_entry(hass, entry)
+    kept = registry.async_get(foreign.entity_id)
+    assert kept is not None
+    assert kept.config_entry_id == other.entry_id
+    light = registry.async_get(_light_id(hass))
+    assert light is not None
+    assert light.name is None
+    assert light.icon is None
+    assert _moved_lines(caplog) == []
+    await _unload(hass, entry)
+
+
+async def test_an_existing_light_row_is_left_as_it_is(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A light row already there keeps its own settings; the switch row next to it is only
+    removed."""
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    old = _old_switch(hass, entry)
+    registry.async_update_entity(old.entity_id, name="Switch name", icon="mdi:lamp")
+    light = registry.async_get_or_create(
+        LIGHT_DOMAIN,
+        DOMAIN,
+        entity_unique_id(_CAMERA, _SWITCH),
+        config_entry=entry,
+        suggested_object_id="porch",
+    )
+    registry.async_update_entity(light.entity_id, name="Kept")
+    caplog.set_level(logging.INFO, logger="custom_components.eufy_home_security")
+
+    assert await setup_entry(hass, entry)
+    assert registry.async_get(old.entity_id) is None
+    kept = registry.async_get(light.entity_id)
+    assert kept is not None
+    assert kept.entity_id == "light.porch"
+    assert kept.name == "Kept"
+    assert kept.icon is None
+    assert _moved_lines(caplog) == []
     await _unload(hass, entry)
 
 
