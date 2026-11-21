@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.21-1';
+const CARD_VERSION = '2026.11.21-2';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -193,6 +193,8 @@ const EVENT_WORD = { motion: 'Motion', person: 'Person', identified_person: 'Kno
 // A lamp is a light keyed by its switch setting's key (on and off only, like a switch); an older install's
 // lamp switch is a switch row.
 const ROW_DOMAINS = ['select', 'number', 'switch', 'light'];
+// A dimmable light's brightness (percent) is staged and sent under its row key plus this suffix
+const BRI = '~brightness';
 // The integration's settings layout of a device: { sections: [{ id, heading, order, entity_ids }] }. Settings tabs,
 // their names and order come only from it; an entity in no section goes under More.
 const LAYOUT_WS = 'eufy_home_security/settings_layout';
@@ -2436,11 +2438,16 @@ class EufyCameraCard extends HTMLElement {
     const v = Math.min(c.max, Math.max(c.min, Math.round(parseFloat(r.value) / c.step) * c.step));
     // A select shown as a slider stages the option at the index
     if (!isNaN(c.value) && Math.abs(v - c.value) < 1e-6) delete this._stg[kind]; else this._stg[kind] = c.opts ? c.opts[v] : v;
+    // A brightness turns the light on: a light not shown on is staged on with it
+    const lk = c.light;
+    if (lk && this._stg[kind] !== undefined && (this._stg[lk] !== undefined ? this._stg[lk] : this._ctx[lk]) !== 'on') this._stg[lk] = 'on';
     r.style.setProperty('--pos', `${(((v - c.min) / (c.max - c.min)) * 100).toFixed(1)}%`);
     r.setAttribute('aria-valuetext', c.fmt(v));
     const row = r.closest('.row');
     if (row) {
-      row.classList.toggle('staged', this._stg[kind] !== undefined);
+      row.classList.toggle('staged', this._stg[kind] !== undefined || (!!lk && this._stg[lk] !== undefined));
+      const tgb = lk && this._stg[lk] === 'on' && row.querySelector('[data-tg]');
+      if (tgb) { tgb.classList.add('on'); tgb.classList.remove('unk'); tgb.setAttribute('aria-checked', 'true'); }
       const rv = row.querySelector('.rval');
       if (rv) rv.textContent = c.fmt(v);
     }
@@ -2488,10 +2495,18 @@ class EufyCameraCard extends HTMLElement {
     if (!h || !Object.keys(s).length) return;
     const items = [];
     (this._ctx.order || []).forEach((k) => {
-      const id = E.rowIds[k];
+      const lk = k.endsWith(BRI) ? k.slice(0, -BRI.length) : k;
+      const id = E.rowIds[lk];
       if (s[k] === undefined || !id) return;
       const dom = id.split('.')[0];
       let call;
+      // A light staged on with a brightness: the brightness call turns it on
+      if (lk !== k) {
+        items.push({ key: k, value: s[k], call: ['light', 'turn_on', { entity_id: id, brightness_pct: s[k] }], id, waits: !!this._dependsOn(id, lk),
+          label: this._ctx.rows[k] ? this._ctx.rows[k].label : k, also: s[lk] === 'on' ? lk : null, settles: true });
+        return;
+      }
+      if (dom === 'light' && s[k] === 'on' && s[k + BRI] !== undefined) return;
       if (dom === 'select') call = ['select', 'select_option', { entity_id: id, option: String(s[k]) }];
       else if (dom === 'switch' || dom === 'light') call = [dom, s[k] === 'on' ? 'turn_on' : 'turn_off', { entity_id: id }];
       else call = ['number', 'set_value', { entity_id: id, value: s[k] }];
@@ -2507,6 +2522,7 @@ class EufyCameraCard extends HTMLElement {
       const it = items[i];
       if (cam.here()) {
         this._pending[it.key] = { value: it.value, at: Date.now(), was: it.key === 'act' ? this._actStamp(it.value) : undefined };
+        if (it.also) this._pending[it.also] = { value: 'on', at: Date.now() };
         this._arm();
         this.render();
       }
@@ -2515,17 +2531,23 @@ class EufyCameraCard extends HTMLElement {
       ready.then((up) => {
         if (!up) return Promise.reject(new Error(`${it.label || it.key}: not available`));
         return this._hass.callService(...it.call);
+      }).then(() => {
+        // A lamp with levels takes the nearest one: its brightness is confirmed by the call, not by an equal value
+        const p = this._pending[it.key];
+        if (it.settles && p && cam.here()) { p.ok = true; this.render(); }
       }).catch((e) => {
         if (e && e.message && cam.shown()) this._toast(e.message);
         if (!cam.here()) return;
-        const p = this._pending[it.key];
-        // A write that timed out may still apply: the row says so instead of "Not applied"
-        if (p && e && e.translation_key === 'setting_unconfirmed') { p.unsure = true; p.at = Date.now() - PENDING_MS - 1; }
-        else if (p) p.at = Date.now() - PENDING_MS - 1;
+        [it.key, it.also].forEach((pk) => {
+          const p = pk && this._pending[pk];
+          // A write that timed out may still apply: the row says so instead of "Not applied"
+          if (p && e && e.translation_key === 'setting_unconfirmed') { p.unsure = true; p.at = Date.now() - PENDING_MS - 1; }
+          else if (p) p.at = Date.now() - PENDING_MS - 1;
+        });
         this.render();
       }).finally(() => run(i + 1));
     };
-    items.forEach((it) => { this._pending[it.key] = { value: it.value, at: 0 }; });
+    items.forEach((it) => { this._pending[it.key] = { value: it.value, at: 0 }; if (it.also) this._pending[it.also] = { value: 'on', at: 0 }; });
     run(0);
     this.render();
   }
@@ -2688,7 +2710,7 @@ class EufyCameraCard extends HTMLElement {
         if (!applies && !dep.opt) why = 'unavailable';
       }
       const off = !avail || !applies || (sSt.state === 'unavailable' && !(dep && stg[dep.key] !== undefined));
-      if (off) delete stg[key];
+      if (off) { delete stg[key]; delete stg[key + BRI]; }
       const label = this._rowLabel(id, key, sSt);
       const g = dep ? { id: 'dep', at: 0 } : this._group(id);
       const icon = ROW_ICONS[key] || ROW_ICONS[key.replace(/__v\d+$|_new$/, '')] || (this._hass.entities[id] && this._hass.entities[id].icon) || sSt.attributes.icon
@@ -2723,7 +2745,29 @@ class EufyCameraCard extends HTMLElement {
         // One line: the name and a toggle (staged like every other row)
         const fmtS = v => (v === 'on' ? 'On' : (v === 'off' ? 'Off' : '--'));
         ctx.rows[key] = { label, fmt: fmtS, fmtLive: fmtS(s.value) };
-        rows.push({ ...base, st: s, staged: stg[key] !== undefined, value: '', tg: { on: shown === 'on', known: shown === 'on' || shown === 'off' } });
+        const tg = { on: shown === 'on', known: shown === 'on' || shown === 'off' };
+        const modes = dom === 'light' && sSt.attributes.supported_color_modes;
+        if (!Array.isArray(modes) || !modes.some(m => m !== 'onoff')) {
+          delete stg[key + BRI];
+          rows.push({ ...base, st: s, staged: stg[key] !== undefined, value: '', tg });
+          return;
+        }
+        // A dimmable light: its toggle and a brightness slider in percent (no value while off or unknown); a
+        // brightness is dropped when the light is set off
+        const bk = key + BRI;
+        const b = parseFloat(sSt.attributes.brightness);
+        const liveB = isNaN(b) ? NaN : Math.round((b * 100) / 255);
+        const pb = this._pending[bk];
+        const sb = this._settle(bk, liveB, !!pb && (!!pb.ok || Math.abs(pb.value - liveB) < 1e-6));
+        const c = { value: sb.value, min: 1, max: 100, step: 1, light: key, fmt: v => (isNaN(v) ? (base.unrep ? 'Not reported' : (known === 'off' ? 'Off' : '--')) : `${Math.round(v)} %`) };
+        ctx.ranges[bk] = c;
+        ctx[bk] = sb.value;
+        if (shown === 'off' || (stg[bk] !== undefined && Math.abs(stg[bk] - sb.value) < 1e-6)) delete stg[bk];
+        const shownB = stg[bk] !== undefined ? stg[bk] : sb.value;
+        ctx.rows[bk] = { label: `${label} brightness`, fmt: c.fmt, fmtLive: c.fmt(sb.value) };
+        const st2 = [s, sb].find(x => x.status === 'failed') || [s, sb].find(x => x.status === 'unsure') || [s, sb].find(x => x.status) || s;
+        rows.push({ ...base, st: st2, staged: stg[key] !== undefined || stg[bk] !== undefined, value: c.fmt(shownB), range: c, rk: bk,
+          rStaged: stg[bk] !== undefined, shown: shownB, lt: tg });
         return;
       }
       let opts, lbl;
@@ -2784,7 +2828,7 @@ class EufyCameraCard extends HTMLElement {
       }
       rows.push(r, ...(deps[r.id] || []));
     });
-    rows.forEach(r => ctx.order.push(r.id));
+    rows.forEach((r) => { ctx.order.push(r.id); if (r.rk) ctx.order.push(r.rk); });
     const nMore = top.filter(r => r.group.id === MORE_TAB[0]).length;
     // Settings tabs: the shown groups that have rows, in order; the open one stays while it has rows
     const tabs = [...new Set(top.map(r => r.group.id))];
@@ -3038,10 +3082,11 @@ class EufyCameraCard extends HTMLElement {
     const statusWord = s => (s.status === 'pending' ? 'sending' : (s.status === 'failed' ? 'Not applied' : (s.status === 'unsure' ? 'may still apply' : '')));
     const slider = (r, label) => {
       const c = r.range;
+      const k = escapeHtml(r.rk || r.id);
       const frac = v => Math.min(1, Math.max(0, (v - c.min) / ((c.max - c.min) || 1)));
-      const was = r.staged && !isNaN(c.value) ? frac(c.value) : NaN;
-      return `${!isNaN(was) ? `<button class="ghost" type="button" data-restore="${escapeHtml(r.id)}" style="--at:${was.toFixed(4)}" aria-label="Put ${escapeHtml(label)} back to ${escapeHtml(c.fmt(c.value))}"><i></i></button>` : ''}
-              <input class="ctl-range${isNaN(r.shown) ? ' unk' : ''}" type="range" data-kind="${escapeHtml(r.id)}" data-focus="range-${escapeHtml(r.id)}" min="${c.min}" max="${c.max}" step="${c.step}" value="${isNaN(r.shown) ? c.min : r.shown}"
+      const was = (r.rk ? r.rStaged : r.staged) && !isNaN(c.value) ? frac(c.value) : NaN;
+      return `${!isNaN(was) ? `<button class="ghost" type="button" data-restore="${k}" style="--at:${was.toFixed(4)}" aria-label="Put ${escapeHtml(label)} back to ${escapeHtml(c.fmt(c.value))}"><i></i></button>` : ''}
+              <input class="ctl-range${isNaN(r.shown) ? ' unk' : ''}" type="range" data-kind="${k}" data-focus="range-${k}" min="${c.min}" max="${c.max}" step="${c.step}" value="${isNaN(r.shown) ? c.min : r.shown}"
                 aria-label="${escapeHtml(label)}" aria-valuetext="${escapeHtml(r.value)}" style="--pos:${(frac(isNaN(r.shown) ? c.min : r.shown) * 100).toFixed(1)}%"${r.off ? ' disabled' : ''}>`;
     };
     // A dropdown: the value on a button; the list opens inside the card (see _placeDd). A long list starts with a
@@ -3056,7 +3101,7 @@ class EufyCameraCard extends HTMLElement {
       return `<button class="dd" type="button" data-dd="${id}" data-focus="dd-${id}" aria-haspopup="listbox" aria-expanded="${d.open}" aria-label="${escapeHtml(`${r.label}: ${d.shown}`)}"${r.off ? ' disabled' : ''}><span>${escapeHtml(d.shown)}</span><ha-icon icon="${d.open ? 'mdi:menu-up' : 'mdi:menu-down'}"></ha-icon></button>
               ${d.open ? `<div class="ddl" data-n="${d.opts.length}">${filt ? `<input class="ddq" type="text" data-focus="ddq-${id}" value="${escapeHtml(q)}" placeholder="Filter" autocomplete="off" spellcheck="false" aria-label="${escapeHtml(`Filter ${r.label}`)}">` : ''}<div class="ddv" role="listbox" aria-label="${escapeHtml(r.label)}">${opts}${none}</div></div>` : ''}`;
     };
-    const tgHtml = r => `<button class="tg${r.tg.on ? ' on' : ''}${r.tg.known ? '' : ' unk'}" type="button" role="switch" data-tg="${escapeHtml(r.id)}" data-focus="tg-${escapeHtml(r.id)}" aria-checked="${r.tg.on}" aria-label="${escapeHtml(r.label)}"${r.off ? ' disabled' : ''}><i></i></button>`;
+    const tgHtml = (r, g = r.tg) => `<button class="tg${g.on ? ' on' : ''}${g.known ? '' : ' unk'}" type="button" role="switch" data-tg="${escapeHtml(r.id)}" data-focus="tg-${escapeHtml(r.id)}" aria-checked="${g.on}" aria-label="${escapeHtml(r.label)}"${r.off ? ' disabled' : ''}><i></i></button>`;
     // A segment row with no option selected keeps its value text ("--", "Not reported")
     const shownUnknown = r => !!r.seg && !r.seg.some(o => o.on);
     const rowHtml = (r, first) => {
@@ -3068,12 +3113,13 @@ class EufyCameraCard extends HTMLElement {
             ${tgHtml(r)}
           </div>`;
       }
-      const ctl = r.range ? slider(r, r.label) : (r.dd ? ddHtml(r)
+      const ctl = r.range ? slider(r, r.rk ? `${r.label} brightness` : r.label) : (r.dd ? ddHtml(r)
         : `<div class="seg${r.segLong ? ' long' : ''}" role="group" aria-label="${escapeHtml(r.label)}">${r.seg.map(o => `<button class="opt${o.i ? '' : ' txt'}" type="button" data-kind="${escapeHtml(r.id)}" data-opt="${escapeHtml(o.v)}" data-focus="opt-${escapeHtml(r.id)}-${escapeHtml(o.v)}" aria-pressed="${o.on}" aria-label="${escapeHtml(o.full || o.l)}"${r.off ? ' disabled' : ''}>${o.i ? `<ha-icon icon="${o.i}"></ha-icon>` : ''}<span>${escapeHtml(o.l)}</span></button>`).join('')}</div>`);
       return `
           <div class="row${r.staged ? ' staged' : ''}${r.st.status ? ` ${r.st.status}` : ''}${r.off ? ' na' : ''}${r.dd ? ' ddrow' : ''}${r.dd && r.dd.open ? ' ddopen' : ''}${r.dep ? ' dep' : ''}${r.seg ? ` segrow${r.segIcons ? ' segicons' : ''}` : ''}${r.seg && shownUnknown(r) ? ' segunk' : ''}">
             <div class="rname"><ha-icon icon="${escapeHtml(r.icon)}"></ha-icon><span class="rn">${escapeHtml(r.label)}</span>${w || r.sub ? `<span class="rsub${r.st.status === 'failed' ? ' err' : (r.warn && !w ? ' warn' : '')}">${escapeHtml(w || r.sub)}</span>` : ''}</div>
-            <span class="rval${r.unrep ? ' unrep' : ''}">${escapeHtml(r.value)}</span>
+            ${r.lt ? `<div class="lval"><span class="rval${r.unrep ? ' unrep' : ''}">${escapeHtml(r.value)}</span>${tgHtml(r, r.lt)}</div>`
+    : `<span class="rval${r.unrep ? ' unrep' : ''}">${escapeHtml(r.value)}</span>`}
             <div class="rctl">${ctl}</div>
           </div>`;
     };
@@ -3862,6 +3908,8 @@ const CSS_TEXT = `
   .row.ddrow .rval { display: none; }
   /* Switch rows: name and toggle on one line */
   .row.tgrow { grid-template-areas: "name val"; padding-bottom: 2px; }
+  /* A dimmable light: its brightness and its toggle side by side */
+  .lval { grid-area: val; display: flex; align-items: center; gap: 10px; }
   .ctl-rows > .row.tg1 { grid-column-start: 1; }
   .tgrow .rn, .rn { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   /* A narrow row shows a segment with long option texts as icons only (the text stays in aria-label and the value) */

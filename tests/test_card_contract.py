@@ -44,6 +44,7 @@ _HA_ATTRIBUTES: Final = frozenset(
     {
         "access_token",
         "assumed_state",
+        "brightness",
         "device_class",
         "entity_picture",
         "event_type",
@@ -53,6 +54,7 @@ _HA_ATTRIBUTES: Final = frozenset(
         "min",
         "options",
         "restored",
+        "supported_color_modes",
         "supported_features",
         "unit_of_measurement",
     }
