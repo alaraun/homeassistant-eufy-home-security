@@ -190,11 +190,11 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   camera model needs no card change. Entities hidden or disabled in HA are left out.
   - A camera's lamp is its `light` entity: a toggle row like a switch (`light.turn_on` / `light.turn_off`), where
     the lamp's switch was. A light that sets a brightness (its `supported_color_modes` has a mode other than
-    `onoff`) adds a brightness slider in percent beside the toggle; it shows the light's `brightness` (`Off`
-    while the light is off, `--` while unknown) and stages like any slider. Moving it on a light that is off
-    also stages the light on; Set then sends one `light.turn_on` with `brightness_pct`, and setting the light off
-    drops a staged brightness. A lamp with brightness levels takes the nearest one: the row shows what the light
-    reports once the call returns. An on/off-only light keeps the toggle only. The lamp's brightness setting is a
+    `onoff`) adds a brightness slider in percent beside the toggle, from 2 to 100 % (the integration turns the
+    lamp off at 1 % or less); it shows the light's `brightness` (`Off` while the light is off, `--` while
+    unknown) and stages like any slider. Moving it on a light that is off also stages the light on; Set then
+    sends one `light.turn_on` with `brightness_pct`, and setting the light off drops a staged brightness. A lamp
+    with brightness levels takes the nearest one: the row shows what the light reports once the call returns. An on/off-only light keeps the toggle only. The lamp's brightness setting is a
     row of its own only where it is enabled (it is disabled on a new install).
   - Tabs follow the integration's sections: the card asks the integration for the device's settings layout
     (websocket `eufy_home_security/settings_layout`) and shows one tab per section that has settings, with the

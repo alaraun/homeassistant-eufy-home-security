@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.21-2';
+const CARD_VERSION = '2026.11.21-3';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -2753,13 +2753,14 @@ class EufyCameraCard extends HTMLElement {
           return;
         }
         // A dimmable light: its toggle and a brightness slider in percent (no value while off or unknown); a
-        // brightness is dropped when the light is set off
+        // brightness is dropped when the light is set off. The slider starts at 2 %: the integration turns the lamp
+        // off at 1 % or less.
         const bk = key + BRI;
         const b = parseFloat(sSt.attributes.brightness);
         const liveB = isNaN(b) ? NaN : Math.round((b * 100) / 255);
         const pb = this._pending[bk];
         const sb = this._settle(bk, liveB, !!pb && (!!pb.ok || Math.abs(pb.value - liveB) < 1e-6));
-        const c = { value: sb.value, min: 1, max: 100, step: 1, light: key, fmt: v => (isNaN(v) ? (base.unrep ? 'Not reported' : (known === 'off' ? 'Off' : '--')) : `${Math.round(v)} %`) };
+        const c = { value: sb.value, min: 2, max: 100, step: 1, light: key, fmt: v => (isNaN(v) ? (base.unrep ? 'Not reported' : (known === 'off' ? 'Off' : '--')) : `${Math.round(v)} %`) };
         ctx.ranges[bk] = c;
         ctx[bk] = sb.value;
         if (shown === 'off' || (stg[bk] !== undefined && Math.abs(stg[bk] - sb.value) < 1e-6)) delete stg[bk];
