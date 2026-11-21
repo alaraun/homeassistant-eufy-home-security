@@ -305,7 +305,8 @@ def setting_platform(setting: Setting) -> Platform | None:
 
     - A per-mode delay or action mask: none, the HomeBase card edits it (``is_per_mode``).
     - A writable setting with a ``control``: its platform (switch, select, number, a
-      switch per member for ``toggles``, text).
+      switch per member for ``toggles``, text), unless its value is structured
+      (``Setting.structured``): no control, it is treated as read-only below.
     - A diagnostic value (``SettingRole.DIAGNOSTIC``): none; the app shows it nowhere, or
       a device field already gives it.
     - Otherwise, when readable: binary sensor for a bool, sensor for the rest.
@@ -313,7 +314,7 @@ def setting_platform(setting: Setting) -> Platform | None:
     """
     if is_per_mode(setting):
         return None
-    if setting.writable and setting.control is not None:
+    if setting.writable and setting.control is not None and not setting.structured:
         return _CONTROLS[setting.control]
     if not setting.readable or setting.role is SettingRole.DIAGNOSTIC:
         return None

@@ -24,7 +24,7 @@ from conftest import (
     wait_until,
 )
 from eufy_home_security import EufySecurity, Station, entity_unique_id
-from eufy_home_security.devices import Setting, model_for_serial
+from eufy_home_security.devices import Setting, SettingKind, model_for_serial
 from eufy_home_security.devices.model_settings import settings_of
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation, camera_device
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
@@ -438,7 +438,7 @@ async def test_a_device_the_station_reports_offline_goes_unavailable(
 _SERIALLESS_CHANNEL: Final = 2
 # The capability attribute an enum sensor publishes its choices under.
 _OPTIONS_ATTRIBUTE: Final = "options"
-# The station's clock format: writable, but of kind ``other`` (no control), so a sensor.
+# The station's clock format, listed by the test as writable of kind ``other`` (no control).
 _CLOCK_FORMAT: Final = "time_format_set"
 
 
@@ -455,13 +455,32 @@ def _as_read_only(monkeypatch: pytest.MonkeyPatch, *keys: str) -> None:
     monkeypatch.setattr(Station, "settings_for", settings_for)
 
 
+def _without_control(monkeypatch: pytest.MonkeyPatch, key: str) -> None:
+    """Have the library list ``key`` as writable of kind ``other``, with no control."""
+    real = Station.settings_for
+
+    def settings_for(self: Station, device_sn: str | None = None) -> tuple[Setting, ...]:
+        return tuple(
+            dataclasses.replace(
+                s, kind=SettingKind.OTHER, control=None, values=(), labels={}, default=None
+            )
+            if s.key == key
+            else s
+            for s in real(self, device_sn)
+        )
+
+    monkeypatch.setattr(Station, "settings_for", settings_for)
+
+
 async def test_a_value_setting_without_a_control_is_a_disabled_diagnostic_sensor(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A readable setting with no control kind is a diagnostic sensor, registered off."""
+    _without_control(monkeypatch, _CLOCK_FORMAT)
     seed_setting(fake_station, _CLOCK_FORMAT, 1, channel=_STATION_BLOCK)
     entry = await set_up_warm(hass, seed_warm_cache)
     registry = er.async_get(hass)
