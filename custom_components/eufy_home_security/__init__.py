@@ -716,6 +716,24 @@ _SETTING_DOMAINS: frozenset[str] = frozenset(
 # The registry option keys that hold an entity's voice assistant exposure.
 _ASSISTANTS: Final = ("conversation", "cloud.alexa", "cloud.google_assistant")
 
+# Home Assistant's Switch as X helper: its domain, its entities' platform, and the option of
+# its config entry naming the wrapped switch (entity id or registry id).
+_SWITCH_AS_X: Final = "switch_as_x"
+_SWITCH_AS_X_SOURCE: Final = "entity_id"
+
+
+def _switch_as_x_wrapper(
+    hass: HomeAssistant, registry: er.EntityRegistry, switch: er.RegistryEntry
+) -> er.RegistryEntry | None:
+    """The first Switch as X entity wrapping ``switch``, or None."""
+    for helper in hass.config_entries.async_entries(_SWITCH_AS_X):
+        if helper.options.get(_SWITCH_AS_X_SOURCE) not in (switch.entity_id, switch.id):
+            continue
+        for wrapper in er.async_entries_for_config_entry(registry, helper.entry_id):
+            if wrapper.platform == _SWITCH_AS_X:
+                return wrapper
+    return None
+
 
 def _async_move_lamp_switch_rows(
     hass: HomeAssistant, entry: EufyConfigEntry, coordinators: Iterable[StationCoordinator]
@@ -726,12 +744,12 @@ def _async_move_lamp_switch_rows(
     switch row of the same unique id: the light row is created with the switch row's
     object id (``switch.garden_lamp`` -> ``light.garden_lamp``; Home Assistant appends
     ``_2`` when another light holds it), name, icon, area, labels, aliases and voice
-    assistant exposure, and its hidden mark when the user set it. An enabled switch row
-    gives an enabled light row, also with the entry's preference to disable new entities;
-    a switch row the user disabled gives a disabled one; any other disabled mark leaves
-    the light's own default. The switch row is left to
-    :func:`_async_forget_moved_setting_entities`. Logs one INFO line per moved row with
-    the id the light row got.
+    assistant exposure (that of the Switch as X entity wrapping the switch, when there is
+    one), and its hidden mark when the user set it. An enabled switch row gives an enabled
+    light row, also with the entry's preference to disable new entities; a switch row the
+    user disabled gives a disabled one; any other disabled mark leaves the light's own
+    default. The switch row is left to :func:`_async_forget_moved_setting_entities`. Logs
+    one INFO line per moved row with the id the light row got.
     """
     registry = er.async_get(hass)
     for coordinator in coordinators:
@@ -778,10 +796,12 @@ def _async_move_lamp_switch_rows(
                 labels=set(old.labels),
                 aliases=list(old.aliases),
             )
+            # A Switch as X helper moves the switch's exposure to its own entity.
+            exposed = _switch_as_x_wrapper(hass, registry, old) or old
             for assistant in _ASSISTANTS:
-                if assistant in old.options:
+                if assistant in exposed.options:
                     registry.async_update_entity_options(
-                        new.entity_id, assistant, dict(old.options[assistant])
+                        new.entity_id, assistant, dict(exposed.options[assistant])
                     )
             _LOGGER.info(
                 "Lamp of %s: %s moved to %s with its name, area, labels, visibility and "

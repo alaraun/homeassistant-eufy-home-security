@@ -194,8 +194,9 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     lamp off at 1 % or less); it shows the light's `brightness` (`Off` while the light is off, `--` while
     unknown) and stages like any slider. Moving it on a light that is off also stages the light on; Set then
     sends one `light.turn_on` with `brightness_pct`, and setting the light off drops a staged brightness. A lamp
-    with brightness levels takes the nearest one: the row shows what the light reports once the call returns. An on/off-only light keeps the toggle only. The lamp's brightness setting is a
-    row of its own only where it is enabled (it is disabled on a new install).
+    with brightness levels takes the nearest one: the row shows what the light reports once the call returns. An
+    on/off-only light keeps the toggle only. The lamp's brightness setting is a row of its own only where it is
+    enabled (it is disabled on a new install).
   - Tabs follow the integration's sections: the card asks the integration for the device's settings layout
     (websocket `eufy_home_security/settings_layout`) and shows one tab per section that has settings, with the
     section's name, in the integration's order; rows keep the integration's order within a section (two-line

@@ -587,6 +587,72 @@ async def test_a_switch_without_stored_exposure_gives_the_light_none(
     await _unload(hass, entry)
 
 
+async def _switch_as_x(hass: HomeAssistant, switch: str) -> MockConfigEntry:
+    """A loaded Switch as X helper making ``switch`` (entity id or registry id) a light."""
+    helper = MockConfigEntry(
+        domain="switch_as_x",
+        options={"entity_id": switch, "target_domain": LIGHT_DOMAIN, "invert": False},
+        title="Light",
+        version=1,
+        minor_version=3,
+    )
+    helper.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(helper.entry_id)
+    await hass.async_block_till_done()
+    return helper
+
+
+@pytest.mark.parametrize("by_registry_id", [False, True])
+@pytest.mark.parametrize("helper_loaded", [True, False])
+async def test_a_switch_as_x_helpers_exposure_carries_over_instead_of_the_switchs(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    by_registry_id: bool,
+    helper_loaded: bool,
+) -> None:
+    """A Switch as X light wrapping the switch (named by entity id or registry id) holds the
+    user's exposure and leaves the switch unexposed: the light gets that helper's exposure,
+    not another helper's, and the next free id. A loaded helper is removed by Home Assistant with its switch; one
+    not loaded stays as it was."""
+    assert await async_setup_component(hass, "homeassistant", {})
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    old = _old_switch(hass, entry)
+    async_expose_entity(hass, "conversation", old.entity_id, False)
+    async_expose_entity(hass, "cloud.alexa", old.entity_id, True)
+    async_expose_entity(hass, "cloud.google_assistant", old.entity_id, True)
+    await _switch_as_x(hass, "switch.other")
+    helper = await _switch_as_x(hass, old.id if by_registry_id else old.entity_id)
+    (wrapper,) = er.async_entries_for_config_entry(registry, helper.entry_id)
+    assert wrapper.entity_id == "light.front_spotlight"
+    assert async_should_expose(hass, "cloud.alexa", old.entity_id) is False
+    if not helper_loaded:
+        assert await hass.config_entries.async_unload(helper.entry_id)
+        await hass.async_block_till_done()
+        unloaded = registry.async_get(wrapper.entity_id)
+        assert unloaded is not None
+        wrapper = unloaded
+    options = dict(helper.options)
+
+    assert await setup_entry(hass, entry)
+    light_id = _light_id(hass)
+    assert light_id == "light.front_spotlight_2"
+    assert async_should_expose(hass, "conversation", light_id) is False
+    assert async_should_expose(hass, "cloud.alexa", light_id) is True
+    assert async_should_expose(hass, "cloud.google_assistant", light_id) is True
+    if helper_loaded:
+        assert hass.config_entries.async_get_entry(helper.entry_id) is None
+        assert registry.async_get(wrapper.entity_id) is None
+    else:
+        assert dict(helper.options) == options
+        assert hass.config_entries.async_get_entry(helper.entry_id) is helper
+        assert registry.async_get(wrapper.entity_id) == wrapper
+    await _unload(hass, entry)
+
+
 async def test_a_read_only_lamps_switch_row_gives_no_light_row(
     hass: HomeAssistant,
     fake_station: FakeStation,
