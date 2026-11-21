@@ -22,6 +22,7 @@ from homeassistant.components.light import (
     ATTR_COLOR_MODE,
     ATTR_SUPPORTED_COLOR_MODES,
     ColorMode,
+    LightEntity,
 )
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
 from homeassistant.const import (
@@ -592,6 +593,75 @@ async def test_a_write_only_brightness_and_switch_each_show_what_was_written(
     await _turn(hass, entity_id, True, **{ATTR_BRIGHTNESS: 255})
 
     assert writes == [(_BRIGHTNESS, 2), (_SWITCH, True)]
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.state == STATE_ON
+    assert state.attributes[ATTR_BRIGHTNESS] == 255
+    # A dump with another level leaves the written brightness shown.
+    seed_setting(fake_station, _BRIGHTNESS, 40)
+    await entry.runtime_data.coordinators[SYNTHETIC.station_sn].async_refresh()
+    await hass.async_block_till_done()
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.attributes[ATTR_BRIGHTNESS] == 255
+    await _unload(hass, entry)
+
+
+async def test_a_timed_out_switch_write_keeps_the_written_brightness(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither readable: a turn-on whose brightness write lands and whose switch write
+    times out leaves the switch unknown and the written brightness shown after a dump."""
+    _replace_setting(monkeypatch, _SWITCH, readable=False)
+    _replace_setting(monkeypatch, _BRIGHTNESS, readable=False)
+    fake_station.reply_to_settings = True
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = _light_id(hass)
+    coordinator = entry.runtime_data.coordinators[SYNTHETIC.station_sn]
+    real = coordinator.station.async_set_setting
+
+    async def switch_times_out(key: str, value: Any, **kwargs: Any) -> None:
+        if key == _SWITCH:
+            raise DeviceTimeoutError("no answer")
+        await real(key, value, **kwargs)
+
+    monkeypatch.setattr(coordinator.station, "async_set_setting", switch_times_out)
+    with pytest.raises(HomeAssistantError) as raised:
+        await _turn(hass, entity_id, True, **{ATTR_BRIGHTNESS: 255})
+    assert raised.value.translation_key == _UNCONFIRMED
+    assert _param(fake_station, _BRIGHTNESS) == "100"
+
+    # A dump that changes the station's state settles the write.
+    seed_setting(fake_station, _BRIGHTNESS, 40)
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    light = hass.data["entity_components"][LIGHT_DOMAIN].get_entity(entity_id)
+    assert isinstance(light, LightEntity)
+    assert light.is_on is None
+    assert light.brightness == 255
+    await _unload(hass, entry)
+
+
+async def test_a_write_only_brightness_of_a_readable_switch_shows_what_was_written(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The written value is kept by the written setting's readability, not the switch's."""
+    _replace_setting(monkeypatch, _BRIGHTNESS, readable=False)
+    seed_setting(fake_station, _SWITCH, 0)
+    fake_station.reply_to_settings = True
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = _light_id(hass)
+
+    await _turn(hass, entity_id, True, **{ATTR_BRIGHTNESS: 255})
+
     state = hass.states.get(entity_id)
     assert state is not None
     assert state.state == STATE_ON

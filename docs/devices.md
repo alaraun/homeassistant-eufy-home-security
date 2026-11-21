@@ -68,7 +68,7 @@ S3n or eufyCam Solo S3, among others. The T8170 tested here is a SoloCam S340.
 | Model | Device | Tested on hardware |
 |---|---|---|
 | T8030 | HomeBase 3 | guard mode, status, storage, detections, event history, stills, settings (clock format), entry and leaving delays of Home, Away and Custom 1 |
-| T8160 | eufyCam 3, on a HomeBase | detections, stills, live video and audio, settings (detection sensitivity, trigger interval, clip length, speaker volume, streaming quality, night vision, working mode) |
+| T8160 | eufyCam 3, on a HomeBase | detections, stills, live video and audio, settings (detection sensitivity, trigger interval, clip length, speaker volume, streaming quality, night vision, working mode), the **Light** light on and off and its brightness (Low, Medium, High; verified by the library behind a HomeBase 3) |
 | T8170 | SoloCam S340, standalone | guard mode, status, live video, presets, pan/tilt, zoom, settings (detection sensitivity, motion detection, status LED, night vision, record audio, AI tracking, streaming quality, privacy zones, lighting), the **Light** light on and off |
 | T8910 | Motion Sensor, on a HomeBase | battery, signal and Motion binary sensor / motion-only Detection event (HomeBase 2, cloud push verified) |
 

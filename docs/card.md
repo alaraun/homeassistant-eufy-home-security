@@ -186,12 +186,11 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     list stays open, also on a HomeBase 2. A standalone camera has no Station sub-tab.
   - Files come from the integration's history in HA's media folder (`Media › eufy_home_security › <camera name>`).
     A missing folder (history off, or nothing saved yet) reads as empty.
-- **Settings:** the camera device's settings (its `select`, `number` and `switch` entities), so a new camera
-  model needs no card change. Entities hidden or disabled in HA are left out.
+- **Settings:** the camera device's settings (its `select`, `number`, `switch` and `light` entities), so a new
+  camera model needs no card change. Entities hidden or disabled in HA are left out.
   - A camera's lamp is its `light` entity: a toggle row like a switch (`light.turn_on` / `light.turn_off`), where
-    the lamp's switch was; an install that still has the lamp's switch shows that switch. The lamp's brightness is
-    set in Home Assistant's light controls; its brightness setting is a row only where it is enabled (it is
-    disabled on a new install).
+    the lamp's switch was. The lamp's brightness is set in Home Assistant's light controls; its brightness setting
+    is a row only where it is enabled (it is disabled on a new install).
   - Tabs follow the integration's sections: the card asks the integration for the device's settings layout
     (websocket `eufy_home_security/settings_layout`) and shows one tab per section that has settings, with the
     section's name, in the integration's order; rows keep the integration's order within a section (two-line
