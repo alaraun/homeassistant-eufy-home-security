@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.12-4';
+const CARD_VERSION = '2026.11.21-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -190,7 +190,9 @@ const DETECT = [['person', 'Person', 'mdi:account'], ['vehicle', 'Vehicle', 'mdi
 const EVENT_WORD = { motion: 'Motion', person: 'Person', identified_person: 'Known person', stranger: 'Stranger', pet: 'Pet', vehicle: 'Vehicle' };
 
 // ---- Settings rows: every select/number/switch of the camera's device, keyed by the library's setting key ----
-const ROW_DOMAINS = ['select', 'number', 'switch'];
+// A lamp is a light keyed by its switch setting's key (on and off only, like a switch); an older install's
+// lamp switch is a switch row.
+const ROW_DOMAINS = ['select', 'number', 'switch', 'light'];
 // The integration's settings layout of a device: { sections: [{ id, heading, order, entity_ids }] }. Settings tabs,
 // their names and order come only from it; an entity in no section goes under More.
 const LAYOUT_WS = 'eufy_home_security/settings_layout';
@@ -666,7 +668,7 @@ class EufyCameraCard extends HTMLElement {
     out.station = out.device ? (out.device.via_device_id || out.device.id) : c.entity;
     const siblings = dev ? Object.values(reg).filter(e => e.device_id === dev && e.entity_id !== c.entity && !e.disabled_by) : [];
     const keys = this._keysOf(siblings.filter(e => !e.translation_key && ROW_DOMAINS.concat(['sensor', 'binary_sensor']).includes(e.entity_id.split('.')[0])
-      && (e.entity_category === 'config' || e.entity_category === 'diagnostic' || e.entity_id.startsWith('binary_sensor.'))).map(e => e.entity_id));
+      && (e.entity_category === 'config' || e.entity_category === 'diagnostic' || e.entity_id.startsWith('binary_sensor.') || e.entity_id.startsWith('light.'))).map(e => e.entity_id));
     const inc = new Set([].concat(c.settings_include || [])), exc = new Set([].concat(c.settings_exclude || []));
     // entity id -> { id: section, at: position in it }
     // No Settings section: the layout is never asked for
@@ -713,7 +715,7 @@ class EufyCameraCard extends HTMLElement {
     if (e.hidden || e.hidden_by) return false;
     if (sec) return sec.id !== MODES_SECTION;
     if (lay && lay.secs && lay.loading) return false;
-    return e.entity_category === 'config';
+    return e.entity_category === 'config' || e.entity_id.startsWith('light.');
   }
 
   // The device's settings layout, asked on first use and again when its entity set (`key`) changes; the previous
@@ -2491,7 +2493,7 @@ class EufyCameraCard extends HTMLElement {
       const dom = id.split('.')[0];
       let call;
       if (dom === 'select') call = ['select', 'select_option', { entity_id: id, option: String(s[k]) }];
-      else if (dom === 'switch') call = ['switch', s[k] === 'on' ? 'turn_on' : 'turn_off', { entity_id: id }];
+      else if (dom === 'switch' || dom === 'light') call = [dom, s[k] === 'on' ? 'turn_on' : 'turn_off', { entity_id: id }];
       else call = ['number', 'set_value', { entity_id: id, value: s[k] }];
       items.push({ key: k, value: s[k], call, id, waits: !!this._dependsOn(id, k), label: this._ctx.rows[k] ? this._ctx.rows[k].label : k });
     });
@@ -2717,7 +2719,7 @@ class EufyCameraCard extends HTMLElement {
       ctx[key] = s.value;
       if (stg[key] !== undefined && String(stg[key]) === String(s.value)) delete stg[key];
       const shown = stg[key] !== undefined ? stg[key] : s.value;
-      if (dom === 'switch') {
+      if (dom === 'switch' || dom === 'light') {
         // One line: the name and a toggle (staged like every other row)
         const fmtS = v => (v === 'on' ? 'On' : (v === 'off' ? 'Off' : '--'));
         ctx.rows[key] = { label, fmt: fmtS, fmtLive: fmtS(s.value) };
