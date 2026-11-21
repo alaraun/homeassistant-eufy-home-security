@@ -343,7 +343,7 @@ def setting_specs(station: Station) -> list[SettingEntitySpec]:
                 continue
             grouped = setting.variant_of is not None or setting.key in primaries
             in_use = member_in_use(station, setting.key, device_sn) if grouped else None
-            if setting.writable and setting.control is SettingControl.TOGGLES:
+            if platform is Platform.SWITCH and setting.control is SettingControl.TOGGLES:
                 specs.extend(
                     SettingEntitySpec(
                         platform=platform,
