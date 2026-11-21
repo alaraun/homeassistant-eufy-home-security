@@ -15,7 +15,7 @@ from typing import Any, Final
 import pytest
 from conftest import entity_id_for, seed_setting, set_up_warm, state_of
 from eufy_home_security import EufySecurity, Station
-from eufy_home_security.devices import SettingMeaning, SettingUnit
+from eufy_home_security.devices import SettingKind, SettingMeaning, SettingUnit
 from eufy_home_security.devices.model_settings import (
     BINARY_MEANINGS,
     Setting,
@@ -105,13 +105,7 @@ def _bundled(code: str, key: str) -> Setting:
         ("T8160", "video_clip_length", Platform.NUMBER, NumberDeviceClass.DURATION, "s"),
         ("T8352", "speaker_volume", Platform.NUMBER, None, "%"),
         ("T8352", "device_indoor_temperatur_alarm_max_value", Platform.NUMBER, None, None),
-        (
-            "T8214",
-            "device_response_timeout_delay_time",
-            Platform.SENSOR,
-            SensorDeviceClass.DURATION,
-            "s",
-        ),
+        ("T8531", "video_clip_length", Platform.SENSOR, SensorDeviceClass.DURATION, "s"),
         (
             "T90G0",
             "sensor_grass_last_break_time",
@@ -297,6 +291,19 @@ def _replace_settings(monkeypatch: pytest.MonkeyPatch, changes: dict[str, dict[s
     monkeypatch.setattr(Station, "settings_for", settings_for)
 
 
+# The doorbell's response timeout as a read-only value the library passes through as
+# text (kind other, no control): a duration sensor whose state the glue converts.
+_TIMEOUT: Final = "device_response_timeout_delay_time"
+_AS_TEXT: Final[dict[str, Any]] = {
+    "kind": SettingKind.OTHER,
+    "control": None,
+    "values": (),
+    "labels": {},
+    "default": None,
+    "writable": False,
+}
+
+
 async def test_binary_statuses_carry_their_meaning_class(
     hass: HomeAssistant,
     fake_station: FakeStation,
@@ -366,11 +373,13 @@ async def test_value_sensors_and_numbers_carry_their_meaning_class_and_unit(
     fake_cloud: FakeCloud,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A duration sensor in seconds, a time of day as text, a percent number and a
     temperature number without a unit; no state class on any."""
+    _replace_settings(monkeypatch, {_TIMEOUT: _AS_TEXT})
     _pair(fake_station, fake_cloud)
-    _seed(fake_station, DOORBELL_SN, "device_response_timeout_delay_time", 30)
+    _seed(fake_station, DOORBELL_SN, "device_response_timeout_delay_time", 15)
     _seed(fake_station, DOORBELL_SN, "device_packages_uncollected_check_time", "20:00")
     _seed(fake_station, INDOOR_SN, "speaker_volume", 40)
     _seed(fake_station, INDOOR_SN, "device_indoor_temperatur_alarm_max_value", 83)
@@ -388,7 +397,7 @@ async def test_value_sensors_and_numbers_carry_their_meaning_class_and_unit(
             Platform.SENSOR,
             DOORBELL_SN,
             "device_response_timeout_delay_time",
-            "30",
+            "15",
             SensorDeviceClass.DURATION,
             "s",
         ),
@@ -412,19 +421,30 @@ async def test_value_sensors_and_numbers_carry_their_meaning_class_and_unit(
     await _stop(hass, entry)
 
 
+@pytest.mark.parametrize(("raw", "expected"), [("30", "30"), ("soon", "unknown")])
 async def test_a_duration_sensor_whose_value_is_not_a_number_is_unknown(
     hass: HomeAssistant,
     fake_station: FakeStation,
     fake_cloud: FakeCloud,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    raw: str,
+    expected: str,
 ) -> None:
-    key = "device_response_timeout_delay_time"
+    """A text value the library passes through, typed as a duration in seconds."""
+    key = "device_packages_uncollected_check_time"
+    _replace_settings(
+        monkeypatch, {key: {"meaning": SettingMeaning.DURATION, "unit": SettingUnit.SECONDS}}
+    )
     _pair(fake_station, fake_cloud)
-    _seed(fake_station, DOORBELL_SN, key, "soon")
+    _seed(fake_station, DOORBELL_SN, key, raw)
     entry = await set_up_warm(hass, seed_warm_cache)
     await _enable(hass, entry, [(Platform.SENSOR, DOORBELL_SN, key)])
-    assert state_of(hass, entity_id_for(hass, Platform.SENSOR, DOORBELL_SN, key)) == "unknown"
+    state = hass.states.get(entity_id_for(hass, Platform.SENSOR, DOORBELL_SN, key))
+    assert state is not None
+    assert state.attributes.get(ATTR_DEVICE_CLASS) == SensorDeviceClass.DURATION
+    assert state.state == expected
     await _stop(hass, entry)
 
 
@@ -478,7 +498,7 @@ async def test_a_read_only_percentage_without_a_class_is_a_number_or_unknown(
 ) -> None:
     """A unit makes the state a number even with no device class. The stand-in is a
     read-only setting the library passes through as text, typed as a percentage."""
-    key = "device_response_timeout_delay_time"
+    key = "device_packages_uncollected_check_time"
     _replace_settings(monkeypatch, {key: {"meaning": SettingMeaning.PERCENT, "unit": None}})
     _pair(fake_station, fake_cloud)
     _seed(fake_station, DOORBELL_SN, key, raw)
