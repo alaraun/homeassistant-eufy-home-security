@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any, Final, override
 
@@ -40,7 +41,7 @@ from eufy_home_security import (
     SubDeviceState,
     guard_mode_label,
 )
-from eufy_home_security.devices import SettingKind, SettingUnit
+from eufy_home_security.devices import SettingKind
 
 from . import detections
 from .const import (
@@ -69,7 +70,15 @@ from .const import (
 )
 from .coordinator import StationCoordinator
 from .entity import EufyDeviceEntity, EufySettingEntity, async_add_when_reported, device_block
-from .settings import SettingEntitySpec, capped_state, json_value, setting_specs
+from .settings import (
+    SettingEntitySpec,
+    capped_state,
+    entity_typing,
+    json_value,
+    numeric_value,
+    setting_specs,
+    timestamp_value,
+)
 from .storage import (
     EufyStorageEntity,
     StorageCoordinator,
@@ -612,7 +621,9 @@ class EufySettingSensor(EufySettingEntity, SensorEntity):
     A structured value (``Setting.structured``) is never the state: the state is unknown
     and the ``value`` attribute holds the decoded JSON, or the raw value when it does not
     parse. A JSON object or array text of another setting is treated the same. A longer
-    text is cut to the state limit.
+    text is cut to the state limit. Device class and unit come from the setting's meaning
+    (``entity_typing``): a timestamp is a datetime, a value with a unit a number (unknown
+    when it is not one). No state class: a setting keeps no long-term statistics.
     """
 
     # Raw device JSON can be large: kept out of the recorder.
@@ -621,20 +632,19 @@ class EufySettingSensor(EufySettingEntity, SensorEntity):
     def __init__(self, coordinator: StationCoordinator, spec: SettingEntitySpec) -> None:
         super().__init__(coordinator, spec)
         setting = spec.setting
-        if setting.kind is SettingKind.RANGE:
-            if setting.unit is SettingUnit.SECONDS:
-                self._attr_device_class = SensorDeviceClass.DURATION
-                self._attr_native_unit_of_measurement = UnitOfTime.SECONDS
-                self._attr_suggested_display_precision = 0
-            elif setting.unit is not None and setting.unit.value:
-                self._attr_native_unit_of_measurement = setting.unit.value
-        elif setting.kind is SettingKind.ENUM:
+        if setting.kind is SettingKind.ENUM:
             self._attr_device_class = SensorDeviceClass.ENUM
             self._attr_options = [self.option_label(value) for value in setting.values]
+        else:
+            typing = entity_typing(setting)
+            self._attr_device_class = typing.sensor
+            self._attr_native_unit_of_measurement = typing.unit
+            if typing.sensor is SensorDeviceClass.DURATION:
+                self._attr_suggested_display_precision = 0
 
     @property
     @override
-    def native_value(self) -> StateType:
+    def native_value(self) -> StateType | datetime:
         """The decoded value; an enum by its label, None for a value outside its values."""
         value = self.setting_value
         setting = self._spec.setting
@@ -642,6 +652,10 @@ class EufySettingSensor(EufySettingEntity, SensorEntity):
             return None
         if setting.kind is SettingKind.ENUM:
             return self.option_label(value) if value in setting.values else None
+        if self.device_class is SensorDeviceClass.TIMESTAMP:
+            return timestamp_value(value)
+        if self.native_unit_of_measurement is not None:
+            return numeric_value(value)
         if isinstance(value, bool):
             return str(value).lower()
         if json_value(value) is not None:

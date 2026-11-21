@@ -556,10 +556,24 @@ the camera and its settings. The limits above apply.
     nothing sent, while the device does not report that value.
 - The **Camera** switch turns a camera on or off; a camera turned off stops detecting
   and recording.
+- A setting's device class and unit follow what the library says its value means,
+  never its identifier:
+  - a length of time is a duration in the library's unit (seconds or milliseconds);
+  - a percentage is in %;
+  - a temperature has no unit and no device class: the model data does not say
+    Celsius or Fahrenheit;
+  - a point in time (a glass-break sensor's last break) is a timestamp, unknown while
+    none is recorded;
+  - a time of day is text (`20:00`);
+  - an on/off status is a binary sensor of class door (on = open), tamper, battery
+    (on = low), moisture, cold or sound (a siren ringing).
+
+  A setting sensor has no state class, so Home Assistant keeps no long-term
+  statistics for it and a unit change never raises a statistics issue.
 - A status it can only read is enabled: one the eufy app shows on the device card
-  (an entry sensor's door, tamper or low battery) is a sensor or binary sensor, a
-  binary sensor with its device class (door, tamper, battery, moisture, cold) where
-  one fits; one the app shows on a settings page is listed under Diagnostic. A
+  (an entry sensor's door, tamper or low battery) is a sensor or binary sensor, with
+  the device class above where its value has a meaning; one the app shows on a
+  settings page is listed under Diagnostic. A
   status the device has not reported shows unknown. The door (and tamper) state
   follows each open and close as the HomeBase reports it, without waiting for the
   45 s refresh.

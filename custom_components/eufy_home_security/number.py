@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, override
 
-from homeassistant.components.number import NumberDeviceClass, NumberEntity, NumberMode
+from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -20,13 +20,13 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from eufy_home_security import MAX_ZOOM, MIN_ZOOM
-from eufy_home_security.devices import SettingControl, SettingUnit
+from eufy_home_security.devices import SettingControl
 
 from . import detections, ptz, runtime
 from .const import LIVE_ZOOM_KEY, LIVE_ZOOM_STEP
 from .coordinator import StationCoordinator
 from .entity import EufyDeviceEntity, EufyPushAvailability, EufySettingEntity
-from .settings import SettingEntitySpec, setting_specs
+from .settings import SettingEntitySpec, entity_typing, setting_specs
 
 if TYPE_CHECKING:
     from .runtime import EufyConfigEntry
@@ -60,7 +60,8 @@ async def async_setup_entry(
 
 
 class EufySettingNumber(EufySettingEntity, NumberEntity):
-    """A range setting: bounds, step, unit and slider or box from the library."""
+    """A range setting: bounds, step and slider or box from the library; device class and
+    unit from its meaning."""
 
     def __init__(self, coordinator: StationCoordinator, spec: SettingEntitySpec) -> None:
         super().__init__(coordinator, spec)
@@ -70,11 +71,9 @@ class EufySettingNumber(EufySettingEntity, NumberEntity):
         if setting.maximum is not None:
             self._attr_native_max_value = float(setting.maximum)
         self._attr_native_step = float(setting.step or 1)
-        self._attr_native_unit_of_measurement = (
-            setting.unit.value if setting.unit is not None and setting.unit.value else None
-        )
-        if setting.unit is SettingUnit.SECONDS:
-            self._attr_device_class = NumberDeviceClass.DURATION
+        typing = entity_typing(setting)
+        self._attr_device_class = typing.number
+        self._attr_native_unit_of_measurement = typing.unit
         # The library's control; a range without one is a slider.
         self._attr_mode = (
             NumberMode.BOX if setting.control is SettingControl.BOX else NumberMode.SLIDER

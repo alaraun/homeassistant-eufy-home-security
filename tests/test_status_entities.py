@@ -36,9 +36,9 @@ from custom_components.eufy_home_security.const import ATTR_SECTION, ATTR_VALUE,
 from custom_components.eufy_home_security.sensor import EufySettingSensor
 from custom_components.eufy_home_security.settings import (
     MAX_STATE_LENGTH,
-    STATUS_DEVICE_CLASSES,
     SettingEntitySpec,
     capped_state,
+    entity_typing,
     is_setting_row,
     json_value,
     setting_platform,
@@ -187,11 +187,11 @@ def test_a_status_behind_a_warning_or_not_in_use_starts_off(
     assert spec.enabled_by_default is enabled
 
 
-def test_the_device_class_table_covers_the_bundled_bool_card_statuses() -> None:
-    """Every readable bool STATUS + CARD key of the bundled data has a class, except a
-    siren's ring state, which no binary-sensor class describes."""
-    keys = {
-        s.key
+def test_every_bundled_bool_card_status_has_a_device_class() -> None:
+    """Every readable bool STATUS + CARD setting of the bundled data carries a binary
+    meaning, so its binary sensor has a device class."""
+    statuses = [
+        (code, s.key)
         for code in bundled_codes()
         for s in settings_of(code).values()
         if s.readable
@@ -199,15 +199,14 @@ def test_the_device_class_table_covers_the_bundled_bool_card_statuses() -> None:
         and s.kind is SettingKind.BOOL
         and s.role is SettingRole.STATUS
         and s.shown is SettingShown.CARD
-    }
-    assert keys == {*STATUS_DEVICE_CLASSES, "sensor_siren_ring_status"}
-    assert STATUS_DEVICE_CLASSES == {
-        "sensor_door_status": BinarySensorDeviceClass.DOOR,
-        "sensor_disassemble_status": BinarySensorDeviceClass.TAMPER,
-        "sensor_is_low_power": BinarySensorDeviceClass.BATTERY,
-        "sensor_water_status": BinarySensorDeviceClass.MOISTURE,
-        "sensor_temperature_low_status": BinarySensorDeviceClass.COLD,
-    }
+    ]
+    assert statuses
+    untyped = [
+        (code, key)
+        for code, key in statuses
+        if entity_typing(settings_of(code)[key]).binary_sensor is None
+    ]
+    assert untyped == []
 
 
 @pytest.mark.parametrize(
@@ -671,3 +670,9 @@ async def test_a_row_with_a_translation_key_or_another_class_is_not_a_setting_ro
     battery = attr.evolve(base, original_device_class=BinarySensorDeviceClass.BATTERY)
     assert is_setting_row(battery)
     assert not is_setting_row(attr.evolve(battery, entity_id="sensor.x"))
+    # Every class the meaning table gives is a setting's.
+    for binary_class in (BinarySensorDeviceClass.SOUND, BinarySensorDeviceClass.COLD):
+        assert is_setting_row(attr.evolve(base, original_device_class=binary_class))
+    sensor = attr.evolve(base, entity_id="sensor.x")
+    for sensor_class in ("timestamp", "duration", "enum"):
+        assert is_setting_row(attr.evolve(sensor, original_device_class=sensor_class))
