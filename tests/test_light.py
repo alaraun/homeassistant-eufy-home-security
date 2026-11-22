@@ -7,6 +7,7 @@ by its Lighting setting; made a T84A1, its lamp switch is read-only.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import logging
 from collections.abc import Callable
@@ -37,7 +38,7 @@ from homeassistant.components.light import (
     LightEntity,
 )
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
-from homeassistant.config_entries import ConfigEntryDisabler
+from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.const import (
     ATTR_ASSUMED_STATE,
     ATTR_ENTITY_ID,
@@ -48,12 +49,13 @@ from homeassistant.const import (
     STATE_UNKNOWN,
     Platform,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback, split_entity_id
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import label_registry as lr
+from homeassistant.helpers.event import async_track_entity_registry_updated_event
 from homeassistant.setup import async_setup_component
 from homeassistant.util.color import value_to_brightness
 from pytest_homeassistant.common import MockConfigEntry, async_capture_events
@@ -587,11 +589,14 @@ async def test_a_switch_without_stored_exposure_gives_the_light_none(
     await _unload(hass, entry)
 
 
-async def _switch_as_x(hass: HomeAssistant, switch: str) -> MockConfigEntry:
-    """A loaded Switch as X helper making ``switch`` (entity id or registry id) a light."""
+async def _switch_as_x(
+    hass: HomeAssistant, switch: str, target_domain: str = LIGHT_DOMAIN
+) -> MockConfigEntry:
+    """A loaded Switch as X helper making ``switch`` (entity id or registry id) a
+    ``target_domain`` entity."""
     helper = MockConfigEntry(
         domain="switch_as_x",
-        options={"entity_id": switch, "target_domain": LIGHT_DOMAIN, "invert": False},
+        options={"entity_id": switch, "target_domain": target_domain, "invert": False},
         title="Light",
         version=1,
         minor_version=3,
@@ -600,6 +605,24 @@ async def _switch_as_x(hass: HomeAssistant, switch: str) -> MockConfigEntry:
     assert await hass.config_entries.async_setup(helper.entry_id)
     await hass.async_block_till_done()
     return helper
+
+
+def _wrapper(hass: HomeAssistant, helper: MockConfigEntry) -> er.RegistryEntry:
+    """The one entity of Switch as X helper ``helper``."""
+    (wrapper,) = er.async_entries_for_config_entry(er.async_get(hass), helper.entry_id)
+    return wrapper
+
+
+def _errors(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+def _taken_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "custom_components.eufy_home_security" and "took the place" in r.getMessage()
+    ]
 
 
 @pytest.mark.parametrize("by_registry_id", [False, True])
@@ -614,8 +637,9 @@ async def test_a_switch_as_x_helpers_exposure_carries_over_instead_of_the_switch
 ) -> None:
     """A Switch as X light wrapping the switch (named by entity id or registry id) holds the
     user's exposure and leaves the switch unexposed: the light gets that helper's exposure,
-    not another helper's, and the next free id. A loaded helper is removed by Home Assistant with its switch; one
-    not loaded stays as it was."""
+    not another helper's. A loaded helper is removed by Home Assistant with its switch and
+    the light takes its id; one not loaded stays as it was and the light takes the next
+    free id."""
     assert await async_setup_component(hass, "homeassistant", {})
     seed_warm_cache()
     entry = add_entry(hass)
@@ -626,7 +650,7 @@ async def test_a_switch_as_x_helpers_exposure_carries_over_instead_of_the_switch
     async_expose_entity(hass, "cloud.google_assistant", old.entity_id, True)
     await _switch_as_x(hass, "switch.other")
     helper = await _switch_as_x(hass, old.id if by_registry_id else old.entity_id)
-    (wrapper,) = er.async_entries_for_config_entry(registry, helper.entry_id)
+    wrapper = _wrapper(hass, helper)
     assert wrapper.entity_id == "light.front_spotlight"
     assert async_should_expose(hass, "cloud.alexa", old.entity_id) is False
     if not helper_loaded:
@@ -639,17 +663,298 @@ async def test_a_switch_as_x_helpers_exposure_carries_over_instead_of_the_switch
 
     assert await setup_entry(hass, entry)
     light_id = _light_id(hass)
-    assert light_id == "light.front_spotlight_2"
+    assert light_id == ("light.front_spotlight" if helper_loaded else "light.front_spotlight_2")
     assert async_should_expose(hass, "conversation", light_id) is False
     assert async_should_expose(hass, "cloud.alexa", light_id) is True
     assert async_should_expose(hass, "cloud.google_assistant", light_id) is True
     if helper_loaded:
         assert hass.config_entries.async_get_entry(helper.entry_id) is None
-        assert registry.async_get(wrapper.entity_id) is None
+        assert not er.async_entries_for_config_entry(registry, helper.entry_id)
     else:
         assert dict(helper.options) == options
         assert hass.config_entries.async_get_entry(helper.entry_id) is helper
         assert registry.async_get(wrapper.entity_id) == wrapper
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("by_registry_id", [False, True])
+async def test_the_light_takes_the_place_of_a_loaded_switch_as_x_light(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    writes: list[tuple[str, Any]],
+    caplog: pytest.LogCaptureFixture,
+    by_registry_id: bool,
+) -> None:
+    """The helper's light is what the user's automations name: once Home Assistant removes
+    the helper, the light holds its id with its name, icon, area, labels, aliases, hidden
+    mark and exposure instead of the switch's; a call to that id switches the lamp; the
+    other helper stays; a reload changes nothing."""
+    assert await async_setup_component(hass, "homeassistant", {})
+    seed_setting(fake_station, _SWITCH, 0)
+    fake_station.reply_to_settings = True
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    shed = ar.async_get(hass).async_create("Shed")
+    garden = ar.async_get(hass).async_create("Garden")
+    outdoor = lr.async_get(hass).async_create("Outdoor")
+    old = _old_switch(hass, entry)
+    old = registry.async_update_entity(
+        old.entity_id, name="Switch name", icon="mdi:toggle-switch", area_id=shed.id
+    )
+    other = await _switch_as_x(hass, "switch.other")
+    helper = await _switch_as_x(hass, old.id if by_registry_id else old.entity_id)
+    wrapper = _wrapper(hass, helper)
+    async_expose_entity(hass, "cloud.alexa", wrapper.entity_id, True)
+    wrapper = registry.async_update_entity(
+        wrapper.entity_id,
+        name="Porch lamp",
+        icon="mdi:lamp",
+        area_id=garden.id,
+        labels={outdoor.label_id},
+        aliases=["yard light"],
+        hidden_by=er.RegistryEntryHider.USER,
+    )
+    assert wrapper.entity_id == "light.front_spotlight"
+    caplog.set_level(logging.INFO, logger="custom_components.eufy_home_security")
+    events = async_capture_events(hass, er.EVENT_ENTITY_REGISTRY_UPDATED)
+
+    assert await setup_entry(hass, entry)
+    assert hass.config_entries.async_get_entry(helper.entry_id) is None
+    assert hass.config_entries.async_get_entry(other.entry_id) is other
+    light = registry.async_get(wrapper.entity_id)
+    assert light is not None
+    assert light.platform == DOMAIN
+    assert light.config_entry_id == entry.entry_id
+    assert light.unique_id == entity_unique_id(_CAMERA, _SWITCH)
+    assert _light_id(hass) == wrapper.entity_id
+    assert light.name == "Porch lamp"
+    assert light.icon == "mdi:lamp"
+    assert light.area_id == garden.id
+    assert light.labels == {outdoor.label_id}
+    assert light.aliases == ["yard light"]
+    assert light.hidden_by is er.RegistryEntryHider.USER
+    assert light.disabled_by is None
+    assert light.device_id == old.device_id
+    assert async_should_expose(hass, "cloud.alexa", wrapper.entity_id) is True
+    assert registry.async_get("light.front_spotlight_2") is None
+    (moved,) = _moved_lines(caplog)
+    assert f"{old.entity_id} moved to light.front_spotlight_2 with" in moved
+    (line,) = _taken_lines(caplog)
+    assert redact_serial(_CAMERA) in line
+    assert _CAMERA not in line
+    assert "light.front_spotlight_2 took the place of the removed Switch as X light " in line
+    assert f"Switch as X light {wrapper.entity_id} with" in line
+
+    await _turn(hass, wrapper.entity_id, True)
+    assert writes == [(_SWITCH, True)]
+    assert _state_of(hass, wrapper.entity_id) == STATE_ON
+
+    seen = len(events)
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert [e.data for e in events[seen:] if e.data["action"] != "update"] == []
+    assert _light_id(hass) == wrapper.entity_id
+    assert len(_taken_lines(caplog)) == 1
+    assert _errors(caplog) == []
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize(
+    ("wrapper_disabled_by", "light_disabled_by"),
+    [
+        (er.RegistryEntryDisabler.USER, er.RegistryEntryDisabler.USER),
+        (er.RegistryEntryDisabler.INTEGRATION, None),
+    ],
+)
+async def test_only_the_users_marks_of_the_switch_as_x_light_carry_over(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    wrapper_disabled_by: er.RegistryEntryDisabler,
+    light_disabled_by: er.RegistryEntryDisabler | None,
+) -> None:
+    """The helper's light disabled and hidden, over a switch the user hid: the light takes
+    its id, disabled only when the user disabled the helper's light, and shown (neither
+    the switch's mark nor one the user did not set carries over)."""
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    old = _old_switch(hass, entry)
+    helper = await _switch_as_x(hass, old.entity_id)
+    registry.async_update_entity(old.entity_id, hidden_by=er.RegistryEntryHider.USER)
+    wrapper = registry.async_update_entity(
+        _wrapper(hass, helper).entity_id,
+        disabled_by=wrapper_disabled_by,
+        hidden_by=er.RegistryEntryHider.INTEGRATION,
+    )
+
+    assert await setup_entry(hass, entry)
+    light = registry.async_get(wrapper.entity_id)
+    assert light is not None
+    assert light.platform == DOMAIN
+    assert light.disabled_by is light_disabled_by
+    assert light.hidden_by is None
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("by_registry_id", [False, True])
+async def test_a_not_loaded_switch_as_x_light_keeps_its_id_also_when_deleted_later(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    caplog: pytest.LogCaptureFixture,
+    by_registry_id: bool,
+) -> None:
+    """A helper that is not loaded stays: the light keeps the next free id and the switch's
+    name, also after the user deletes the helper."""
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    old = _old_switch(hass, entry)
+    registry.async_update_entity(old.entity_id, name="Switch name")
+    helper = await _switch_as_x(hass, old.id if by_registry_id else old.entity_id)
+    wrapper = registry.async_update_entity(_wrapper(hass, helper).entity_id, name="Porch lamp")
+    assert await hass.config_entries.async_unload(helper.entry_id)
+    await hass.async_block_till_done()
+    caplog.set_level(logging.INFO, logger="custom_components.eufy_home_security")
+
+    assert await setup_entry(hass, entry)
+    assert hass.config_entries.async_get_entry(helper.entry_id) == helper
+    assert _light_id(hass) == "light.front_spotlight_2"
+    await hass.config_entries.async_remove(helper.entry_id)
+    await hass.async_block_till_done()
+    assert registry.async_get(wrapper.entity_id) is None
+    light = registry.async_get(_light_id(hass))
+    assert light is not None
+    assert light.entity_id == "light.front_spotlight_2"
+    assert light.name == "Switch name"
+    assert _taken_lines(caplog) == []
+    await _unload(hass, entry)
+
+
+async def test_a_switch_as_x_entity_of_another_domain_gives_no_place_to_take(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A loaded helper making the switch a fan: Home Assistant removes it, and the light keeps
+    the switch's id and name, with no error logged."""
+    assert await async_setup_component(hass, "homeassistant", {})
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    old = _old_switch(hass, entry)
+    registry.async_update_entity(old.entity_id, name="Switch name")
+    helper = await _switch_as_x(hass, old.entity_id, Platform.FAN)
+    wrapper = registry.async_update_entity(_wrapper(hass, helper).entity_id, name="Fan name")
+    assert wrapper.entity_id == "fan.front_spotlight"
+    caplog.set_level(logging.INFO, logger="custom_components.eufy_home_security")
+
+    assert await setup_entry(hass, entry)
+    assert hass.config_entries.async_get_entry(helper.entry_id) is None
+    light = registry.async_get(_light_id(hass))
+    assert light is not None
+    assert light.entity_id == "light.front_spotlight"
+    assert light.name == "Switch name"
+    assert _taken_lines(caplog) == []
+    assert _errors(caplog) == []
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize(
+    ("meanwhile", "taken"),
+    [("helper light updated", True), ("entry unloaded", False), ("light removed", False)],
+)
+async def test_the_place_is_taken_when_home_assistant_removes_the_helper(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    caplog: pytest.LogCaptureFixture,
+    meanwhile: str,
+    taken: bool,
+) -> None:
+    """The helper's removal held past setup: the light keeps the next free id until Home
+    Assistant removes the helper's light. An update of that light in the meantime changes
+    nothing; an entry unloaded or a light row removed in the meantime takes no place."""
+    assert await async_setup_component(hass, "homeassistant", {})
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    old = _old_switch(hass, entry)
+    helper = await _switch_as_x(hass, old.entity_id)
+    wrapper = registry.async_update_entity(_wrapper(hass, helper).entity_id, name="Porch lamp")
+
+    async with helper.setup_lock:
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert hass.config_entries.async_get_entry(helper.entry_id) == helper
+        assert _light_id(hass) == "light.front_spotlight_2"
+        if meanwhile == "helper light updated":
+            registry.async_update_entity(wrapper.entity_id, icon="mdi:lamp")
+        elif meanwhile == "entry unloaded":
+            assert await hass.config_entries.async_unload(entry.entry_id)
+        else:
+            registry.async_remove("light.front_spotlight_2")
+    await hass.async_block_till_done()
+
+    assert hass.config_entries.async_get_entry(helper.entry_id) is None
+    held = registry.async_get(wrapper.entity_id)
+    if taken:
+        assert held is not None
+        assert held.platform == DOMAIN
+        assert held.name == "Porch lamp"
+    else:
+        assert held is None
+    assert _errors(caplog) == []
+    if entry.state is ConfigEntryState.LOADED:
+        await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("by", ["state", "row"])
+async def test_an_id_taken_when_the_helper_goes_is_left_alone(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    caplog: pytest.LogCaptureFixture,
+    by: str,
+) -> None:
+    """Another state or registry row holding the helper light's id the moment it is removed:
+    the light keeps the next free id, with no error logged."""
+    assert await async_setup_component(hass, "homeassistant", {})
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    old = _old_switch(hass, entry)
+    helper = await _switch_as_x(hass, old.entity_id)
+    target = _wrapper(hass, helper).entity_id
+
+    @callback
+    def take(event: Event[er.EventEntityRegistryUpdatedData]) -> None:
+        if event.data["action"] != "remove":
+            return
+        if by == "state":
+            hass.states.async_set(target, STATE_ON)
+        else:
+            registry.async_get_or_create(
+                LIGHT_DOMAIN, "other", "lamp", suggested_object_id=split_entity_id(target)[1]
+            )
+
+    unsubscribe = async_track_entity_registry_updated_event(hass, target, take)
+    assert await setup_entry(hass, entry)
+    unsubscribe()
+    assert hass.config_entries.async_get_entry(helper.entry_id) is None
+    assert _light_id(hass) == "light.front_spotlight_2"
+    assert _errors(caplog) == []
     await _unload(hass, entry)
 
 

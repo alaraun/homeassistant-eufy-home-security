@@ -11,11 +11,12 @@ from typing import Any, Final, NamedTuple
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_EMAIL, EVENT_HOMEASSISTANT_STOP, Platform
-from homeassistant.core import Event, HomeAssistant, callback, split_entity_id
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback, split_entity_id
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_track_entity_registry_updated_event
 from homeassistant.helpers.typing import UNDEFINED, ConfigType, UndefinedType
 
 from eufy_home_security import (
@@ -749,7 +750,9 @@ def _async_move_lamp_switch_rows(
     light row, also with the entry's preference to disable new entities; a switch row the
     user disabled gives a disabled one; any other disabled mark leaves the light's own
     default. The switch row is left to :func:`_async_forget_moved_setting_entities`. Logs
-    one INFO line per moved row with the id the light row got.
+    one INFO line per moved row with the id the light row got. A loaded Switch as X light
+    wrapping the switch gives its place to the light row once Home Assistant removes it
+    (:func:`_async_take_place_of_wrapper`).
     """
     registry = er.async_get(hass)
     for coordinator in coordinators:
@@ -797,19 +800,92 @@ def _async_move_lamp_switch_rows(
                 aliases=list(old.aliases),
             )
             # A Switch as X helper moves the switch's exposure to its own entity.
-            exposed = _switch_as_x_wrapper(hass, registry, old) or old
-            for assistant in _ASSISTANTS:
-                if assistant in exposed.options:
-                    registry.async_update_entity_options(
-                        new.entity_id, assistant, dict(exposed.options[assistant])
-                    )
+            wrapper = _switch_as_x_wrapper(hass, registry, old)
+            _async_copy_exposure(registry, wrapper or old, new.entity_id)
+            redacted = redact_serial(spec.device_sn or station.serial)
             _LOGGER.info(
                 "Lamp of %s: %s moved to %s with its name, area, labels, visibility and "
                 "voice assistant exposure",
-                redact_serial(spec.device_sn or station.serial),
+                redacted,
                 old.entity_id,
                 new.entity_id,
             )
+            if wrapper is not None and wrapper.domain == Platform.LIGHT:
+                helper = hass.config_entries.async_get_entry(wrapper.config_entry_id or "")
+                if helper is not None and helper.state is ConfigEntryState.LOADED:
+                    _async_take_place_of_wrapper(hass, entry, new.id, wrapper, redacted)
+
+
+def _async_copy_exposure(registry: er.EntityRegistry, source: er.RegistryEntry, to: str) -> None:
+    """Store ``source``'s voice assistant exposure on entity ``to``."""
+    for assistant in _ASSISTANTS:
+        if assistant in source.options:
+            registry.async_update_entity_options(to, assistant, dict(source.options[assistant]))
+
+
+def _async_take_place_of_wrapper(
+    hass: HomeAssistant,
+    entry: EufyConfigEntry,
+    light_id: str,
+    wrapper: er.RegistryEntry,
+    redacted: str,
+) -> None:
+    """Give this entry's light row ``light_id`` (registry id) the place of the loaded Switch as
+    X light ``wrapper`` once Home Assistant removes that row.
+
+    Home Assistant removes a loaded helper when the switch it wraps is removed, in a task of
+    its own. On the wrapper row's removal the light row is renamed to the wrapper's entity id
+    and gets the wrapper's name, icon, area, labels and aliases, and its hidden and disabled
+    marks when the user set them (otherwise none); it holds the wrapper's voice assistant
+    exposure already. Nothing is changed when the light row is gone or the id is taken by
+    then. Listens once, at most until the entry unloads. ``redacted`` names the lamp in the
+    one INFO line logged on the rename.
+    """
+    registry = er.async_get(hass)
+    listening: list[CALLBACK_TYPE] = []
+
+    @callback
+    def stop() -> None:
+        while listening:
+            listening.pop()()
+
+    @callback
+    def removed(event: Event[er.EventEntityRegistryUpdatedData]) -> None:
+        if event.data["action"] != "remove":
+            return
+        stop()
+        light = registry.async_get(light_id)
+        if light is None:
+            return
+        target = wrapper.entity_id
+        if registry.async_is_registered(target) or not hass.states.async_available(target):
+            return
+        user = er.RegistryEntryDisabler.USER
+        registry.async_update_entity(
+            light.entity_id,
+            new_entity_id=target,
+            name=wrapper.name,
+            icon=wrapper.icon,
+            area_id=wrapper.area_id,
+            labels=set(wrapper.labels),
+            aliases=list(wrapper.aliases),
+            hidden_by=(
+                er.RegistryEntryHider.USER
+                if wrapper.hidden_by is er.RegistryEntryHider.USER
+                else None
+            ),
+            disabled_by=user if wrapper.disabled_by is user else None,
+        )
+        _LOGGER.info(
+            "Lamp of %s: %s took the place of the removed Switch as X light %s with its "
+            "name, area, labels, visibility and voice assistant exposure",
+            redacted,
+            light.entity_id,
+            target,
+        )
+
+    listening.append(async_track_entity_registry_updated_event(hass, wrapper.entity_id, removed))
+    entry.async_on_unload(stop)
 
 
 def _async_forget_moved_setting_entities(

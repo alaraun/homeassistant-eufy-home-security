@@ -595,11 +595,14 @@ the camera and its settings. The limits above apply.
     and `light.turn_on` / `light.turn_off`.
   - A light you made from the lamp's switch with **Switch as X** holds the switch's voice
     assistant exposure (the helper moves it from the switch to its own light), and the
-    integration's light gets that exposure instead. The integration's light takes the
-    next free id: `light.<camera>_light_2` while the helper's light holds
-    `light.<camera>_light`. Home Assistant removes a helper that is loaded when the switch
-    is removed; otherwise the helper stays with its light unavailable, and you can delete
-    it. You can then change the integration's light's entity id to `light.<camera>_light`.
+    integration's light gets that exposure instead. Home Assistant removes a helper that
+    is loaded when the switch is removed, and the integration's light then replaces the
+    helper's light: it takes its entity id (`light.<camera>_light`) and what you set on
+    it (name, icon, area, labels, aliases, whether you hid or disabled it), so
+    automations that use the helper's light keep working. A helper that is not loaded
+    stays, with its light unavailable: the integration's light then takes the next free
+    id (`light.<camera>_light_2`) and the switch's settings. You can delete the helper
+    and change the integration's light's entity id to `light.<camera>_light`.
   - The lamp's brightness setting stays an entity, disabled on a new install (the
     light sets it); one you already have stays as it is. The lamp's colour temperature
     and its other settings (**Lighting**, motion-activated lighting, schedules) stay
