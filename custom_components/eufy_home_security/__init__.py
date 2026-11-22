@@ -13,6 +13,7 @@ from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_EMAIL, EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback, split_entity_id
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -721,19 +722,29 @@ _ASSISTANTS: Final = ("conversation", "cloud.alexa", "cloud.google_assistant")
 # its config entry naming the wrapped switch (entity id or registry id).
 _SWITCH_AS_X: Final = "switch_as_x"
 _SWITCH_AS_X_SOURCE: Final = "entity_id"
+# Helper states in which Home Assistant removes the helper with the switch it wraps (its
+# source listener is registered before its platforms are set up).
+_HELPER_REMOVED_WITH_SWITCH: Final = frozenset(
+    {ConfigEntryState.LOADED, ConfigEntryState.SETUP_IN_PROGRESS}
+)
 
 
 def _switch_as_x_wrapper(
     hass: HomeAssistant, registry: er.EntityRegistry, switch: er.RegistryEntry
 ) -> er.RegistryEntry | None:
-    """The first Switch as X entity wrapping ``switch``, or None."""
+    """The first Switch as X light wrapping ``switch``, else the first Switch as X entity
+    wrapping it, or None."""
+    found: er.RegistryEntry | None = None
     for helper in hass.config_entries.async_entries(_SWITCH_AS_X):
         if helper.options.get(_SWITCH_AS_X_SOURCE) not in (switch.entity_id, switch.id):
             continue
         for wrapper in er.async_entries_for_config_entry(registry, helper.entry_id):
-            if wrapper.platform == _SWITCH_AS_X:
+            if wrapper.platform != _SWITCH_AS_X:
+                continue
+            if wrapper.domain == Platform.LIGHT:
                 return wrapper
-    return None
+            found = found or wrapper
+    return found
 
 
 def _async_move_lamp_switch_rows(
@@ -750,9 +761,9 @@ def _async_move_lamp_switch_rows(
     light row, also with the entry's preference to disable new entities; a switch row the
     user disabled gives a disabled one; any other disabled mark leaves the light's own
     default. The switch row is left to :func:`_async_forget_moved_setting_entities`. Logs
-    one INFO line per moved row with the id the light row got. A loaded Switch as X light
-    wrapping the switch gives its place to the light row once Home Assistant removes it
-    (:func:`_async_take_place_of_wrapper`).
+    one INFO line per moved row with the id the light row got. A Switch as X light wrapping
+    the switch, of a helper loaded or being set up, gives its place to the light row once
+    Home Assistant removes it (:func:`_async_take_place_of_wrapper`).
     """
     registry = er.async_get(hass)
     for coordinator in coordinators:
@@ -812,7 +823,7 @@ def _async_move_lamp_switch_rows(
             )
             if wrapper is not None and wrapper.domain == Platform.LIGHT:
                 helper = hass.config_entries.async_get_entry(wrapper.config_entry_id or "")
-                if helper is not None and helper.state is ConfigEntryState.LOADED:
+                if helper is not None and helper.state in _HELPER_REMOVED_WITH_SWITCH:
                     _async_take_place_of_wrapper(hass, entry, new.id, wrapper, redacted)
 
 
@@ -830,19 +841,24 @@ def _async_take_place_of_wrapper(
     wrapper: er.RegistryEntry,
     redacted: str,
 ) -> None:
-    """Give this entry's light row ``light_id`` (registry id) the place of the loaded Switch as
-    X light ``wrapper`` once Home Assistant removes that row.
+    """Give this entry's light row ``light_id`` (registry id) the place of the Switch as X
+    light ``wrapper`` once Home Assistant removes that row.
 
-    Home Assistant removes a loaded helper when the switch it wraps is removed, in a task of
-    its own. On the wrapper row's removal the light row is renamed to the wrapper's entity id
-    and gets the wrapper's name, icon, area, labels and aliases, and its hidden and disabled
-    marks when the user set them (otherwise none); it holds the wrapper's voice assistant
-    exposure already. Nothing is changed when the light row is gone or the id is taken by
-    then. Listens once, at most until the entry unloads. ``redacted`` names the lamp in the
-    one INFO line logged on the rename.
+    Home Assistant removes a helper, loaded or being set up, when the switch it wraps is
+    removed, in a task of its own. Each update of the wrapper row is read again, and a
+    renamed row is followed to its new entity id. On the wrapper row's removal the light row
+    is renamed to the wrapper's last entity id and gets its name, icon, area (unless deleted
+    by then), labels and aliases, and its hidden and disabled marks when the user set them
+    (otherwise none); it holds the wrapper's voice assistant exposure already. Home
+    Assistant drops a deleted label from the light itself. Nothing is changed when the light
+    row is gone or the id is taken by then. Listens until the first removal, at most until
+    the entry unloads. ``redacted`` names the lamp in the one INFO line logged on the
+    rename.
     """
     registry = er.async_get(hass)
     listening: list[CALLBACK_TYPE] = []
+    # The wrapper row as last read from the registry.
+    last = [wrapper]
 
     @callback
     def stop() -> None:
@@ -850,42 +866,63 @@ def _async_take_place_of_wrapper(
             listening.pop()()
 
     @callback
-    def removed(event: Event[er.EventEntityRegistryUpdatedData]) -> None:
+    def changed(event: Event[er.EventEntityRegistryUpdatedData]) -> None:
+        if event.data["action"] == "update":
+            row = registry.async_get(event.data["entity_id"])
+            if row is None:
+                return
+            if row.entity_id != last[0].entity_id:
+                stop()
+                listening.append(
+                    async_track_entity_registry_updated_event(hass, row.entity_id, changed)
+                )
+            last[0] = row
+            return
         if event.data["action"] != "remove":
             return
         stop()
-        light = registry.async_get(light_id)
-        if light is None:
-            return
-        target = wrapper.entity_id
-        if registry.async_is_registered(target) or not hass.states.async_available(target):
-            return
-        user = er.RegistryEntryDisabler.USER
-        registry.async_update_entity(
-            light.entity_id,
-            new_entity_id=target,
-            name=wrapper.name,
-            icon=wrapper.icon,
-            area_id=wrapper.area_id,
-            labels=set(wrapper.labels),
-            aliases=list(wrapper.aliases),
-            hidden_by=(
-                er.RegistryEntryHider.USER
-                if wrapper.hidden_by is er.RegistryEntryHider.USER
-                else None
-            ),
-            disabled_by=user if wrapper.disabled_by is user else None,
-        )
-        _LOGGER.info(
-            "Lamp of %s: %s took the place of the removed Switch as X light %s with its "
-            "name, area, labels, visibility and voice assistant exposure",
-            redacted,
-            light.entity_id,
-            target,
-        )
+        _async_take_place(hass, light_id, last[0], redacted)
 
-    listening.append(async_track_entity_registry_updated_event(hass, wrapper.entity_id, removed))
+    listening.append(async_track_entity_registry_updated_event(hass, wrapper.entity_id, changed))
     entry.async_on_unload(stop)
+
+
+def _async_take_place(
+    hass: HomeAssistant, light_id: str, wrapper: er.RegistryEntry, redacted: str
+) -> None:
+    """Rename light row ``light_id`` to the removed row ``wrapper``'s entity id with its
+    settings, as :func:`_async_take_place_of_wrapper` describes."""
+    registry = er.async_get(hass)
+    light = registry.async_get(light_id)
+    if light is None:
+        return
+    target = wrapper.entity_id
+    if registry.async_is_registered(target) or not hass.states.async_available(target):
+        return
+    area_id = wrapper.area_id
+    if area_id is not None and ar.async_get(hass).async_get_area(area_id) is None:
+        area_id = None
+    user = er.RegistryEntryDisabler.USER
+    registry.async_update_entity(
+        light.entity_id,
+        new_entity_id=target,
+        name=wrapper.name,
+        icon=wrapper.icon,
+        area_id=area_id,
+        labels=set(wrapper.labels),
+        aliases=list(wrapper.aliases),
+        hidden_by=(
+            er.RegistryEntryHider.USER if wrapper.hidden_by is er.RegistryEntryHider.USER else None
+        ),
+        disabled_by=user if wrapper.disabled_by is user else None,
+    )
+    _LOGGER.info(
+        "Lamp of %s: %s took the place of the removed Switch as X light %s with its "
+        "name, area, labels, visibility and voice assistant exposure",
+        redacted,
+        light.entity_id,
+        target,
+    )
 
 
 def _async_forget_moved_setting_entities(

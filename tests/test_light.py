@@ -38,6 +38,7 @@ from homeassistant.components.light import (
     LightEntity,
 )
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
+from homeassistant.components.switch_as_x import light as switch_as_x_light
 from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.const import (
     ATTR_ASSUMED_STATE,
@@ -870,7 +871,13 @@ async def test_a_switch_as_x_entity_of_another_domain_gives_no_place_to_take(
 
 @pytest.mark.parametrize(
     ("meanwhile", "taken"),
-    [("helper light updated", True), ("entry unloaded", False), ("light removed", False)],
+    [
+        ("helper light updated", "light.front_spotlight"),
+        ("helper light renamed", "light.porch"),
+        ("area and label deleted", "light.front_spotlight"),
+        ("entry unloaded", None),
+        ("light removed", None),
+    ],
 )
 async def test_the_place_is_taken_when_home_assistant_removes_the_helper(
     hass: HomeAssistant,
@@ -879,18 +886,27 @@ async def test_the_place_is_taken_when_home_assistant_removes_the_helper(
     seed_warm_cache: Callable[..., None],
     caplog: pytest.LogCaptureFixture,
     meanwhile: str,
-    taken: bool,
+    taken: str | None,
 ) -> None:
     """The helper's removal held past setup: the light keeps the next free id until Home
-    Assistant removes the helper's light. An update of that light in the meantime changes
-    nothing; an entry unloaded or a light row removed in the meantime takes no place."""
+    Assistant removes the helper's light. What the user changes on that light in the
+    meantime is taken, a new entity id too (also when a row takes the old id and goes
+    again before); an area or label deleted in the meantime is not; an entry unloaded or a
+    light row removed in the meantime takes no place."""
     assert await async_setup_component(hass, "homeassistant", {})
     seed_warm_cache()
     entry = add_entry(hass)
     registry = er.async_get(hass)
+    garden = ar.async_get(hass).async_create("Garden")
+    outdoor = lr.async_get(hass).async_create("Outdoor")
     old = _old_switch(hass, entry)
     helper = await _switch_as_x(hass, old.entity_id)
-    wrapper = registry.async_update_entity(_wrapper(hass, helper).entity_id, name="Porch lamp")
+    wrapper = registry.async_update_entity(
+        _wrapper(hass, helper).entity_id,
+        name="Porch lamp",
+        area_id=garden.id,
+        labels={outdoor.label_id},
+    )
 
     async with helper.setup_lock:
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -899,7 +915,19 @@ async def test_the_place_is_taken_when_home_assistant_removes_the_helper(
         assert hass.config_entries.async_get_entry(helper.entry_id) == helper
         assert _light_id(hass) == "light.front_spotlight_2"
         if meanwhile == "helper light updated":
-            registry.async_update_entity(wrapper.entity_id, icon="mdi:lamp")
+            registry.async_update_entity(wrapper.entity_id, name="Yard lamp", icon="mdi:lamp")
+        elif meanwhile == "helper light renamed":
+            registry.async_update_entity(
+                wrapper.entity_id, new_entity_id="light.porch", name="Yard lamp", icon="mdi:lamp"
+            )
+            other = registry.async_get_or_create(
+                LIGHT_DOMAIN, "other", "lamp", suggested_object_id="front_spotlight"
+            )
+            assert other.entity_id == wrapper.entity_id
+            registry.async_remove(other.entity_id)
+        elif meanwhile == "area and label deleted":
+            ar.async_get(hass).async_delete(garden.id)
+            lr.async_get(hass).async_delete(outdoor.label_id)
         elif meanwhile == "entry unloaded":
             assert await hass.config_entries.async_unload(entry.entry_id)
         else:
@@ -907,16 +935,139 @@ async def test_the_place_is_taken_when_home_assistant_removes_the_helper(
     await hass.async_block_till_done()
 
     assert hass.config_entries.async_get_entry(helper.entry_id) is None
-    held = registry.async_get(wrapper.entity_id)
-    if taken:
+    if taken is None:
+        assert registry.async_get(wrapper.entity_id) is None
+    else:
+        held = registry.async_get(taken)
         assert held is not None
         assert held.platform == DOMAIN
-        assert held.name == "Porch lamp"
-    else:
-        assert held is None
+        assert _light_id(hass) == taken
+        if meanwhile == "area and label deleted":
+            assert (held.name, held.icon) == ("Porch lamp", None)
+            assert (held.area_id, held.labels) == (None, set())
+        else:
+            assert (held.name, held.icon) == ("Yard lamp", "mdi:lamp")
+            assert (held.area_id, held.labels) == (garden.id, {outdoor.label_id})
     assert _errors(caplog) == []
     if entry.state is ConfigEntryState.LOADED:
         await _unload(hass, entry)
+
+
+async def test_the_light_keeps_its_id_once_it_has_taken_the_place(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """After the light took the helper light's id, the user renames it, and another row is
+    registered at the old id and removed: the light keeps its new id."""
+    assert await async_setup_component(hass, "homeassistant", {})
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    old = _old_switch(hass, entry)
+    helper = await _switch_as_x(hass, old.entity_id)
+    target = _wrapper(hass, helper).entity_id
+    assert await setup_entry(hass, entry)
+    assert _light_id(hass) == target
+
+    registry.async_update_entity(target, new_entity_id="light.porch")
+    other = registry.async_get_or_create(
+        LIGHT_DOMAIN, "other", "lamp", suggested_object_id=split_entity_id(target)[1]
+    )
+    assert other.entity_id == target
+    registry.async_remove(target)
+    await hass.async_block_till_done()
+    assert _light_id(hass) == "light.porch"
+    await _unload(hass, entry)
+
+
+async def test_the_place_of_a_switch_as_x_light_being_set_up_is_taken(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A helper still being set up when the switch is removed: Home Assistant removes it once
+    its setup ends, and the light takes its light's id and name."""
+    assert await async_setup_component(hass, "homeassistant", {})
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    old = _old_switch(hass, entry)
+    helper = await _switch_as_x(hass, old.entity_id)
+    wrapper = registry.async_update_entity(_wrapper(hass, helper).entity_id, name="Porch lamp")
+    assert await hass.config_entries.async_unload(helper.entry_id)
+    await hass.async_block_till_done()
+    release = asyncio.Event()
+    real = switch_as_x_light.async_setup_entry
+
+    async def held(*args: Any) -> None:
+        await release.wait()
+        await real(*args)
+
+    monkeypatch.setattr(switch_as_x_light, "async_setup_entry", held)
+    # Not a tracked task: Home Assistant's removal of the helper waits for this setup.
+    setting_up = asyncio.get_running_loop().create_task(
+        hass.config_entries.async_setup(helper.entry_id)
+    )
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert helper.state is ConfigEntryState.SETUP_IN_PROGRESS
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert _light_id(hass) == "light.front_spotlight_2"
+    release.set()
+    assert await setting_up
+    await hass.async_block_till_done()
+
+    assert hass.config_entries.async_get_entry(helper.entry_id) is None
+    light = registry.async_get(wrapper.entity_id)
+    assert light is not None
+    assert light.platform == DOMAIN
+    assert light.name == "Porch lamp"
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize("second", [LIGHT_DOMAIN, Platform.LOCK])
+async def test_a_switch_as_x_light_is_preferred_to_another_domains_helper(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    second: str,
+) -> None:
+    """A fan helper made first and a second helper both wrap the switch, each with its own
+    exposure. A light helper wins: the light takes its id, name and exposure. A lock helper
+    does not: the light keeps the switch's id and gets the first helper's exposure. Home
+    Assistant removes both helpers."""
+    assert await async_setup_component(hass, "homeassistant", {})
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    old = _old_switch(hass, entry)
+    fan = await _switch_as_x(hass, old.entity_id, Platform.FAN)
+    async_expose_entity(hass, "cloud.alexa", _wrapper(hass, fan).entity_id, second == Platform.LOCK)
+    helper = await _switch_as_x(hass, old.entity_id, second)
+    wrapper = registry.async_update_entity(_wrapper(hass, helper).entity_id, name="Porch lamp")
+    async_expose_entity(hass, "cloud.alexa", wrapper.entity_id, second == LIGHT_DOMAIN)
+
+    assert await setup_entry(hass, entry)
+    assert hass.config_entries.async_get_entry(fan.entry_id) is None
+    assert hass.config_entries.async_get_entry(helper.entry_id) is None
+    light = registry.async_get(_light_id(hass))
+    assert light is not None
+    if second == LIGHT_DOMAIN:
+        assert light.entity_id == wrapper.entity_id == "light.front_spotlight"
+        assert light.name == "Porch lamp"
+    else:
+        assert light.entity_id == "light.front_spotlight"
+        assert light.name is None
+    assert async_should_expose(hass, "cloud.alexa", light.entity_id) is True
+    await _unload(hass, entry)
 
 
 @pytest.mark.parametrize("by", ["state", "row"])
@@ -929,7 +1080,7 @@ async def test_an_id_taken_when_the_helper_goes_is_left_alone(
     by: str,
 ) -> None:
     """Another state or registry row holding the helper light's id the moment it is removed:
-    the light keeps the next free id, with no error logged."""
+    the light keeps the next free id, with no error logged, also once that row is gone."""
     assert await async_setup_component(hass, "homeassistant", {})
     seed_warm_cache()
     entry = add_entry(hass)
@@ -954,6 +1105,53 @@ async def test_an_id_taken_when_the_helper_goes_is_left_alone(
     unsubscribe()
     assert hass.config_entries.async_get_entry(helper.entry_id) is None
     assert _light_id(hass) == "light.front_spotlight_2"
+    if by == "row":
+        registry.async_remove(target)
+        await hass.async_block_till_done()
+        assert _light_id(hass) == "light.front_spotlight_2"
+    assert _errors(caplog) == []
+    await _unload(hass, entry)
+
+
+async def test_an_area_and_label_deleted_as_the_helper_goes_are_left_out(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The helper light's area and label deleted by another listener of its removal: the
+    light takes its id and name without them, with no error logged."""
+    assert await async_setup_component(hass, "homeassistant", {})
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    garden = ar.async_get(hass).async_create("Garden")
+    outdoor = lr.async_get(hass).async_create("Outdoor")
+    old = _old_switch(hass, entry)
+    helper = await _switch_as_x(hass, old.entity_id)
+    wrapper = registry.async_update_entity(
+        _wrapper(hass, helper).entity_id,
+        name="Porch lamp",
+        area_id=garden.id,
+        labels={outdoor.label_id},
+    )
+
+    @callback
+    def delete(event: Event[er.EventEntityRegistryUpdatedData]) -> None:
+        if event.data["action"] == "remove":
+            ar.async_get(hass).async_delete(garden.id)
+            lr.async_get(hass).async_delete(outdoor.label_id)
+
+    unsubscribe = async_track_entity_registry_updated_event(hass, wrapper.entity_id, delete)
+    assert await setup_entry(hass, entry)
+    unsubscribe()
+    light = registry.async_get(wrapper.entity_id)
+    assert light is not None
+    assert light.platform == DOMAIN
+    assert light.name == "Porch lamp"
+    assert light.area_id is None
+    assert light.labels == set()
     assert _errors(caplog) == []
     await _unload(hass, entry)
 
