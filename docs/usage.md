@@ -573,14 +573,13 @@ the camera and its settings. The limits above apply.
 - A camera's lamp is a **light**, named as the eufy app names its switch (**Light**,
   **Spotlight**; a track light's second lamp **Zoom spotlight**), wherever the library
   can switch it in the camera's setup. It turns the lamp on and off and, where the
-  camera's brightness setting is writable, sets the brightness: a brightness with
-  levels (Low, Medium, High = 40, 70, 100 % on a eufyCam 3) takes the nearest level, a
-  range the percent within its bounds, and 1 % or less turns the lamp off, as the eufy
-  app does. A
-  turn-on with a brightness writes the brightness first, then switches the lamp on if it
-  is off. On and off are verified on a eufyCam 3 behind a HomeBase 3 and a standalone
-  SoloCam S340, the brightness on the eufyCam 3; other models are declared from the
-  eufy app.
+  camera's brightness setting is writable, sets the brightness: a brightness with levels
+  (Low, Medium, High = 40, 70, 100 % on a eufyCam 3) takes the nearest level, a range
+  the percent within its bounds, and 1 % or less turns the lamp off, as the eufy app
+  does. A turn-on with a brightness writes the brightness first, then switches the lamp
+  on if it is off. On and off are verified on a eufyCam 3 behind a HomeBase 3 and a
+  standalone SoloCam S340, the brightness on the eufyCam 3; other models are declared
+  from the eufy app.
   - The light replaces the lamp's switch of earlier releases: `switch.<camera>_light`
     becomes `light.<camera>_light` (`switch.<camera>_spotlight` becomes
     `light.<camera>_spotlight`), and the switch's registry entry is removed at the next
@@ -590,7 +589,10 @@ the camera and its settings. The limits above apply.
     got), its name, icon, area, labels and voice assistant aliases, which voice
     assistants it is exposed to, and whether you hid it. An enabled switch gives an
     enabled light, also with **Enable newly added entities** turned off in the
-    integration's system options; a switch you disabled gives a disabled light.
+    integration's system options; a switch you disabled gives a disabled light. Unlike
+    the switch, a configuration entity, the light has no category, so it shows in
+    auto-generated dashboards; it keeps the voice assistant exposure stored for the
+    switch, and where none was stored each assistant treats it as any new light.
     Automations, scripts and dashboards that used the switch still need the light entity
     and `light.turn_on` / `light.turn_off`.
   - A light you made from the lamp's switch with **Switch as X** holds the switch's
