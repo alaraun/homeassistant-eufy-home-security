@@ -5,6 +5,21 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.20](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.19...v0.4.20) (2026-11-22)
+
+
+### Features
+
+* **card:** a lamp's light in the card's settings, with a brightness slider on a dimmable light ([993bea3](https://github.com/alaraun/homeassistant-eufy-home-security/commit/993bea31601d4ce3046f1e63a29b52e9e0cbfd74))
+* **light:** a camera's lamp is a light entity with on/off and, where writable, brightness; it replaces the lamp's switch (switch.&lt;camera&gt;_light becomes light.&lt;camera&gt;_light, the switch's customisations and voice-assistant exposure carry over; automations need light.turn_on/turn_off) ([issue 157](https://github.com/alaraun/homeassistant-eufy-home-security/issues/157), [issue 191](https://github.com/alaraun/homeassistant-eufy-home-security/issues/191)) ([993bea3](https://github.com/alaraun/homeassistant-eufy-home-security/commit/993bea31601d4ce3046f1e63a29b52e9e0cbfd74))
+* **settings:** setting entities take their device class and unit from the library: durations in seconds (some models showed days), the glass break time as a timestamp, a siren's ringing as sound ([4bd0c06](https://github.com/alaraun/homeassistant-eufy-home-security/commit/4bd0c06737a7d1a1d7474d28fa659dc558f81a7b))
+* **settings:** settings the eufy app offers as choices are selects or numbers: storage type, HomeBase clock format, a doorbell's response timeout, the chime ring volume and the recording type (new entity ids) ([4bd0c06](https://github.com/alaraun/homeassistant-eufy-home-security/commit/4bd0c06737a7d1a1d7474d28fa659dc558f81a7b))
+
+
+### Bug Fixes
+
+* **settings:** a floodlight's light schedule (T8110, T8115, T8119, T814X, T817L) is no longer a free-text entity ([4bd0c06](https://github.com/alaraun/homeassistant-eufy-home-security/commit/4bd0c06737a7d1a1d7474d28fa659dc558f81a7b))
+
 ## [0.4.19](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.18...v0.4.19) (2026-11-20)
 
 
