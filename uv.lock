@@ -935,7 +935,7 @@ wheels = [
 
 [[package]]
 name = "eufy-home-security"
-version = "0.4.16"
+version = "0.4.17"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -944,9 +944,9 @@ dependencies = [
     { name = "protobuf" },
     { name = "tzdata" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9f/59/37cc7734a7c46731862a6fe27b79314aaa82d802192699235e6723834c15/eufy_home_security-0.4.16.tar.gz", hash = "sha256:a4df52200b78a352edf8f14d04a9519cbb8f1e7a6a621391d64452af029c4c3d", size = 1149008, upload-time = "2026-11-20T16:20:44.858Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ae/04/4fbfeece16bf65b6411da57da9cac637b4bc95f1ab05741ab98bb9780e22/eufy_home_security-0.4.17.tar.gz", hash = "sha256:dd8fd375fb11231c3958b65b404ae9170e929ad512a262f12a352023312f08d1", size = 1157537, upload-time = "2026-11-21T12:46:55.73Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/53/73/d82e40868fb4d3d1999d7f77d16df9e423b95e3ac5c2a23e74beff1b7246/eufy_home_security-0.4.16-py3-none-any.whl", hash = "sha256:ae5add76f9b49cf8b7e922494bcbde0201ec700bd38637b0cb423b43876cb0f2", size = 1351521, upload-time = "2026-11-20T16:20:43.332Z" },
+    { url = "https://files.pythonhosted.org/packages/14/e1/9f819faba944f90026012f6730e4d2694013a4e69dc0cdf48ff7e1ad38ce/eufy_home_security-0.4.17-py3-none-any.whl", hash = "sha256:cd7426d5603066b0f5d67e9a05c14c8e9a107eb5a9ad6d11d6e2cabb990c1626", size = 1359816, upload-time = "2026-11-21T12:46:54.15Z" },
 ]
 
 [[package]]
@@ -1277,7 +1277,7 @@ dev = [
 [package.metadata.requires-dev]
 dev = [
     { name = "av", specifier = "==19.0.0" },
-    { name = "eufy-home-security", specifier = "==0.4.16" },
+    { name = "eufy-home-security", specifier = "==0.4.17" },
     { name = "mypy" },
     { name = "pytest-homeassistant", specifier = "==2026.11.0" },
     { name = "pytest-timeout" },

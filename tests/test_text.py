@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
 from typing import Final
 
@@ -13,12 +14,13 @@ from eufy_home_security.testing import SYNTHETIC, FakeStation
 from eufy_home_security.testing.cloud import FakeCloud
 from homeassistant.components.text import DOMAIN as TEXT_DOMAIN
 from homeassistant.components.text.const import ATTR_VALUE, SERVICE_SET_VALUE
-from homeassistant.const import ATTR_ENTITY_ID, STATE_UNKNOWN, EntityCategory
+from homeassistant.const import ATTR_ENTITY_ID, STATE_UNKNOWN, EntityCategory, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 
 from custom_components.eufy_home_security.const import DOMAIN
+from custom_components.eufy_home_security.settings import setting_platform
 
 # A string setting of the HomeBase 1 (T8001), which the fake station is made to be.
 _MODEL: Final = "T8001"
@@ -125,3 +127,16 @@ async def test_a_string_the_library_refuses_is_a_validation_error(
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+def test_a_structured_setting_is_never_a_control() -> None:
+    """A writable schedule whose value is structured gets no text entity; readable, it is a
+    sensor; the same setting not structured is a text entity."""
+    schedule = settings_of("T8110")["spotlight_schedule_config"]
+    assert schedule.structured
+    assert schedule.writable
+    assert not schedule.readable
+
+    assert setting_platform(schedule) is None
+    assert setting_platform(dataclasses.replace(schedule, readable=True)) is Platform.SENSOR
+    assert setting_platform(dataclasses.replace(schedule, structured=False)) is Platform.TEXT

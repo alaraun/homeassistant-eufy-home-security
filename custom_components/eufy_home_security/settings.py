@@ -9,14 +9,17 @@ belongs on, and it is the only place that decides it.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
+from types import MappingProxyType
 from typing import Any, Final
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.number import NumberDeviceClass
 from homeassistant.components.sensor import SensorDeviceClass
-from homeassistant.const import EntityCategory, Platform
+from homeassistant.const import PERCENTAGE, EntityCategory, Platform
 from homeassistant.helpers import entity_registry as er
 
 from eufy_home_security import MODES_SECTION, Station, UnsupportedError, entity_unique_id
@@ -26,6 +29,7 @@ from eufy_home_security.devices import (
     Setting,
     SettingControl,
     SettingKind,
+    SettingMeaning,
     SettingRole,
     SettingShown,
 )
@@ -59,22 +63,107 @@ def is_per_mode_entity(unique_id: str) -> bool:
     return unique_id.partition("_")[2] in _PER_MODE_ENTITY_KEYS
 
 
-# The device class of a bool status's binary sensor, by setting key.
-STATUS_DEVICE_CLASSES: Final[Mapping[str, BinarySensorDeviceClass]] = {
-    "sensor_door_status": BinarySensorDeviceClass.DOOR,
-    "sensor_disassemble_status": BinarySensorDeviceClass.TAMPER,
-    "sensor_is_low_power": BinarySensorDeviceClass.BATTERY,
-    "sensor_water_status": BinarySensorDeviceClass.MOISTURE,
-    "sensor_temperature_low_status": BinarySensorDeviceClass.COLD,
-}
+@dataclass(frozen=True, slots=True)
+class EntityTyping:
+    """The device class per platform and the unit of a setting entity.
 
-# The device classes a setting entity carries (a seconds range, an enum sensor); the
+    In :data:`MEANING_TYPING` a rule: ``unit_from_setting`` takes ``Setting.unit``
+    instead of ``unit``. From :func:`entity_typing` the result for one setting.
+    """
+
+    sensor: SensorDeviceClass | None = None
+    number: NumberDeviceClass | None = None
+    binary_sensor: BinarySensorDeviceClass | None = None
+    unit: str | None = None
+    unit_from_setting: bool = False
+
+
+# How each ``Setting.meaning`` types its entity; the only place a setting gets a device
+# class or unit. A temperature's scale (C or F) is not in the model data: no class, no unit.
+MEANING_TYPING: Final[Mapping[SettingMeaning, EntityTyping]] = MappingProxyType(
+    {
+        SettingMeaning.DURATION: EntityTyping(
+            sensor=SensorDeviceClass.DURATION,
+            number=NumberDeviceClass.DURATION,
+            unit_from_setting=True,
+        ),
+        SettingMeaning.PERCENT: EntityTyping(unit=PERCENTAGE),
+        SettingMeaning.TEMPERATURE: EntityTyping(),
+        SettingMeaning.TIMESTAMP: EntityTyping(sensor=SensorDeviceClass.TIMESTAMP),
+        SettingMeaning.TIME_OF_DAY: EntityTyping(),
+        SettingMeaning.OPENING: EntityTyping(binary_sensor=BinarySensorDeviceClass.DOOR),
+        SettingMeaning.TAMPER: EntityTyping(binary_sensor=BinarySensorDeviceClass.TAMPER),
+        SettingMeaning.LOW_BATTERY: EntityTyping(binary_sensor=BinarySensorDeviceClass.BATTERY),
+        SettingMeaning.MOISTURE: EntityTyping(binary_sensor=BinarySensorDeviceClass.MOISTURE),
+        SettingMeaning.COLD: EntityTyping(binary_sensor=BinarySensorDeviceClass.COLD),
+        SettingMeaning.SIREN_RINGING: EntityTyping(binary_sensor=BinarySensorDeviceClass.SOUND),
+    }
+)
+# No meaning, or one the table does not list: no device class, the setting's own unit.
+UNTYPED: Final = EntityTyping(unit_from_setting=True)
+
+
+def entity_typing(setting: Setting) -> EntityTyping:
+    """The device classes and unit of ``setting``'s entity, from its meaning and unit.
+
+    A class whose unit comes from the setting (a duration) is dropped when the setting
+    has no unit: Home Assistant converts such a value by its unit.
+    """
+    rule = UNTYPED if setting.meaning is None else MEANING_TYPING.get(setting.meaning, UNTYPED)
+    if not rule.unit_from_setting:
+        return rule
+    unit = setting.unit.value if setting.unit is not None and setting.unit.value else None
+    if unit is None:
+        return EntityTyping()
+    return replace(rule, unit=unit, unit_from_setting=False)
+
+
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def timestamp_value(value: object) -> datetime | None:
+    """A ``TIMESTAMP`` value (integer milliseconds since the epoch, UTC, as digits or an
+    int) as an aware datetime; None for 0 (none recorded), empty or anything else."""
+    if isinstance(value, str):
+        try:
+            value = int(value.strip())
+        except ValueError:
+            return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    try:
+        return _EPOCH + timedelta(milliseconds=value)
+    except OverflowError:
+        return None
+
+
+def numeric_value(value: object) -> int | float | None:
+    """``value`` as a finite number (an int or float, or text holding one); None otherwise."""
+    if isinstance(value, str):
+        text = value.strip()
+        for parse in (int, float):
+            try:
+                value = parse(text)
+                break
+            except ValueError:
+                continue
+        else:
+            return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return value if math.isfinite(value) else None
+
+
+# The device classes a setting entity carries (the table's, an enum sensor); the
 # integration's own entities named by a device class (battery, signal) have none of these.
 _SETTING_DEVICE_CLASSES: frozenset[str] = frozenset(
-    {NumberDeviceClass.DURATION, SensorDeviceClass.DURATION, SensorDeviceClass.ENUM}
+    {SensorDeviceClass.ENUM}
+    | {c for t in MEANING_TYPING.values() for c in (t.sensor, t.number) if c is not None}
 )
 # A status's binary-sensor classes; the battery sensor's class has the same name.
-_STATUS_BINARY_CLASSES: frozenset[str] = frozenset(STATUS_DEVICE_CLASSES.values())
+_STATUS_BINARY_CLASSES: frozenset[str] = frozenset(
+    t.binary_sensor for t in MEANING_TYPING.values() if t.binary_sensor is not None
+)
 
 # Home Assistant's limit on a state's length.
 MAX_STATE_LENGTH: Final = 255
@@ -216,7 +305,8 @@ def setting_platform(setting: Setting) -> Platform | None:
 
     - A per-mode delay or action mask: none, the HomeBase card edits it (``is_per_mode``).
     - A writable setting with a ``control``: its platform (switch, select, number, a
-      switch per member for ``toggles``, text).
+      switch per member for ``toggles``, text), unless its value is structured
+      (``Setting.structured``): no control, it is treated as read-only below.
     - A diagnostic value (``SettingRole.DIAGNOSTIC``): none; the app shows it nowhere, or
       a device field already gives it.
     - Otherwise, when readable: binary sensor for a bool, sensor for the rest.
@@ -224,7 +314,7 @@ def setting_platform(setting: Setting) -> Platform | None:
     """
     if is_per_mode(setting):
         return None
-    if setting.writable and setting.control is not None:
+    if setting.writable and setting.control is not None and not setting.structured:
         return _CONTROLS[setting.control]
     if not setting.readable or setting.role is SettingRole.DIAGNOSTIC:
         return None
@@ -253,7 +343,7 @@ def setting_specs(station: Station) -> list[SettingEntitySpec]:
                 continue
             grouped = setting.variant_of is not None or setting.key in primaries
             in_use = member_in_use(station, setting.key, device_sn) if grouped else None
-            if setting.writable and setting.control is SettingControl.TOGGLES:
+            if platform is Platform.SWITCH and setting.control is SettingControl.TOGGLES:
                 specs.extend(
                     SettingEntitySpec(
                         platform=platform,
