@@ -75,6 +75,7 @@ an account where no device was found too.
 | setting not applied | the device rejected the write | the value last reported |
 | setting unconfirmed | no answer in time; the write may still apply | unknown until the next update (a control the device never reports back: until you set it again) |
 | does not accept this eufy account | the station refused the request for the account it was sent under (an arm, a setting, a siren, a pan/tilt or preset command, a record action, a HomeBase card change, the camera card's Station list); trying again changes nothing. In the eufy app, check that the station is shared with this account | a setting entity the value last reported; nothing is recorded or saved |
+| "{target} was not switched, and nothing was sent: the eufy app turns the lamp's control off while {setting} is off. Turn {setting} on first, in the eufy app or with its switch here." | a camera's light (`{target}`) was turned on or off while the setting that enables its lamp control (`{setting}`, such as **Lighting**) reads off; see [usage.md](usage.md#device-settings) | the state last reported |
 
 ## No detections from a camera
 

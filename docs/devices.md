@@ -15,6 +15,7 @@ generated from eufy's own model data. What the file says decides the entity:
 |---|---|
 | write an on/off, a choice, a range or a string | switch, select, number (slider or box) or text, as the library's control says |
 | write several choices at once (detection types) | one switch per choice |
+| switch a camera's lamp | a light, with brightness where the library can write it; the brightness setting stays, disabled by default ([usage.md](usage.md#device-settings)) |
 | only read a status the eufy app shows on the device card (an entry sensor's door) | sensor or binary sensor, enabled |
 | only read a status the eufy app shows on a settings page | diagnostic sensor or binary sensor, enabled |
 | only read a setting the app offers as a control | diagnostic sensor or binary sensor, disabled by default |
@@ -67,8 +68,8 @@ S3n or eufyCam Solo S3, among others. The T8170 tested here is a SoloCam S340.
 | Model | Device | Tested on hardware |
 |---|---|---|
 | T8030 | HomeBase 3 | guard mode, status, storage, detections, event history, stills, settings (clock format), entry and leaving delays of Home, Away and Custom 1 |
-| T8160 | eufyCam 3, on a HomeBase | detections, stills, live video and audio, settings (detection sensitivity, trigger interval, clip length, speaker volume, streaming quality, night vision, working mode) |
-| T8170 | SoloCam S340, standalone | guard mode, status, live video, presets, pan/tilt, zoom, settings (detection sensitivity, motion detection, status LED, night vision, record audio, AI tracking, streaming quality, privacy zones, spotlight, lighting) |
+| T8160 | eufyCam 3, on a HomeBase | detections, stills, live video and audio, settings (detection sensitivity, trigger interval, clip length, speaker volume, streaming quality, night vision, working mode), the **Light** light on and off and its brightness (Low, Medium, High; verified by the library behind a HomeBase 3) |
+| T8170 | SoloCam S340, standalone | guard mode, status, live video, presets, pan/tilt, zoom, settings (detection sensitivity, motion detection, status LED, night vision, record audio, AI tracking, streaming quality, privacy zones, lighting), the **Light** light on and off |
 | T8910 | Motion Sensor, on a HomeBase | battery, signal and Motion binary sensor / motion-only Detection event (HomeBase 2, cloud push verified) |
 
 ## Models from eufy app code
@@ -83,7 +84,7 @@ are offered, but none is tested:
 | T90M0 | eufy Motion Sensor E20 | as the T8910: Motion and a motion-only Detection event |
 | T8900 | Entry Sensor, on a HomeBase | door (binary sensor, on = open; follows each open and close), low battery |
 | T90E0 | eufy Entry Sensor E20, on a HomeBase | door (binary sensor, on = open; follows each open and close), tamper |
-| T84A1 | Wall Light Cam S100, standalone | **Spotlight** switch turns the light on and off (the **Lighting** switch is a separate setting); **Microphone** switch, write-only (assumed state), also behind a HomeBase, where Spotlight is a read-only diagnostic binary sensor, off by default |
+| T84A1 | Wall Light Cam S100, standalone | **Spotlight** light turns the lamp on and off and sets its brightness (the **Lighting** switch is a separate setting); **Microphone** switch, write-only (assumed state), also behind a HomeBase, where Spotlight is no light but a read-only diagnostic binary sensor, off by default |
 
 Report what works and what does not ([below](#reporting-a-new-device)).
 
@@ -94,7 +95,7 @@ model list (declared from eufy's own model data):
 
 | Kind | Entities |
 |---|---|
-| Camera, doorbell, video smart lock (T8530, T8531, T8532, T853A, T85M0, T85M1, T85M2, T85V0: the eufy app shows them as cameras) | camera with stills, detection sensors and event, a **Refresh event image** button, and a **Capture live image** button where it has live video; a doorbell and a video smart lock also a ring event (a video smart lock's press is declared from the eufy app, not tested). Live video where the library sends the live open the eufy app uses for that model on its station; pan/tilt, presets and zoom as [below](#pan-tilt-presets-and-zoom) (declared from the eufy app, not tested); a **Siren** where the eufy app offers the model an alarm ([usage.md](usage.md#sirens)) |
+| Camera, doorbell, video smart lock (T8530, T8531, T8532, T853A, T85M0, T85M1, T85M2, T85V0: the eufy app shows them as cameras) | camera with stills, detection sensors and event, a **Refresh event image** button, and a **Capture live image** button where it has live video; a doorbell and a video smart lock also a ring event (a video smart lock's press is declared from the eufy app, not tested). Live video where the library sends the live open the eufy app uses for that model on its station; pan/tilt, presets and zoom as [below](#pan-tilt-presets-and-zoom) (declared from the eufy app, not tested); a **Siren** where the eufy app offers the model an alarm ([usage.md](usage.md#sirens)); a light for its lamp where the library can switch it ([usage.md](usage.md#device-settings)) |
 | HomeBase, keypad, other lock, sensor, other | none of a camera; a HomeBase gets its **Siren** where the library sounds its model |
 
 No live video yet: cameras behind a HomeBase 4, NVR or other recorder station, cameras the

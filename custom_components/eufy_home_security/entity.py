@@ -225,9 +225,9 @@ class EufySettingEntity(EufyDeviceEntity):
         self._attr_assumed_state = not spec.setting.readable
         self._attr_entity_category = spec.entity_category
         self._attr_entity_registry_enabled_default = spec.enabled_by_default
-        # The last value written, shown for a setting the dump never reports; dropped by a
-        # write that timed out.
-        self._written: SettingValue | None = None
+        # The last value written by setting key, shown for a setting the dump never
+        # reports; dropped by a write of that key that timed out.
+        self._written: dict[str, SettingValue] = {}
         # Set by a write that timed out: unknown until the next state arrives.
         self._unsettled = False
         # The same device's settings that apply only at one of this setting's values.
@@ -328,16 +328,21 @@ class EufySettingEntity(EufyDeviceEntity):
 
         A setting the dump never reports shows the last value written from here.
         """
+        setting = self._spec.setting
+        return self.value_of(setting.key, readable=setting.readable)
+
+    def value_of(self, key: str, *, readable: bool) -> SettingValue | None:
+        """Setting ``key`` of this entity's device, decoded, else None for unknown; for a
+        setting the dump never reports (``readable`` False), the last value written here."""
         if self._unsettled:
             return None
-        setting = self._spec.setting
-        if not setting.readable:
-            return self._written
+        if not readable:
+            return self._written.get(key)
         data: StationState | None = self.coordinator.data
         if data is None:
             return None
         try:
-            return data.setting(setting.key, device_sn=self._spec.device_sn)
+            return data.setting(key, device_sn=self._spec.device_sn)
         except UnsupportedError:
             # A device the latest cloud list does not pair here; the reload follows.
             return None
@@ -370,10 +375,16 @@ class EufySettingEntity(EufyDeviceEntity):
         later: the entity shows unknown until the next state (a setting the dump never
         reports: until it is written again) and the error says so.
         """
+        setting = self._spec.setting
+        await self.async_write(setting.key, value, readable=setting.readable)
+
+    async def async_write(self, key: str, value: SettingValue, *, readable: bool) -> None:
+        """Write setting ``key`` of this entity's device as :meth:`async_write_setting`
+        does; ``readable`` False keeps ``value`` as the shown value of ``key``."""
         self._require_addressable()
         try:
             await self.coordinator.station.async_set_setting(
-                self._spec.setting.key, value, device_sn=self._spec.device_sn
+                key, value, device_sn=self._spec.device_sn
             )
         except ValueError as err:
             raise errors.setting_value_invalid(self._write_target()) from err
@@ -391,7 +402,7 @@ class EufySettingEntity(EufyDeviceEntity):
         except DeviceTimeoutError as err:
             self._unsettled = True
             # The write may still apply: a value written earlier is no longer known to hold.
-            self._written = None
+            self._written.pop(key, None)
             self.async_write_ha_state()
             raise errors.setting_write_unconfirmed(self._write_target()) from err
         except EufySecurityError as err:
@@ -401,8 +412,8 @@ class EufySettingEntity(EufyDeviceEntity):
                 station_name=errors.station_display_name(self.coordinator),
                 on_demand=self.coordinator.station.connects_on_demand,
             ) from err
-        self._async_show_written(value)
-        await self._async_restart_stream_if_picture_changed()
+        self._async_show_written(key, value, readable=readable)
+        await self._async_restart_stream_if_picture_changed(key)
 
     async def async_write_flag(self, on: bool) -> None:
         """Turn this entity's member of a ``FLAGS`` setting on or off; other bits are kept.
@@ -431,9 +442,9 @@ class EufySettingEntity(EufyDeviceEntity):
                 station_name=errors.station_display_name(self.coordinator),
                 on_demand=self.coordinator.station.connects_on_demand,
             ) from err
-        self._async_show_written(None)
+        self._async_show_written(self._spec.setting.key, None, readable=True)
 
-    async def _async_restart_stream_if_picture_changed(self) -> None:
+    async def _async_restart_stream_if_picture_changed(self, key: str) -> None:
         """End this camera's live view when the write changed the picture size it sends.
 
         An MPEG-TS stream cannot carry a picture size that changes underneath it, so the
@@ -441,7 +452,7 @@ class EufySettingEntity(EufyDeviceEntity):
         watching. The camera is the setting's device, or the station itself for a
         standalone camera, whose broadcast is keyed by the station serial.
         """
-        if self._spec.setting.key not in PICTURE_CHANGING_SETTINGS:
+        if key not in PICTURE_CHANGING_SETTINGS:
             return
         camera_sn = self._spec.device_sn or self.coordinator.station.serial
         if (streaming := runtime.streaming(self.coordinator.config_entry)) is not None:
@@ -469,14 +480,14 @@ class EufySettingEntity(EufyDeviceEntity):
         return name if isinstance(name, str) else self._spec.setting.key
 
     @callback
-    def _async_show_written(self, value: SettingValue | None) -> None:
+    def _async_show_written(self, key: str, value: SettingValue | None, *, readable: bool) -> None:
         """Show the state the library holds after a write, without moving the poll timer.
 
         The library merges a written value into its state until the next dump; a
-        setting the dump never reports keeps ``value`` here instead.
+        setting the dump never reports (``readable`` False) keeps ``value`` here instead.
         """
         self._unsettled = False
-        if not self._spec.setting.readable and value is not None:
-            self._written = value
+        if not readable and value is not None:
+            self._written[key] = value
         self.coordinator.async_apply_state(self.coordinator.station.state)
         self.async_write_ha_state()

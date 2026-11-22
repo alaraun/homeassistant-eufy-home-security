@@ -22,7 +22,13 @@ from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import PERCENTAGE, EntityCategory, Platform
 from homeassistant.helpers import entity_registry as er
 
-from eufy_home_security import MODES_SECTION, Station, UnsupportedError, entity_unique_id
+from eufy_home_security import (
+    MODES_SECTION,
+    Light,
+    Station,
+    UnsupportedError,
+    entity_unique_id,
+)
 from eufy_home_security.devices import (
     MODE_ACTION_FLAGS,
     Scope,
@@ -225,6 +231,10 @@ class SettingEntitySpec:
     (``Station.setting_in_use``); None outside a group or when the library cannot tell."""
     grouped: bool = False
     """A member of a variant group: a variant, or a primary the device has variants of."""
+    light: Light | None = None
+    """The lamp a ``light`` entity of this on/off setting switches; None for any other."""
+    covered: bool = False
+    """A brightness the device's light entity sets: registered disabled."""
 
     @property
     def key(self) -> str:
@@ -250,7 +260,10 @@ class SettingEntitySpec:
 
     @property
     def entity_category(self) -> EntityCategory | None:
-        """Config for a control, none for a status on the device card, diagnostic else."""
+        """None for a light or a status on the device card, config for another control,
+        diagnostic else."""
+        if self.platform is Platform.LIGHT:
+            return None
         if self.is_control:
             return EntityCategory.CONFIG
         if self.is_status and self.setting.shown is SettingShown.CARD:
@@ -265,8 +278,10 @@ class SettingEntitySpec:
         device is on; while the library cannot tell, the primary. A setting the library
         cannot write, the other members and settings the app puts behind a warning
         (``Setting.advanced``) stay one click away in the registry instead of crowding
-        every device page.
+        every device page. So does a brightness the device's light entity sets (``covered``).
         """
+        if self.covered:
+            return False
         in_use = self.in_use if self.in_use is not None else not self.variant
         return (self.is_control or self.is_status) and in_use and not self.setting.advanced
 
@@ -277,7 +292,7 @@ class SettingEntitySpec:
 
 
 _CONTROL_PLATFORMS: frozenset[Platform] = frozenset(
-    {Platform.NUMBER, Platform.SELECT, Platform.SWITCH, Platform.TEXT}
+    {Platform.LIGHT, Platform.NUMBER, Platform.SELECT, Platform.SWITCH, Platform.TEXT}
 )
 _CONTROLS: Mapping[SettingControl, Platform] = {
     SettingControl.SWITCH: Platform.SWITCH,
@@ -330,15 +345,27 @@ def setting_specs(station: Station) -> list[SettingEntitySpec]:
     registers; a paired device with no serial has no identity and is skipped. The
     parameter dump is never enumerated: a camera offline at setup still gets its
     entities, and a setting the station does not report shows as unknown.
+
+    A lamp's on/off setting that is writable where the device is (``Station.lights_for``,
+    ``Light.on_off_writable``) is a light, and the brightness that light sets is
+    ``covered``; a lamp whose switch is read-only there keeps its sensor.
     """
     specs: list[SettingEntitySpec] = []
     targets: list[str | None] = [None]
     targets.extend(sub.device_sn for sub in station.sub_devices if sub.device_sn)
     for device_sn in targets:
         settings = station.settings_for(device_sn)
+        lights = {light.on_off: light for light in station.lights_for(device_sn)}
+        lights = {key: light for key, light in lights.items() if light.on_off_writable}
+        covered = {
+            light.brightness.key
+            for light in lights.values()
+            if light.brightness is not None and light.brightness.writable
+        }
         primaries = {s.variant_of for s in settings if s.variant_of is not None}
         for setting in settings:
-            platform = setting_platform(setting)
+            light = lights.get(setting.key)
+            platform = Platform.LIGHT if light is not None else setting_platform(setting)
             if platform is None:
                 continue
             grouped = setting.variant_of is not None or setting.key in primaries
@@ -365,6 +392,8 @@ def setting_specs(station: Station) -> list[SettingEntitySpec]:
                         variant=setting.variant_of is not None,
                         in_use=in_use,
                         grouped=grouped,
+                        light=light,
+                        covered=setting.key in covered,
                     )
                 )
     return specs

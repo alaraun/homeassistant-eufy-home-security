@@ -795,9 +795,14 @@ async def test_a_standalone_camera_gets_its_model_settings(
     offered = [s for s in settings if setting_platform(s) is not None]
     assert offered, "the library offers the T8170 no setting, so this proves nothing"
 
+    # The lamp's switch is a light; the brightness it sets starts disabled (tests/test_light.py).
+    (lamp,) = station.lights_for(None)
+    assert lamp.on_off_writable
+    assert lamp.brightness is not None
+    assert lamp.brightness.writable
     ent_reg = er.async_get(hass)
     for setting in offered:
-        platform = setting_platform(setting)
+        platform = "light" if setting.key == lamp.on_off else setting_platform(setting)
         assert platform is not None
         # A flags setting is one switch per member, named "<setting>: <member>".
         members = list(setting.flags) if setting.control is SettingControl.TOGGLES else [None]
@@ -814,17 +819,24 @@ async def test_a_standalone_camera_gets_its_model_settings(
             control = platform in ("number", "select", "switch", "text")
             status = not control and setting.role is SettingRole.STATUS
             card = status and setting.shown is SettingShown.CARD
+            light = platform == "light"
             assert ent.entity_category is (
-                EntityCategory.CONFIG if control else None if card else EntityCategory.DIAGNOSTIC
+                EntityCategory.CONFIG
+                if control
+                else None
+                if card or light
+                else EntityCategory.DIAGNOSTIC
             ), key
-            enabled = (control or status) and setting.variant_of is None
+            covered = key == lamp.brightness.key
+            enabled = (control or status or light) and setting.variant_of is None and not covered
             assert (ent.disabled_by is None) is enabled, key
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 
 
-# T8170 settings the library wrote and read back on hardware, and their platform.
+# T8170 settings the library wrote and read back on hardware, and their platform. Its lamp
+# switch, also written and read back, is a light: tests/test_light.py.
 _T8170_CONTROLS: dict[str, str] = {
     "detection_sensitivity": "number",
     "motion_detection_status": "switch",
@@ -834,7 +846,6 @@ _T8170_CONTROLS: dict[str, str] = {
     "ai_tracking_status": "switch",
     "live_streaming_resolution": "select",
     "disable_ptz_turn_switch": "switch",
-    "spotlight_switch": "switch",
 }
 
 
@@ -890,6 +901,27 @@ async def test_a_t8170_control_writes_and_shows_the_written_value(
 
     assert state_of(hass, entity_id) == target
     assert _sent(fake_station) > sent_before, key
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_the_t8170_lamp_is_a_light_whose_turn_on_reaches_the_camera(
+    hass: HomeAssistant, seed_warm_cache, built_clients, fake_station, fake_cloud
+):
+    """Standalone, the lamp's switch is writable: a light with brightness; on is sent and shown."""
+    fake_station.reply_to_settings = True
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = entity_id_for(hass, "light", SN, "spotlight_switch")
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.attributes["supported_color_modes"] == ["brightness"]
+    sent_before = _sent(fake_station)
+
+    await hass.services.async_call("light", "turn_on", {"entity_id": entity_id}, blocking=True)
+    await hass.async_block_till_done()
+
+    assert state_of(hass, entity_id) == "on"
+    assert _sent(fake_station) > sent_before
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 

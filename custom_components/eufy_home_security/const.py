@@ -272,6 +272,8 @@ EXC_SETTING_DEVICE_UNAVAILABLE: Final = "setting_device_unavailable"
 EXC_SETTING_UNCONFIRMED: Final = "setting_unconfirmed"
 # A setting value the library refused before sending (off its step, outside its domain).
 EXC_SETTING_VALUE_INVALID: Final = "setting_value_invalid"
+# A lamp switched while the setting that enables its control reads off; nothing sent.
+EXC_LIGHT_CONTROL_OFF: Final = "light_control_off"
 # An arm or disarm that could not reach the station.
 EXC_STATION_UNREACHABLE: Final = "station_unreachable"
 # The same for a station that connects on demand (a battery camera without a
