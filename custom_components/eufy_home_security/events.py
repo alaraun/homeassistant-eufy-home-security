@@ -126,6 +126,7 @@ from eufy_home_security import (
     CloudProblem,
     ConnectionChanged,
     CredentialsRefreshed,
+    DetectedEventsCounted,
     DeviceAlarmChanged,
     DevicesChanged,
     DisconnectCause,
@@ -140,6 +141,7 @@ from eufy_home_security import (
     LockStateChanged,
     PresetsChanged,
     PushChanged,
+    RecordedEventsCounted,
     SecurityEvent,
     StationConfigChanged,
     StationsChanged,
@@ -151,6 +153,7 @@ from eufy_home_security import (
 
 from . import detections, errors, runtime
 from .const import CONNECTION_LOSS_GRACE_SECONDS, DOMAIN, EVENT_EUFY_HOME_SECURITY
+from .event_activity import activity_signal
 
 if TYPE_CHECKING:
     from .coordinator import StationCoordinator
@@ -382,6 +385,16 @@ class EventRouter:
             errors.route_cloud_problem(self._hass, self._entry, event)
         elif isinstance(event, CredentialsRefreshed):
             errors.raise_credentials_refreshed_notice(self._hass, self._entry, event)
+        elif isinstance(event, (DetectedEventsCounted, RecordedEventsCounted)):
+            coordinator = self._coordinators.get(event.station_sn)
+            if (
+                self._consuming
+                and coordinator is not None
+                and event.device_sn in detections.paired_device_kinds(coordinator.station)
+            ):
+                async_dispatcher_send(
+                    self._hass, activity_signal(self._entry.entry_id, event.device_sn), event
+                )
         elif isinstance(event, SecurityEvent):
             self._handle_security_event(event)
         elif isinstance(event, AlarmChanged):

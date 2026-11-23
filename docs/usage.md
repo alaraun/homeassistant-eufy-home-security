@@ -181,6 +181,32 @@ kind, so an automation for "anything detected" triggers on it.
 For a camera whose mode sends no detections (below), the **Recorded events** counter
 still rises with each recording: see [Automation triggers](#automation-triggers).
 
+### Counter-derived camera activity events
+
+For supported cameras, two additional event entities complement the existing
+**Detection** event. They consume the library's `DetectedEventsCounted` (1192)
+and `RecordedEventsCounted` (1193) observations.
+
+The detected-events counter includes camera triggers that may subsequently be
+discarded. It does not confirm an accepted or classified detection. The
+recorded-events counter is independent and does not prove that a recording has
+finished or become available for playback.
+
+Each positive increase generates one aggregate event carrying `count` and
+`observed_at`. For example, an increase of +3 produces one event with `count: 3`,
+not three individually timestamped events. `observed_at` is the UTC time the
+library observed the increase, not the original detection or recording time.
+
+First readings, unavailable counters, offline devices, reconnects and counter
+resets establish fresh baselines without generating activity events. These events
+are derived exclusively from counters: **there is no push fallback**. Existing
+push-delivered `SecurityEvent` detections remain independent.
+
+Counter observations require an updated station parameter snapshot. Reporting
+and latency depend on polling frequency, station model and firmware. These
+events do not remove the existing notification-delivery repair warning: detailed
+detection pushes remain unavailable when the HomeBase suppresses them.
+
 ### Detections in the security mode
 
 In the eufy app each camera has a **Notification** switch per security mode (Security

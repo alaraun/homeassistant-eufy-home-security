@@ -851,6 +851,26 @@
             }
           }
         }
+      },
+      "detected_events_counted": {
+        "name": "Detected Events Counted",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "counted": "Counted"
+            }
+          }
+        }
+      },
+      "recorded_events_counted": {
+        "name": "Recorded Events Counted",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "counted": "Counted"
+            }
+          }
+        }
       }
     },
     "image": {

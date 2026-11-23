@@ -188,6 +188,9 @@ ATTR_SIREN_ACTIONS: Final = "siren_actions"
 # The detection event entity's translation key and unique-id key: one per camera,
 # fired once per detection the library delivers, and again for a more specific kind.
 DETECTION_EVENT_KEY: Final = "detection"
+# Native activity event keys (distinct from the binary sensor keys).
+DETECTED_EVENTS_COUNTED_EVENT_KEY: Final = "detected_events_counted"
+RECORDED_EVENTS_COUNTED_EVENT_KEY: Final = "recorded_events_counted"
 # A camera's detection binary sensors, each the translation key and the key of its
 # unique id: on at a detection of its class, off a hold later.
 MOTION_DETECTED_KEY: Final = "motion_detected"
