@@ -686,6 +686,11 @@ async def test_an_enabled_status_row_whose_setting_is_diagnostic_now_is_forgotte
         ),
         # Whole keys only: a member that only starts with a location word stays.
         ({"latency": 1, "location_mode": 2}, {"latency": 1, "location_mode": 2}),
+        # A key ending in an address word goes, in any case; one only containing it stays.
+        (
+            {"router_addr": 1, "homeAddress": 2, "IPADDR": 3, "addr_count": 4, "Dst": 5},
+            {"addr_count": 4, "Dst": 5},
+        ),
         ([{"address": "x", "a": 1}, [{"lng": 2}]], [{"a": 1}, [{}]]),
         ({"schedule": {"sun_rise": "06:00", "lat": 1}}, {"schedule": {"sun_rise": "06:00"}}),
         ("lat", "lat"),

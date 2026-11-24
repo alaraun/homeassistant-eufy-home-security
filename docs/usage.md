@@ -648,7 +648,8 @@ the camera and its settings. The limits above apply.
 - A setting value made of several fields is never shown as the state: the state is
   unknown and the attribute `value` holds the fields, or the value as the device
   reported it when it does not parse. Fields that locate your home (`latitude`,
-  `longitude` and their short forms `lat`, `lng`, an address) are left out: a light's
+  `longitude` and their short forms `lat`, `lng`, and any field whose name ends in
+  `address` or `addr`) are left out: a light's
   motion-activated, ambient-light and dusk-to-dawn settings can carry them. A text longer than 255
   characters is cut to 255. Such a value gets no control even when writable (a light's
   schedule or motion-activated settings): a sensor when readable, else no entity; the
