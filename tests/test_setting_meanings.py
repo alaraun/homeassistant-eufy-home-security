@@ -12,10 +12,19 @@ import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Final
 
 import pytest
-from conftest import entity_id_for, seed_setting, set_up_warm, state_of, wait_until
+from conftest import (
+    add_entry,
+    entity_id_for,
+    seed_setting,
+    set_up_warm,
+    setup_entry,
+    state_of,
+    wait_until,
+)
 from eufy_home_security import EufySecurity, Station, entity_unique_id
 from eufy_home_security.devices import SettingKind, SettingMeaning, SettingUnit
 from eufy_home_security.devices.model_settings import (
@@ -38,7 +47,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry, async_capture_events
 
 from custom_components.eufy_home_security import settings
 from custom_components.eufy_home_security.const import DOMAIN
@@ -48,6 +57,7 @@ from custom_components.eufy_home_security.settings import (
     entity_typing,
     numeric_value,
     setting_platform,
+    setting_specs,
     timestamp_value,
 )
 
@@ -147,6 +157,20 @@ def test_a_smoke_sensor_status_is_a_binary_sensor_per_member_meaning(code: str) 
         assert entity_typing(setting, meaning).binary_sensor == device_class, meaning
     # Its own meaning is none: the members carry them.
     assert entity_typing(setting) == EntityTyping()
+
+    # One spec per distinct meaning: two members each mean smoke and testing.
+    assert len(setting.flag_meanings) > len(_SMOKE_CLASSES)
+    station = SimpleNamespace(
+        sub_devices=[SimpleNamespace(device_sn=SMOKE_SN)],
+        settings_for=lambda device_sn: list(settings_of(code).values()) if device_sn else [],
+        lights_for=lambda device_sn: (),
+    )
+    specs = setting_specs(station)  # type: ignore[arg-type]
+    keys = [spec.key for spec in specs]
+    assert len(keys) == len(set(keys))
+    smoke = [spec for spec in specs if spec.setting.key == _SMOKE_STATUS]
+    assert [spec.meaning for spec in smoke] == list(dict.fromkeys(setting.flag_meanings.values()))
+    assert len(smoke) == len(_SMOKE_CLASSES) == 6
 
 
 def test_a_flags_status_without_member_meanings_stays_a_sensor() -> None:
@@ -637,4 +661,46 @@ async def test_a_smoke_sensor_shows_a_binary_sensor_per_meaning_of_its_status(
                 {m: state_of(hass, entity_id) for m, entity_id in entity_ids.items()} == expected
             )
         )
+    await _stop(hass, entry)
+
+
+async def test_a_meaning_the_library_no_longer_gives_loses_its_binary_sensor(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A meaning binary sensor of a status still listed, for a meaning the library no
+    longer gives, is forgotten at setup; a meaning it gives keeps its row, as do rows
+    under another setting's key and on another platform."""
+    _pair(fake_station, fake_cloud)
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+
+    def seed(domain: str, key: str) -> er.RegistryEntry:
+        # Named like a meaning row: by a translation key, no name.
+        return registry.async_get_or_create(
+            domain,
+            DOMAIN,
+            entity_unique_id(SMOKE_SN, key),
+            config_entry=entry,
+            translation_key=f"meaning_{key.rsplit('_', 1)[-1]}",
+        )
+
+    orphan = seed(Platform.BINARY_SENSOR, f"{_SMOKE_STATUS}_gas")
+    live = seed(Platform.BINARY_SENSOR, f"{_SMOKE_STATUS}_{SettingMeaning.SMOKE.value}")
+    other_key = seed(Platform.BINARY_SENSOR, "sensor_alarm_timeout_gas")
+    other_platform = seed(Platform.SENSOR, f"{_SMOKE_STATUS}_gas")
+    removed = async_capture_events(hass, er.EVENT_ENTITY_REGISTRY_UPDATED)
+
+    assert await setup_entry(hass, entry)
+
+    gone = {event.data["entity_id"] for event in removed if event.data["action"] == "remove"}
+    assert gone == {orphan.entity_id}
+    assert registry.async_get(orphan.entity_id) is None
+    for kept in (live, other_key, other_platform):
+        assert registry.async_get(kept.entity_id) is not None, kept.unique_id
+    assert state_of(hass, live.entity_id) == "unknown"
     await _stop(hass, entry)

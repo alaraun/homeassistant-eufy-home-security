@@ -574,7 +574,8 @@ the camera and its settings. The limits above apply.
     (battery class), and **Alarm muted** and **Testing** without a class (Home Assistant
     has none for them). Unknown until the device reports its status. Declared from the
     eufy app, not tested on hardware: whether a test press also turns **Smoke** on is
-    not known.
+    not known. A meaning a later release no longer gives loses its binary sensor at the
+    next start.
 
   A setting sensor has no state class, so Home Assistant keeps no long-term
   statistics for it and a unit change never raises a statistics issue.
