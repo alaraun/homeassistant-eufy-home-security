@@ -252,7 +252,10 @@ async def test_the_daily_prune_runs_on_the_event_loop(
 
     freezer.tick(timedelta(days=1, seconds=1))
     async_fire_time_changed(hass)
-    await wait_until(lambda: not expiring.exists())
+    # freezer also freezes the loop clock, so a timed wait (wait_until) never wakes;
+    # wait on the prune task itself.
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert not expiring.exists()
 
     assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
     await _unload(hass, entry)
