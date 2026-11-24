@@ -52,6 +52,7 @@ TAMPER_SN: Final = "T90E0P0000000001"
 _DOOR_CHANNEL: Final = 2
 _TAMPER_CHANNEL: Final = 3
 _STATION_CHANNEL: Final = 255
+_CAMERA_CHANNEL: Final = 0
 _DOOR_PARAM: Final = 1550
 _LOW_POWER_PARAM: Final = 1552
 _TAMPER_PARAM: Final = 61015
@@ -331,16 +332,23 @@ async def test_diagnostic_values_get_no_entity(
     await _stop(hass, entry)
 
 
-async def _enabled_station_sensor(
-    hass: HomeAssistant, fake_station: FakeStation, key: str, raw: str
+async def _enabled_sensor(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    key: str,
+    raw: str,
+    *,
+    device_sn: str | None = None,
+    channel: int = _STATION_CHANNEL,
 ) -> tuple[MockConfigEntry, Setting, str]:
-    """Set up with ``raw`` as the HomeBase's ``key``, its sensor row enabled."""
-    seed_setting(fake_station, key, raw, channel=_STATION_CHANNEL)
+    """Set up with ``raw`` as ``key`` of the HomeBase (or of the paired ``device_sn`` on
+    ``channel``), its sensor row enabled."""
+    seed_setting(fake_station, key, raw, channel=channel)
     entry = add_entry(hass)
     assert await setup_entry(hass, entry)
     station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
-    setting = next(s for s in station.settings_for() if s.key == key)
-    entity_id = entity_id_for(hass, Platform.SENSOR, SYNTHETIC.station_sn, key)
+    setting = next(s for s in station.settings_for(device_sn) if s.key == key)
+    entity_id = entity_id_for(hass, Platform.SENSOR, device_sn or SYNTHETIC.station_sn, key)
     er.async_get(hass).async_update_entity(entity_id, disabled_by=None)
     await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
@@ -380,7 +388,7 @@ async def test_a_structured_value_is_never_the_state(
     """A structured setting's value: state unknown, ``value`` the decoded JSON without
     the house's location, or the raw value when it does not parse."""
     seed_warm_cache()
-    entry, setting, entity_id = await _enabled_station_sensor(hass, fake_station, key, raw)
+    entry, setting, entity_id = await _enabled_sensor(hass, fake_station, key, raw)
     assert setting.structured
     assert not setting.writable
 
@@ -399,11 +407,18 @@ async def test_a_json_text_of_another_setting_is_an_attribute_and_a_long_text_is
 ) -> None:
     """A setting not flagged structured: a JSON text is an attribute, state unknown; a
     text longer than the limit is cut to it."""
-    key = "notification_alarm_delay_value"
+    # The camera's open value (kind other), read-only.
+    key = "battery_healthy"
     seed_warm_cache()
-    entry, setting, entity_id = await _enabled_station_sensor(
-        hass, fake_station, key, json.dumps(_DOCUMENT)
+    entry, setting, entity_id = await _enabled_sensor(
+        hass,
+        fake_station,
+        key,
+        json.dumps(_DOCUMENT),
+        device_sn=SYNTHETIC.camera_sn,
+        channel=_CAMERA_CHANNEL,
     )
+    assert setting.kind is SettingKind.OTHER
     assert not setting.structured
     state = hass.states.get(entity_id)
     assert state is not None
@@ -411,7 +426,7 @@ async def test_a_json_text_of_another_setting_is_an_attribute_and_a_long_text_is
     assert state.attributes[ATTR_VALUE] == _DOCUMENT
     await _stop(hass, entry)
 
-    seed_setting(fake_station, key, "y" * 400, channel=_STATION_CHANNEL)
+    seed_setting(fake_station, key, "y" * 400, channel=_CAMERA_CHANNEL)
     assert await setup_entry(hass, entry)
     state = hass.states.get(entity_id)
     assert state is not None

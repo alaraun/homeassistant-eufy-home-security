@@ -9,6 +9,7 @@ from typing import Final
 import pytest
 from conftest import entity_id_for, seed_setting, set_up_warm, state_of
 from eufy_home_security import EufySecurity
+from eufy_home_security.devices import SettingControl, SettingKind
 from eufy_home_security.devices.model_settings import settings_of
 from eufy_home_security.testing import SYNTHETIC, FakeStation
 from eufy_home_security.testing.cloud import FakeCloud
@@ -131,12 +132,23 @@ async def test_a_string_the_library_refuses_is_a_validation_error(
 
 def test_a_structured_setting_is_never_a_control() -> None:
     """A writable schedule whose value is structured gets no text entity; readable, it is a
-    sensor; the same setting not structured is a text entity."""
-    schedule = settings_of("T8110")["spotlight_schedule_config"]
+    sensor; the same setting not structured is a text entity. A writable object is a
+    sensor."""
+    schedule = dataclasses.replace(
+        settings_of("T8110")["spotlight_schedule_config"],
+        writable=True,
+        control=SettingControl.TEXT,
+    )
     assert schedule.structured
-    assert schedule.writable
     assert not schedule.readable
 
     assert setting_platform(schedule) is None
     assert setting_platform(dataclasses.replace(schedule, readable=True)) is Platform.SENSOR
     assert setting_platform(dataclasses.replace(schedule, structured=False)) is Platform.TEXT
+
+    light = settings_of("T8425")["motion_activated_light_setting"]
+    assert (light.kind, light.control) == (SettingKind.OBJECT, SettingControl.OBJECT)
+    assert light.structured
+    assert light.writable
+    assert light.readable
+    assert setting_platform(light) is Platform.SENSOR

@@ -185,8 +185,9 @@ async def test_camera_and_motion_sensor_diagnostics_with_the_firmware_fallback(
     [
         # The serial makes this T814X an eufyCam C36; the prefix alone names a C37.
         ("T814XZ5000000001", None, "eufyCam C36"),
-        # The cloud record's product code names one of the prefix's two products.
-        ("T8124P0000000001", "T8124R", "SoloCam S40"),
+        # With the cloud record's product code, its serial rule names the unit; the
+        # prefix's catalogue name is another.
+        ("T8170P0000000001", "T8170E", "SoloCam S340"),
     ],
     ids=["by-serial", "by-product-code"],
 )

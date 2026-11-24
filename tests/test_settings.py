@@ -37,7 +37,7 @@ from eufy_home_security.devices.model_settings import (
     mode_table_settings,
     settings_of,
 )
-from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
+from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation, camera_device
 from homeassistant.components.alarm_control_panel import DOMAIN as ALARM_DOMAIN
 from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
 from homeassistant.const import EntityCategory, Platform
@@ -295,8 +295,15 @@ async def test_controls_are_config_statuses_on_and_other_read_only_values_diagno
     assert "working_mode_value" in advanced
     # The camera's lamp, and its brightness.
     assert (lights, covered) == (["spotlight_switch"], ["spotlight_brightness_level"])
-    # The keypad's password state and the alarm delay are statuses of a settings page.
-    assert {"hb_keypad_is_password_set", "notification_alarm_delay_value"} <= set(statuses)
+    # The keypad's password state is a status of a settings page; the alarm delay is the
+    # eufy app's on/off switch, an enabled control.
+    assert "hb_keypad_is_password_set" in statuses
+    delay = next(spec for spec in specs if spec.key == "notification_alarm_delay_value")
+    assert (delay.platform, delay.device_sn, delay.enabled_by_default) == (
+        Platform.SWITCH,
+        None,
+        True,
+    )
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
@@ -408,6 +415,64 @@ async def test_a_setting_moved_to_another_platform_leaves_no_orphan_behind(
         assert registry.async_get_entity_id(spec.platform, DOMAIN, unique_id) is not None
     assert registry.async_get(kept_firmware.entity_id) is not None
     assert registry.async_get(foreign_id) is not None
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+# Rows an earlier library release built that this one does not: (model, platform, key,
+# entity category). A setting the vendor retired, one that lost its entity, and one that
+# moved to another platform.
+_OLD_RELEASE_ROWS: Final = (
+    ("T8170", Platform.SENSOR, "nas_select_video_type", EntityCategory.DIAGNOSTIC),
+    ("T8425", Platform.SWITCH, "auto_spotlight_switch", EntityCategory.CONFIG),
+    ("T8423", Platform.SENSOR, "light_color_temperature", EntityCategory.DIAGNOSTIC),
+)
+
+
+async def test_rows_of_settings_an_earlier_release_built_are_forgotten(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A paired device's row of a retired setting, of a setting with no entity now, and on
+    a platform the setting left is removed at setup; the rows this setup builds stay."""
+    for channel, (model, _platform, _key, _category) in enumerate(_OLD_RELEASE_ROWS, start=1):
+        serial = f"{model}P000000000{channel}"
+        fake_cloud.devices.append(
+            camera_device(serial, station_sn=fake_station.serial, channel=channel, name=model)
+        )
+        fake_station.params[channel] = {1101: "90"}
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    stale: list[er.RegistryEntry] = []
+    for channel, (model, platform, key, category) in enumerate(_OLD_RELEASE_ROWS, start=1):
+        stale.append(
+            registry.async_get_or_create(
+                platform,
+                DOMAIN,
+                entity_unique_id(f"{model}P000000000{channel}", key),
+                config_entry=entry,
+                entity_category=category,
+                original_name=key,
+            )
+        )
+
+    assert await setup_entry(hass, entry)
+
+    for row in stale:
+        assert registry.async_get(row.entity_id) is None, row.unique_id
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+    built = {
+        (spec.platform, entity_unique_id(spec.device_sn or station.serial, spec.key))
+        for spec in setting_specs(station)
+    }
+    # The moved setting is built on its new platform.
+    assert (Platform.NUMBER, stale[2].unique_id) in built
+    for platform, unique_id in built:
+        assert registry.async_get_entity_id(platform, DOMAIN, unique_id) is not None
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 
