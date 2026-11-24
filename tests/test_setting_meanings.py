@@ -8,13 +8,15 @@ statuses (door, tamper, battery, moisture, cold, sound). No setting key decides 
 from __future__ import annotations
 
 import dataclasses
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Final
 
 import pytest
-from conftest import entity_id_for, seed_setting, set_up_warm, state_of
-from eufy_home_security import EufySecurity, Station
+from conftest import entity_id_for, seed_setting, set_up_warm, state_of, wait_until
+from eufy_home_security import EufySecurity, Station, entity_unique_id
 from eufy_home_security.devices import SettingKind, SettingMeaning, SettingUnit
 from eufy_home_security.devices.model_settings import (
     BINARY_MEANINGS,
@@ -28,12 +30,18 @@ from homeassistant.components.number import DEVICE_CLASS_UNITS as NUMBER_UNITS
 from homeassistant.components.number import NumberDeviceClass
 from homeassistant.components.sensor import DEVICE_CLASS_UNITS as SENSOR_UNITS
 from homeassistant.components.sensor import SensorDeviceClass
-from homeassistant.const import ATTR_DEVICE_CLASS, ATTR_UNIT_OF_MEASUREMENT, Platform
+from homeassistant.const import (
+    ATTR_DEVICE_CLASS,
+    ATTR_FRIENDLY_NAME,
+    ATTR_UNIT_OF_MEASUREMENT,
+    Platform,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.eufy_home_security import settings
+from custom_components.eufy_home_security.const import DOMAIN
 from custom_components.eufy_home_security.settings import (
     MEANING_TYPING,
     EntityTyping,
@@ -49,12 +57,14 @@ GLASS_SN: Final = "T90G0P0000000001"
 SIREN_SN: Final = "T90R0P0000000001"
 DOORBELL_SN: Final = "T8214P0000000001"
 INDOOR_SN: Final = "T8352P0000000001"
+SMOKE_SN: Final = "T90S0P0000000001"
 _PAIRED: Final = (
     (WATER_SN, 1, "T8920"),
     (GLASS_SN, 2, "T90G0"),
     (SIREN_SN, 3, "T90R0"),
     (DOORBELL_SN, 4, "T8214"),
     (INDOOR_SN, 5, "T8352"),
+    (SMOKE_SN, 6, "T90S0"),
 )
 _BATTERY_PARAM: Final = 1101
 _VOLUME: Final = "speaker_volume"
@@ -64,6 +74,13 @@ _STAMP_MS: Final = 1_700_000_000_123
 _STAMP: Final = datetime(2023, 11, 14, 22, 13, 20, 123000, tzinfo=UTC)
 
 _D = BinarySensorDeviceClass
+_EN_PATH: Final = (
+    Path(__file__).resolve().parent.parent
+    / "custom_components"
+    / "eufy_home_security"
+    / "translations"
+    / "en.json"
+)
 
 
 # ── the table ────────────────────────────────────────────────────────────────
@@ -74,17 +91,24 @@ def test_every_library_meaning_has_a_typing_rule() -> None:
     assert set(MEANING_TYPING) == set(SettingMeaning)
 
 
+# Binary meanings Home Assistant has no binary-sensor device class for.
+_CLASSLESS: Final = frozenset({SettingMeaning.MUTED, SettingMeaning.TESTING})
+
+
 def test_binary_meanings_type_binary_sensors_only() -> None:
+    """A binary meaning gives a binary-sensor class and nothing else; a silenced alarm and
+    a running test give none."""
     for meaning, rule in MEANING_TYPING.items():
-        binary = meaning in BINARY_MEANINGS
-        assert (rule.binary_sensor is not None) is binary, meaning
-        if binary:
-            assert (rule.sensor, rule.number, rule.unit, rule.unit_from_setting) == (
-                None,
-                None,
-                None,
-                False,
-            ), meaning
+        if meaning not in BINARY_MEANINGS:
+            assert rule.binary_sensor is None, meaning
+            continue
+        assert (rule.binary_sensor is None) is (meaning in _CLASSLESS), meaning
+        assert (rule.sensor, rule.number, rule.unit, rule.unit_from_setting) == (
+            None,
+            None,
+            None,
+            False,
+        ), meaning
 
 
 def test_a_meaning_the_table_does_not_list_keeps_the_setting_unit_and_no_class(
@@ -97,6 +121,51 @@ def test_a_meaning_the_table_does_not_list_keeps_the_setting_unit_and_no_class(
 
 def _bundled(code: str, key: str) -> Setting:
     return settings_of(code)[key]
+
+
+_SMOKE_STATUS: Final = "sensor_smoke_status"
+# The smoke sensor status's binary sensors: meaning -> device class.
+_SMOKE_CLASSES: Final = {
+    SettingMeaning.SMOKE: _D.SMOKE,
+    SettingMeaning.LOW_BATTERY: _D.BATTERY,
+    SettingMeaning.END_OF_LIFE: _D.PROBLEM,
+    SettingMeaning.TESTING: None,
+    SettingMeaning.MUTED: None,
+    SettingMeaning.PROBLEM: _D.PROBLEM,
+}
+
+
+@pytest.mark.parametrize("code", ["T90S0", "T8931"])
+def test_a_smoke_sensor_status_is_a_binary_sensor_per_member_meaning(code: str) -> None:
+    """A read-only flags status with member meanings: a binary sensor, typed per meaning."""
+    setting = _bundled(code, _SMOKE_STATUS)
+    assert setting.kind is SettingKind.FLAGS
+    assert not setting.writable
+    assert setting_platform(setting) is Platform.BINARY_SENSOR
+    assert set(setting.flag_meanings.values()) == set(_SMOKE_CLASSES)
+    for meaning, device_class in _SMOKE_CLASSES.items():
+        assert entity_typing(setting, meaning).binary_sensor == device_class, meaning
+    # Its own meaning is none: the members carry them.
+    assert entity_typing(setting) == EntityTyping()
+
+
+def test_a_flags_status_without_member_meanings_stays_a_sensor() -> None:
+    setting = dataclasses.replace(_bundled("T90S0", _SMOKE_STATUS), flag_meanings={})
+    assert setting_platform(setting) is Platform.SENSOR
+
+
+def test_every_bundled_member_meaning_has_a_name() -> None:
+    """A member meaning names its binary sensor through a translation key."""
+    names = json.loads(_EN_PATH.read_text())["entity"]["binary_sensor"]
+    used = {
+        meaning
+        for code in bundled_codes()
+        for setting in settings_of(code).values()
+        for meaning in setting.flag_meanings.values()
+    }
+    assert used
+    missing = sorted(m.value for m in used if f"meaning_{m.value}" not in names)
+    assert not missing, missing
 
 
 @pytest.mark.parametrize(
@@ -509,4 +578,63 @@ async def test_a_read_only_percentage_without_a_class_is_a_number_or_unknown(
     assert state.attributes.get(ATTR_DEVICE_CLASS) is None
     assert state.attributes.get(ATTR_UNIT_OF_MEASUREMENT) == "%"
     assert state.state == expected
+    await _stop(hass, entry)
+
+
+# Smoke sensor status masks (members alarm 1, localTesting 2, remotingTesting 4, battery 8,
+# trouble 16, muting 32, endoflife 64, highAlarm 128) and the meanings each sets.
+_SMOKE_MASKS: Final[tuple[tuple[int, set[SettingMeaning]], ...]] = (
+    (0, set()),
+    (1, {SettingMeaning.SMOKE}),
+    (128, {SettingMeaning.SMOKE}),
+    (2, {SettingMeaning.TESTING}),
+    (4 | 32, {SettingMeaning.TESTING, SettingMeaning.MUTED}),
+    (8 | 16 | 64, {SettingMeaning.LOW_BATTERY, SettingMeaning.PROBLEM, SettingMeaning.END_OF_LIFE}),
+    (129, {SettingMeaning.SMOKE}),
+)
+
+
+async def test_a_smoke_sensor_shows_a_binary_sensor_per_meaning_of_its_status(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """Smoke Sensor E10: one enabled binary sensor per member meaning, on the device card,
+    named by the meaning; unknown until a mask is reported, then each follows the dumps.
+    No sensor shows the raw mask."""
+    _pair(fake_station, fake_cloud)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    registry = er.async_get(hass)
+    assert (
+        registry.async_get_entity_id(
+            Platform.SENSOR, DOMAIN, entity_unique_id(SMOKE_SN, _SMOKE_STATUS)
+        )
+        is None
+    )
+    entity_ids: dict[SettingMeaning, str] = {}
+    for meaning, device_class in _SMOKE_CLASSES.items():
+        key = f"{_SMOKE_STATUS}_{meaning.value}"
+        entity_id = entity_id_for(hass, Platform.BINARY_SENSOR, SMOKE_SN, key)
+        row = registry.async_get(entity_id)
+        assert row is not None
+        assert (row.disabled_by, row.entity_category) == (None, None), meaning
+        assert row.original_device_class == device_class, meaning
+        assert row.translation_key == f"meaning_{meaning.value}", meaning
+        assert state_of(hass, entity_id) == "unknown", meaning
+        entity_ids[meaning] = entity_id
+    smoke = hass.states.get(entity_ids[SettingMeaning.SMOKE])
+    assert smoke is not None
+    assert smoke.attributes[ATTR_FRIENDLY_NAME].endswith(" Smoke")
+
+    for mask, on in _SMOKE_MASKS:
+        _seed(fake_station, SMOKE_SN, _SMOKE_STATUS, mask)
+        fake_station.send_param_dump()
+        expected = {m: "on" if m in on else "off" for m in entity_ids}
+        await wait_until(
+            lambda expected=expected: (
+                {m: state_of(hass, entity_id) for m, entity_id in entity_ids.items()} == expected
+            )
+        )
     await _stop(hass, entry)

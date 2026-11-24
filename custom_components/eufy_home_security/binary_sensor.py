@@ -1,6 +1,9 @@
 """Read-only bool settings and recent camera or motion-sensor detections.
 
-**Bool settings.** A readable bool setting with no control shows as a binary sensor.
+**Bool settings.** A readable bool setting with no control shows as a binary sensor;
+so does each member meaning of a read-only flags status (a smoke sensor's smoke,
+problem, low battery, end of life, muted and testing), on while any member of that
+meaning is set.
 
 **Detection sensors.** Each camera (and doorbell) has Motion, Person, Pet and
 Vehicle sensors; a motion sensor has Motion only. A detection turns on only the
@@ -268,6 +271,8 @@ async def async_setup_entry(
     hold = int(entry.options.get(CONF_DETECTION_HOLD, DEFAULT_DETECTION_HOLD_SECONDS))
     entities: list[BinarySensorEntity] = [
         EufySettingBinarySensor(coordinator, spec)
+        if spec.meaning is None
+        else EufyMeaningBinarySensor(coordinator, spec)
         for coordinator in entry.runtime_data.coordinators.values()
         for spec in setting_specs(coordinator.station)
         if spec.platform is Platform.BINARY_SENSOR
@@ -296,7 +301,7 @@ class EufySettingBinarySensor(EufySettingEntity, BinarySensorEntity):
 
     def __init__(self, coordinator: StationCoordinator, spec: SettingEntitySpec) -> None:
         super().__init__(coordinator, spec)
-        self._attr_device_class = entity_typing(spec.setting).binary_sensor
+        self._attr_device_class = entity_typing(spec.setting, spec.meaning).binary_sensor
 
     @property
     @override
@@ -304,6 +309,23 @@ class EufySettingBinarySensor(EufySettingEntity, BinarySensorEntity):
         """The decoded value; None until the station reports it."""
         value = self.setting_value
         return value if isinstance(value, bool) else None
+
+
+class EufyMeaningBinarySensor(EufySettingBinarySensor):
+    """One member meaning of a read-only ``FLAGS`` status (a smoke sensor's smoke).
+
+    On while any member of the meaning is set (``Setting.meaning_on``); None until the
+    station reports a mask.
+    """
+
+    @property
+    @override
+    def is_on(self) -> bool | None:
+        """Whether a member of this meaning is set in the reported mask."""
+        meaning = self._spec.meaning
+        if meaning is None:
+            return None
+        return self._spec.setting.meaning_on(self.setting_value, meaning)
 
 
 class EufyDetectionBinarySensor(EufyPushAvailability, EufyDeviceEntity, BinarySensorEntity):

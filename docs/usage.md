@@ -566,7 +566,15 @@ the camera and its settings. The limits above apply.
     none is recorded;
   - a time of day is text (`20:00`);
   - an on/off status is a binary sensor of class door (on = open), tamper, battery
-    (on = low), moisture, cold or sound (a siren ringing).
+    (on = low), moisture, cold, sound (a siren ringing), smoke or problem (a fault, or a
+    device at the end of its service life);
+  - a status made of on/off parts (a smoke sensor's) is one binary sensor per meaning
+    of its parts, on while any part of that meaning is on: **Smoke** (smoke class; an
+    alarm or a high alarm), **Problem**, **End of life** (problem class), **Low battery**
+    (battery class), and **Alarm muted** and **Testing** without a class (Home Assistant
+    has none for them). Unknown until the device reports its status. Declared from the
+    eufy app, not tested on hardware: whether a test press also turns **Smoke** on is
+    not known.
 
   A setting sensor has no state class, so Home Assistant keeps no long-term
   statistics for it and a unit change never raises a statistics issue.

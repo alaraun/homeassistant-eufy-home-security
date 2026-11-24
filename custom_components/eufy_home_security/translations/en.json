@@ -662,6 +662,24 @@
       },
       "emmc_usable": {
         "name": "Local storage usable"
+      },
+      "meaning_smoke": {
+        "name": "Smoke"
+      },
+      "meaning_problem": {
+        "name": "Problem"
+      },
+      "meaning_end_of_life": {
+        "name": "End of life"
+      },
+      "meaning_low_battery": {
+        "name": "Low battery"
+      },
+      "meaning_muted": {
+        "name": "Alarm muted"
+      },
+      "meaning_testing": {
+        "name": "Testing"
       }
     },
     "button": {

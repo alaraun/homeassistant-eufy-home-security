@@ -35,6 +35,18 @@
         "state": {
           "on": "mdi:harddisk-remove"
         }
+      },
+      "meaning_muted": {
+        "default": "mdi:volume-high",
+        "state": {
+          "on": "mdi:volume-off"
+        }
+      },
+      "meaning_testing": {
+        "default": "mdi:test-tube-empty",
+        "state": {
+          "on": "mdi:test-tube"
+        }
       }
     },
     "button": {
