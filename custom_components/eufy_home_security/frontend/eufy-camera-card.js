@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.24-1';
+const CARD_VERSION = '2026.11.24-2';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -60,6 +60,13 @@ const FS_HIDE_MS = 1500;
 // acts only once that window has passed.
 const TAP_SLOP = 10;
 const DTAP_MS = 250;
+// Digital zoom of the picture (`digital_zoom`, default on): a two-finger pinch or Ctrl + wheel (a trackpad pinch
+// arrives as one) over the picture, 1x to DZ_MAX; dragging pans while zoomed, kept inside the frame. The plain wheel
+// stays the page's scroll (in full screen the camera's own zoom). Back to 1x when the shown source changes (live view
+// starts or stops, another camera, a history item, a new still) and on leaving full screen.
+const DZ_MAX = 4;
+// Wheel: scale factor exp(-deltaY * DZ_WHEEL) per event (a mouse notch of 100 px about 0.82 / 1.22)
+const DZ_WHEEL = 0.002;
 // Save view: the integration's command that keeps a frame as a preset's picture (preset_upload.py), and the frame:
 // the live video drawn at most PRESET_PIC_W wide (aspect kept) as a JPEG, at the first quality whose size stays
 // within PRESET_PIC_MAX (the integration's limit, under the websocket's message size)
@@ -396,6 +403,9 @@ class EufyCameraCard extends HTMLElement {
     this._gen = 0;          // camera generation: _useCam bumps it, so an answer for the previous camera is told apart
     this._detActive = null;  // a camera detection sensor is on (null: not looked since attached or the camera chosen)
     this._detStopped = false; // manual Stop clicked during detection; suppresses auto-start until all sensors turn off
+    this._dz = { s: 1, x: 0, y: 0 }; // digital zoom: scale, and the zoomed picture's top left in frame fractions (<= 0)
+    this._dzP = new Map();  // pointers of a zoom gesture: id -> [x, y] now
+    this._dzG = null;       // the gesture from where its pointers began: { r, d, s, u } a pinch, { r, p, x, y } a drag
   }
 
   static getConfigElement() { return document.createElement('eufy-camera-card-editor'); }
@@ -1764,6 +1774,64 @@ class EufyCameraCard extends HTMLElement {
     this._hush();
   }
 
+  // ================== DIGITAL ZOOM ==================
+  _dzOn() { return !!this._config && this._config.digital_zoom !== false && !this._view; }
+
+  // Scale s with the zoomed picture's top left at (x, y) frame fractions, clamped so it covers the frame
+  _dzSet(s, x, y) {
+    const k = Math.min(DZ_MAX, Math.max(1, s));
+    this._dz = { s: k, x: Math.min(0, Math.max(1 - k, x)), y: Math.min(0, Math.max(1 - k, y)) };
+    this._dzApply();
+  }
+
+  // Scale s about the frame point (fx, fy): the picture point under it stays there
+  _dzAt(s, fx, fy) {
+    const z = this._dz, k = Math.min(DZ_MAX, Math.max(1, s));
+    this._dzSet(k, fx - ((fx - z.x) / z.s) * k, fy - ((fy - z.y) / z.s) * k);
+  }
+
+  // The transform on the still and the player's slot (never inside HA's player); `dzoomed` while above 1x
+  _dzApply() {
+    if (!this._pic) return;
+    const z = this._dz, on = z.s > 1;
+    if (on) this._pic.style.setProperty('--dzt', `translate(${(z.x * 100).toFixed(3)}%, ${(z.y * 100).toFixed(3)}%) scale(${z.s.toFixed(4)})`);
+    else this._pic.style.removeProperty('--dzt');
+    this._pic.classList.toggle('dzoomed', on);
+  }
+
+  _dzReset() {
+    this._dz = { s: 1, x: 0, y: 0 };
+    this._dzP.clear();
+    this._dzG = null;
+    this._dzApply();
+  }
+
+  // The gesture from the pointers down now: two pinch (scale by their distance about their midpoint, which also
+  // pans), one drags while zoomed
+  _dzBegin() {
+    const r = this._pic.getBoundingClientRect(), pts = [...this._dzP.values()], z = this._dz;
+    if (pts.length >= 2 && r.width && r.height) {
+      const [a, b] = pts;
+      const mx = ((a[0] + b[0]) / 2 - r.left) / r.width, my = ((a[1] + b[1]) / 2 - r.top) / r.height;
+      this._dzG = { r, d: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, s: z.s, u: [(mx - z.x) / z.s, (my - z.y) / z.s] };
+    } else if (pts.length === 1 && z.s > 1 && r.width && r.height) this._dzG = { r, p: pts[0], x: z.x, y: z.y };
+    else this._dzG = null;
+  }
+
+  _dzMove(ev) {
+    if (!this._dzP.has(ev.pointerId)) return;
+    this._dzP.set(ev.pointerId, [ev.clientX, ev.clientY]);
+    const g = this._dzG;
+    if (!g) return;
+    const pts = [...this._dzP.values()];
+    if (g.d) {
+      const [a, b] = pts;
+      const k = Math.min(DZ_MAX, Math.max(1, g.s * Math.hypot(a[0] - b[0], a[1] - b[1]) / g.d));
+      const mx = ((a[0] + b[0]) / 2 - g.r.left) / g.r.width, my = ((a[1] + b[1]) / 2 - g.r.top) / g.r.height;
+      this._dzSet(k, mx - g.u[0] * k, my - g.u[1] * k);
+    } else this._dzSet(this._dz.s, g.x + (pts[0][0] - g.p[0]) / g.r.width, g.y + (pts[0][1] - g.p[1]) / g.r.height);
+  }
+
   // ok: a confirmation (neutral, check icon) rather than a failure
   _toast(text, ok, icon) {
     this._toastText = text;
@@ -2301,6 +2369,9 @@ class EufyCameraCard extends HTMLElement {
   // The full-screen button's icon and label, the list host and the player's fit follow the state
   _onFullChange() {
     if (!this.isConnected) return;
+    const full = this._isFull();
+    if (this._wasFull && !full) this._dzReset();
+    this._wasFull = full;
     this._homeDd();
     if (this._stream) this._stream.fitMode = this._fit();
     this.render();
@@ -3348,6 +3419,10 @@ class EufyCameraCard extends HTMLElement {
     this._pic.classList.toggle('noctl', !ctls);
     // A double tap is the card's: the browser's double-tap zoom stays off the picture
     this._pic.classList.toggle('dtap', !!this._config.double_tap_fullscreen);
+    // The digital zoom belongs to what the picture shows: the camera's live view or its still (a new one by
+    // image_updated, not by the rotating token)
+    const dzKey = `${this._config.entity}|${this._dzOn() ? '' : 'off'}|${this._view || (L ? 'live' : (st && st.attributes.image_updated) || '')}`;
+    if (dzKey !== this._dzKey) { this._dzKey = dzKey; this._dzReset(); }
     this.content.classList.toggle('nohdr', !showHdr);
     // The frame: 16:9, or the camera's portrait ratio (a CSS variable, so full screen still overrides it)
     const shape = this._shape();
@@ -3442,7 +3517,7 @@ class EufyCameraCard extends HTMLElement {
     this.content.addEventListener('keydown', ev => this._onKey(ev));
     // In full screen the wheel zooms (the page cannot scroll there anyway); in the card it scrolls the page
     this.content.addEventListener('wheel', (ev) => {
-      if (!this._isFull() || !this._live || !this._live.video || !this._entities().zoom) return;
+      if (ev.defaultPrevented || !this._isFull() || !this._live || !this._live.video || !this._entities().zoom) return;
       ev.preventDefault();
       if (Math.abs(ev.deltaY) < 4) return;
       this._zoom(ev.deltaY < 0 ? 'in' : 'out');
@@ -3485,20 +3560,41 @@ class EufyCameraCard extends HTMLElement {
     // Its start and end count too: a mouse press slid between a control and the bare picture is no bare tap (the click
     // then lands on their common ancestor)
     // Pointers down on the picture (id -> start): one that ends near its start is a tap; a second one down makes the
-    // press a multi-touch gesture (room for a pinch), never a tap. A press on a control drops a single tap still
-    // waiting for its double-tap window (it would act after the control).
+    // press a multi-touch gesture (a pinch), never a tap. A press on a control or a second pointer drops a single tap
+    // still waiting for its double-tap window. A pointer down on the bare picture joins the digital zoom's gesture
+    // (a pinch, or a drag while zoomed).
     this._ptrs = new Map();
     this._pic.addEventListener('pointerdown', (ev) => {
       this._ptrs.set(ev.pointerId, [ev.clientX, ev.clientY]);
-      if (this._ptrs.size > 1) this._multi = true;
+      if (this._ptrs.size > 1) { this._multi = true; this._tapCancel(); }
       else { this._multi = false; this._down0 = [ev.clientX, ev.clientY]; }
       this._wasQuiet = this._isQuiet();
       this._downCtl = onCtl(ev);
       if (this._downCtl) this._tapCancel();
+      else if (this._dzOn()) {
+        this._dzP.set(ev.pointerId, [ev.clientX, ev.clientY]);
+        this._dzBegin();
+        // a mouse drag keeps panning outside the picture (no text selection while zoomed: it would cancel the pointer)
+        if (this._dzG && ev.pointerType === 'mouse') try { this._pic.setPointerCapture(ev.pointerId); } catch (e) { /* not capturable */ }
+      }
       this._awake(true);
     });
-    this._pic.addEventListener('pointerup', (ev) => { this._upCtl = onCtl(ev); this._ptrs.delete(ev.pointerId); });
-    this._pic.addEventListener('pointercancel', (ev) => { this._ptrs.delete(ev.pointerId); });
+    const dzEnd = (ev) => { if (this._dzP.delete(ev.pointerId)) this._dzBegin(); };
+    this._pic.addEventListener('pointerup', (ev) => { this._upCtl = onCtl(ev); this._ptrs.delete(ev.pointerId); dzEnd(ev); });
+    this._pic.addEventListener('pointercancel', (ev) => { this._ptrs.delete(ev.pointerId); dzEnd(ev); });
+    this._pic.addEventListener('pointermove', ev => this._dzMove(ev));
+    // The browser's own pinch and scroll stay off a zoom gesture (touch-action alone is fixed when the first finger
+    // lands, and iOS has no pinch-zoom value for it)
+    this._pic.addEventListener('touchmove', (ev) => { if (this._dzG && (ev.touches.length > 1 || this._dz.s > 1) && ev.cancelable) ev.preventDefault(); }, { passive: false });
+    // Ctrl + wheel (and a trackpad pinch) over the bare picture zooms about the pointer; the plain wheel is left alone
+    this._pic.addEventListener('wheel', (ev) => {
+      if (!ev.ctrlKey || !this._dzOn() || onCtl(ev)) return;
+      ev.preventDefault();
+      const r = this._pic.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      const dy = ev.deltaY * (ev.deltaMode === 1 ? 16 : (ev.deltaMode === 2 ? r.height : 1));
+      this._dzAt(this._dz.s * Math.exp(-dy * DZ_WHEEL), (ev.clientX - r.left) / r.width, (ev.clientY - r.top) / r.height);
+    }, { passive: false });
     // Keyboard focus only: a tapped button keeps focus on a phone and would hold the controls on screen
     this._pic.addEventListener('focusin', (ev) => { const t = ev.composedPath()[0]; if (t && t.matches && t.matches(':focus-visible')) this._awake(true); });
     // A mouse moving over the picture keeps shown controls up (the timer restarts); faded ones need a click
@@ -3722,6 +3818,10 @@ const CSS_TEXT = `
   .noctl:not(.winfull, :fullscreen) .toast { max-width: calc(100% - 20px); }
   .noctl .ovl::before { background: linear-gradient(180deg, rgba(0,0,0,0.38), transparent 26%); }
   .pic.dtap { touch-action: manipulation; }
+  /* Digital zoom: the still and the player's slot move together; while zoomed a drag pans the picture, not the page */
+  .vslot, .over > .still { transform: var(--dzt, none); transform-origin: 0 0; }
+  .pic.dzoomed { touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+  .pic.dzoomed:active { cursor: grabbing; }
   .chip.hi ha-icon { color: var(--cc-bat-hi); } .chip.mid ha-icon { color: var(--cc-bat-mid); } .chip.lo ha-icon { color: var(--cc-bat-lo); }
   .chip.rec { gap: 6px; padding: 0 10px 0 9px; font-weight: 600; letter-spacing: 0.02em; }
   .chip.rec .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cc-live); box-shadow: 0 0 6px var(--cc-live); animation: pulse 2s ease-in-out infinite; }
@@ -4193,6 +4293,7 @@ const EDITOR_SCHEMA = [
   { name: 'show_controls', selector: { boolean: {} } },
   { name: 'tap_to_live', selector: { boolean: {} } },
   { name: 'double_tap_fullscreen', selector: { boolean: {} } },
+  { name: 'digital_zoom', selector: { boolean: {} } },
   { name: 'auto_live', selector: { select: { mode: 'dropdown', options: [
     { value: 'off', label: 'Off: start by hand' }, { value: 'timed', label: 'Timed live view' }, { value: 'continuous', label: 'Continuous live view' }] } } },
   { name: 'live_on_detection', selector: { boolean: {} } },
@@ -4204,7 +4305,8 @@ const EDITOR_SCHEMA = [
 ];
 const EDITOR_LABELS = { entity: 'Camera', entities: 'More cameras', picture: 'Picture shape', show_header: 'Header',
   show_history: 'History', show_settings: 'Settings', show_controls: 'Controls on the picture',
-  tap_to_live: 'Tap the picture: live view on or off', double_tap_fullscreen: 'Double tap the picture: full screen', live_buttons: 'Live view buttons', name: 'Name', history_folder: 'History folder', auto_live: 'Start live view when the dashboard opens', live_on_detection: 'Start live view on detection', live_seconds: 'Live view length', layout: 'Layout',
+  tap_to_live: 'Tap the picture: live view on or off', double_tap_fullscreen: 'Double tap the picture: full screen',
+  digital_zoom: 'Zoom the picture', live_buttons: 'Live view buttons', name: 'Name', history_folder: 'History folder', auto_live: 'Start live view when the dashboard opens', live_on_detection: 'Start live view on detection', live_seconds: 'Live view length', layout: 'Layout',
   settings_include: 'Settings to add', settings_exclude: 'Hidden settings', settings_groups: 'Settings tabs' };
 // Settings tabs as HA's reorderable multi-select: a chip per shown tab (drag to reorder, ✕ to hide), the rest to add.
 // Options: the camera's layout sections, More, and any listed id the layout lacks (kept, never dropped from the list).
@@ -4222,6 +4324,7 @@ const EDITOR_HELPERS = {
   show_controls: 'Off: no buttons on the picture (play, live view bar, full screen, pan/tilt, zoom, presets) for a clean tile; the chips and messages stay. Combine with the tap options below',
   tap_to_live: 'A tap on the picture starts a timed live view or stops the running one',
   double_tap_fullscreen: 'A double tap on the picture enters or leaves full screen; a single tap then acts a quarter second later',
+  digital_zoom: 'Pinch with two fingers, or Ctrl + mouse wheel, to enlarge the picture up to 4x and drag to look around; back to 1x when live view starts or stops and on leaving full screen. The camera itself does not move',
   live_buttons: 'Buttons on the live view bar, e.g. a door lock (Open or Unlock) for a doorbell, a gate, a light, a script; each needs a second press within 4 s',
   history_folder: 'The camera\'s folder under Media › eufy_home_security; only when the camera was renamed after its stills were saved',
   auto_live: 'Wakes the camera on every opening: costs battery',
@@ -4270,12 +4373,13 @@ class EufyCameraCardEditor extends HTMLElement {
     if (s.key !== this._schemaKey || !this._form.schema) { this._schemaKey = s.key; this._form.schema = s.schema; }
   }
   // auto_live: true is the YAML short form of 'timed'; no settings_groups shows every section in the layout's order;
-  // show_* default on, picture auto; the on/off options shown as true when set
+  // show_* and digital_zoom default on, picture auto; the on/off options shown as true when set
   _data() {
     const d = { ...(this._config || {}) };
     if (d.auto_live === true) d.auto_live = 'timed';
     ['live_on_detection', 'tap_to_live', 'double_tap_fullscreen'].forEach((k) => { if (d[k]) d[k] = true; });
     ['header', 'history', 'settings', 'controls'].forEach((k) => { if (d[`show_${k}`] === undefined) d[`show_${k}`] = true; });
+    if (d.digital_zoom === undefined) d.digital_zoom = true;
     if (!PICTURE_MODES.includes(d.picture)) d.picture = 'auto';
     const secs = this._lay && this._lay.secs;
     const v = d.settings_groups;
@@ -4304,7 +4408,7 @@ class EufyCameraCardEditor extends HTMLElement {
             if (!list.length || list.join() === shownTabs(null, secs).join()) delete next[k]; else next[k] = list;
             return;
           }
-          if (v === '' || v === undefined || v === null || (Array.isArray(v) && !v.length) || (k === 'layout' && v === 'auto') || (k === 'picture' && v === 'auto') || (/^show_/.test(k) && v === true) || (k === 'auto_live' && v === 'off') || (k === 'live_seconds' && v === LIVE_S) || (['live_on_detection', 'tap_to_live', 'double_tap_fullscreen'].includes(k) && !v)) delete next[k]; else next[k] = v;
+          if (v === '' || v === undefined || v === null || (Array.isArray(v) && !v.length) || (k === 'layout' && v === 'auto') || (k === 'picture' && v === 'auto') || ((/^show_/.test(k) || k === 'digital_zoom') && v === true) || (k === 'auto_live' && v === 'off') || (k === 'live_seconds' && v === LIVE_S) || (['live_on_detection', 'tap_to_live', 'double_tap_fullscreen'].includes(k) && !v)) delete next[k]; else next[k] = v;
         });
         this._config = next;
         this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: next }, bubbles: true, composed: true }));

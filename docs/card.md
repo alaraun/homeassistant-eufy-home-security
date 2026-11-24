@@ -42,6 +42,7 @@ show_settings: true              # optional: false hides Settings
 show_controls: true              # optional: false leaves the buttons off the picture (a clean tile)
 tap_to_live: true                # optional: a tap on the picture starts or stops live view (default off)
 double_tap_fullscreen: true      # optional: a double tap on the picture enters or leaves full screen (default off)
+digital_zoom: false              # optional: false turns off pinch / Ctrl + wheel zoom of the picture (default on)
 live_buttons:                    # optional: buttons on the live view bar (lock, cover, button, input_button, script, scene, switch, light)
   - lock.front_door
 live_seconds: 120                # optional: length of a started live view (default 120 s)
@@ -74,6 +75,7 @@ settings_groups:                 # optional: Settings tabs to show, in this orde
   with it set, a single tap acts only after a quarter second, so the first tap of a double tap never starts or stops
   live view. A press that moves, or one with two fingers, is no tap. With the controls shown, a tap that brings faded
   controls back does only that; without `tap_to_live` a tap hides them as before.
+- `digital_zoom` (on unless set to `false`): see Zoom on the picture below.
 - `layout: auto` switches to the compact layout (one column of settings rows) below 400 px card width.
 - `history_folder` is needed only when the camera was renamed after its files were saved.
 - Colours come from the HA theme, light or dark: tabs, switches, sliders and fields use HA's own control
@@ -165,6 +167,14 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     (every width, full screen too; the full-screen button fades in the card, not in full screen) and a red dot at the
     top left stays; a tap or click on the picture brings them back, another hides them (with `tap_to_live`, stops
     live view). The open preset row keeps them up; such a tap or click closes the row and hides them, except while a preset is being saved. Keyboard focus shows them too; a recording's `● REC` chip stays.
+- **Zoom on the picture:** two fingers pinch the picture larger (up to 4×) or back; on a computer Ctrl + mouse
+  wheel does it (a trackpad pinch too), about the pointer. While enlarged, dragging the picture moves it, up to its
+  edges. The plain wheel keeps scrolling the page (in full screen during live view it drives the camera's own zoom,
+  as before), and a one-finger swipe scrolls the page while the picture is at 1×. It works on the still and the
+  live video, in the card and in full screen; the controls over the picture stay as they are and keep working. The
+  picture goes back to 1× when live view starts or stops, on another camera, a picture from History or a new still,
+  and on leaving full screen. A pinch or drag is never a tap (`tap_to_live`, `double_tap_fullscreen`). This only
+  enlarges what the browser shows; the camera's own zoom is the zoom pill. `digital_zoom: false` turns it off.
 - **Record:** the live bar's record button, or `Record a clip` in the menu while idle, records a clip of the
   integration's Recording length into the history (Captures). While any client records, a `● REC 12 s` chip shows,
   and the same button (red, a stop square) or `Stop recording` in the menu ends the clip; the part recorded so far
