@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.24-3';
+const CARD_VERSION = '2026.11.24-4';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -1779,7 +1779,8 @@ class EufyCameraCard extends HTMLElement {
   }
 
   // ================== DIGITAL ZOOM ==================
-  _dzOn() { return !!this._config && this._config.digital_zoom !== false && !this._view; }
+  // On the camera's still and live view, and on a History picture (not a video or a station recording)
+  _dzOn() { return !!this._config && this._config.digital_zoom !== false && (!this._view || this._dzImg); }
 
   // Scale s with the zoomed picture's top left at (x, y) frame fractions, clamped so it covers the frame
   _dzSet(s, x, y) {
@@ -3046,6 +3047,7 @@ class EufyCameraCard extends HTMLElement {
     const pOn = !!P && !!this._rplayer;
     const vUrl = vItem && !P ? this._histUrl(vItem.station ? vItem.mcid : vItem.id) : null;
     const vPic = vItem ? (vItem.video ? { src: vUrl } : this._image('view', vUrl)) : null;
+    this._dzImg = !!vItem && !vItem.video;
     const vPoster = vItem && vItem.video ? (vItem.thumb || (vItem.posterId ? this._histUrl(vItem.posterId) : null)) : null;
     let tl = '';
     if (vItem) {
@@ -3423,6 +3425,15 @@ class EufyCameraCard extends HTMLElement {
     this._pic.classList.toggle('noctl', !ctls);
     // A double tap is the card's: the browser's double-tap zoom stays off the picture
     this._pic.classList.toggle('dtap', !!this._config.double_tap_fullscreen);
+    // tap_to_live without controls on the picture: the picture is the live view button (Enter or Space, see its
+    // keydown); disabled where a tap does nothing (a History item, no live view)
+    if (this._config.tap_to_live && !ctls) {
+      this._pic.tabIndex = 0;
+      this._pic.setAttribute('role', 'button');
+      this._pic.setAttribute('aria-label', L ? 'Stop live view' : 'Start live view');
+      if (vItem || (!L && !(avail && canLive))) this._pic.setAttribute('aria-disabled', 'true');
+      else this._pic.removeAttribute('aria-disabled');
+    } else ['tabindex', 'role', 'aria-label', 'aria-disabled'].forEach(a => this._pic.removeAttribute(a));
     // The digital zoom belongs to what the picture shows: the camera's live view or its still (a new one by
     // image_updated, not by the rotating token)
     const dzKey = `${this._config.entity}|${this._dzOn() ? '' : 'off'}|${this._view || (L ? 'live' : (st && st.attributes.image_updated) || '')}`;
@@ -3589,6 +3600,12 @@ class EufyCameraCard extends HTMLElement {
     this._pic.addEventListener('pointerup', (ev) => { this._upCtl = onCtl(ev); this._ptrs.delete(ev.pointerId); dzEnd(ev); });
     this._pic.addEventListener('pointercancel', (ev) => { this._ptrs.delete(ev.pointerId); dzEnd(ev); });
     this._pic.addEventListener('pointermove', ev => this._dzMove(ev));
+    // Enter or Space on the picture as the live view button: the single tap's action (Space does not scroll)
+    this._pic.addEventListener('keydown', (ev) => {
+      if (ev.composedPath()[0] !== this._pic || this._pic.getAttribute('role') !== 'button' || (ev.key !== 'Enter' && ev.key !== ' ')) return;
+      ev.preventDefault();
+      if (!ev.repeat) this._singleTap();
+    });
     // The browser's own pinch and scroll stay off a zoom gesture (touch-action alone is fixed when the first finger
     // lands, and iOS has no pinch-zoom value for it)
     this._pic.addEventListener('touchmove', (ev) => { if (this._dzG && (ev.touches.length > 1 || this._dz.s > 1) && ev.cancelable) ev.preventDefault(); }, { passive: false });
@@ -3824,6 +3841,10 @@ const CSS_TEXT = `
   .noctl:not(.winfull, :fullscreen) .toast { max-width: calc(100% - 20px); }
   .noctl .ovl::before { background: linear-gradient(180deg, rgba(0,0,0,0.38), transparent 26%); }
   .pic.dtap { touch-action: manipulation; }
+  /* the picture as a button: its focus ring over the picture's layers (an outline would sit under them) */
+  .pic[role=button]:focus-visible { outline: none; }
+  .pic[role=button]:focus-visible::after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+    box-shadow: inset 0 0 0 2px #fff, inset 0 0 0 4px rgba(0, 0, 0, 0.45); }
   /* Digital zoom: the still and the player's slot move together; while zoomed a drag pans the picture, not the page */
   .vslot, .over > .still { transform: var(--dzt, none); transform-origin: 0 0; }
   .pic.dzoomed { touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }

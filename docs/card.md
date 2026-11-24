@@ -75,7 +75,8 @@ settings_groups:                 # optional: Settings tabs to show, in this orde
   over a picture opened from History in the card; with `double_tap_fullscreen` set, a single tap acts only after a
   quarter second, so the first tap of a double tap never starts or stops live view. A press that moves, or one with
   two fingers, is no tap. With the controls shown, a tap that brings faded controls back does only that; without
-  `tap_to_live` a tap hides them as before.
+  `tap_to_live` a tap hides them as before. With `tap_to_live` and `show_controls: false` the picture is also a
+  keyboard button: Tab to it, Enter or Space starts or stops live view.
 - `digital_zoom` (on unless set to `false`): see Zoom on the picture below.
 - `layout: auto` switches to the compact layout (one column of settings rows) below 400 px card width.
 - `history_folder` is needed only when the camera was renamed after its files were saved.
@@ -169,15 +170,15 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     top left stays; a tap or click on the picture brings them back, another hides them (with `tap_to_live`, stops live
     view). The open preset row keeps them up; such a tap or click closes the row and hides them, except while a preset
     is being saved. Keyboard focus shows them too; a recording's `● REC` chip stays.
-- **Zoom on the picture:** two fingers pinch the picture larger (up to 4×) or back; on a computer Ctrl + mouse
-  wheel does it (a trackpad pinch too), about the pointer. While enlarged, dragging the picture moves it, up to its
-  edges. The plain wheel keeps scrolling the page (in full screen during live view it drives the camera's own zoom,
-  as before), and a one-finger swipe scrolls the page while the picture is at 1×. It works on the still and the
-  live video, in the card and in full screen; the controls over the picture stay as they are and keep working. The
-  picture goes back to 1× when live view starts or stops, on another camera, a picture from History or a new still,
-  and on leaving full screen. A picture opened from History does not zoom. A pinch or drag is never a tap
-  (`tap_to_live`, `double_tap_fullscreen`). This only enlarges what the browser shows; the camera's own zoom is the
-  zoom pill. `digital_zoom: false` turns it off.
+- **Zoom on the picture:** two fingers pinch the picture larger (up to 4×) or back; on a computer Ctrl + mouse wheel
+  does it (a trackpad pinch too), about the pointer. While enlarged, dragging the picture moves it, up to its edges.
+  The plain wheel keeps scrolling the page (in full screen during live view it drives the camera's own zoom, as
+  before), and a one-finger swipe scrolls the page while the picture is at 1×. It works on the still and the live
+  video, in the card and in full screen; the controls over the picture stay as they are and keep working. The picture
+  goes back to 1× when live view starts or stops, on another camera, another History item, closing it or a new still,
+  and on leaving full screen. A picture opened from History zooms the same way; a video (a History clip or a station
+  recording) does not. A pinch or drag is never a tap (`tap_to_live`, `double_tap_fullscreen`). This only enlarges
+  what the browser shows; the camera's own zoom is the zoom pill. `digital_zoom: false` turns it off.
 - **Record:** the live bar's record button, or `Record a clip` in the menu while idle, records a clip of the
   integration's Recording length into the history (Captures). While any client records, a `● REC 12 s` chip shows,
   and the same button (red, a stop square) or `Stop recording` in the menu ends the clip; the part recorded so far
