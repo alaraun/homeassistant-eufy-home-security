@@ -137,11 +137,11 @@ async def test_a_number_write_under_another_account_raises_the_account_hint(
     placeholders = raised.value.translation_placeholders
     assert placeholders is not None
     assert set(placeholders) == {"target", "station"}
-    assert (
-        placeholders["station"]
-        == entry.runtime_data.coordinators[SYNTHETIC.station_sn].station.name
-    )
-    assert placeholders["target"] == settings_of("T8160")[_RETRIGGER].name
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+    assert placeholders["station"] == station.name
+    # The camera's name in front: the station answers for it.
+    camera = station.sub_device(SYNTHETIC.camera_sn).name
+    assert placeholders["target"] == f"{camera} {settings_of('T8160')[_RETRIGGER].name}"
     assert SYNTHETIC.camera_sn not in placeholders["target"]
     assert state_of(hass, entity_id) == "30"
 

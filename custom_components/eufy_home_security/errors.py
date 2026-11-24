@@ -13,7 +13,9 @@ list only as the library redacts it), owner account id, e-mail address or passwo
 
 :func:`arm_failed` and :func:`setting_write_failed` share five of their six messages
 through one placeholder, ``target`` (a lower-case mode name or an entity name), so
-the two write paths cannot drift.
+the two write paths cannot drift. A message that names the station whose answer it
+reports names a paired device's target with the device's name in front
+(:func:`station_named_target`), so a HomeBase's refusal is not read as the camera's.
 """
 
 from __future__ import annotations
@@ -393,6 +395,7 @@ def setting_write_failed(
     target: str,
     *,
     station_name: str,
+    station_target: str | None = None,
     on_demand: bool = False,
 ) -> HomeAssistantError:
     """A setting write the station did not apply, or could not receive.
@@ -401,9 +404,10 @@ def setting_write_failed(
     station did not apply the value, answered "not supported", or refused) has keys of
     its own: "the change was not applied" is not "the alarm was not armed".
 
-    ``target`` is the entity's translated name, or its catalog key when it has none;
-    ``station`` (``station_name``) is added for the station's own answers. Never a
-    serial, an owner account id or the library's text.
+    ``target`` is the entity's translated name, or its catalog key when it has none.
+    The station's own answers add ``station`` (``station_name``) and name the target
+    as ``station_target`` (:func:`station_named_target`; ``target`` when None). Never
+    a serial, an owner account id or the library's text.
     A plain ``UnsupportedError`` does not arrive here: the caller maps it to
     :func:`setting_device_unavailable`, or lets a catalog-shape programming error
     propagate.
@@ -427,6 +431,8 @@ def setting_write_failed(
     placeholders = {"target": target}
     if key in _STATION_NAMED_KEYS:
         placeholders["station"] = station_name
+        if station_target is not None:
+            placeholders["target"] = station_target
     return HomeAssistantError(
         translation_domain=DOMAIN, translation_key=key, translation_placeholders=placeholders
     )
@@ -493,6 +499,7 @@ def siren_failed(
     target: str,
     *,
     station_name: str = "",
+    station_target: str | None = None,
     on_demand: bool = False,
 ) -> HomeAssistantError:
     """A siren start or stop the device did not confirm, refused, or could not receive.
@@ -515,7 +522,8 @@ def siren_failed(
       answer; with ``on_demand`` the camera may be asleep.
 
     Placeholders: ``target``, the entity's name, never a serial or library text; and
-    ``station`` (``station_name``) for the account refusal.
+    for the account refusal ``station`` (``station_name``), with the target named as
+    ``station_target`` (:func:`station_named_target`; ``target`` when None).
     """
     if is_session_replaced_failure(err):
         key = EXC_SESSION_REPLACED_SEE_REPAIRS
@@ -540,6 +548,8 @@ def siren_failed(
     placeholders = {"target": target}
     if key == EXC_SIREN_ACCOUNT_REJECTED:
         placeholders["station"] = station_name
+        if station_target is not None:
+            placeholders["target"] = station_target
     return HomeAssistantError(
         translation_domain=DOMAIN,
         translation_key=key,
@@ -1048,7 +1058,8 @@ def recording_failed_to_capture(
 
     Past the sessions per HomeBase (``LiveStreamLimitError``) names the live-stream
     limit; a station that refused this account (``AccountRejectedError``, -104) gives
-    ``account_rejected`` naming ``target`` and ``station_name``; any other library error
+    ``account_rejected`` naming ``target`` (as :func:`station_named_target` names it)
+    and ``station_name``; any other library error
     (``CameraWakeError``, ``DeviceTimeoutError``, ...) is the camera being unavailable.
     Never the library's text.
     """
@@ -1089,10 +1100,35 @@ def station_display_name(coordinator: StationCoordinator) -> str:
     return station_label(device) if device is not None else coordinator.station.name
 
 
+def device_display_name(coordinator: StationCoordinator, device_sn: str | None) -> str:
+    """How an error names a device paired to the coordinator's station: as
+    :func:`station_label` names its registered device, else by its eufy name; empty for
+    the station itself (``None`` or the station's serial) and for a device with neither."""
+    station = coordinator.station
+    if device_sn is None or device_sn == station.serial:
+        return ""
+    device = _station_device(coordinator.hass, coordinator.config_entry, device_sn)
+    if device is not None and (label := station_label(device)):
+        return label
+    return next((d.name for d in station.devices if d.device_sn == device_sn), "")
+
+
+def station_named_target(
+    coordinator: StationCoordinator, device_sn: str | None, target: str
+) -> str:
+    """How a message that names the station names what a request was for: ``target`` (an
+    entity's own name, or an action's) after the device's name
+    (:func:`device_display_name`), as Home Assistant names the entity; ``target`` alone
+    for the station's own and for a device without a name, so no name shows twice."""
+    device = device_display_name(coordinator, device_sn)
+    return f"{device} {target}" if device else target
+
+
 def _station_device(
     hass: HomeAssistant, entry: ConfigEntry[Any], serial: str
 ) -> dr.DeviceEntry | None:
-    """The station's registered device; its id, never the serial, keys its issues.
+    """The registered device of a station or a paired device, by its serial; a station's
+    id, never the serial, keys its issues.
 
     Scoped to the entry: the device registry does not treat identifiers as unique
     across config entries.

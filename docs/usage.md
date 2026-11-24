@@ -652,8 +652,10 @@ the camera and its settings. The limits above apply.
   offers the actions the eufy app shows for its model (declared from the eufy app, not
   tested).
 - A write shows the written value at once.
-  - The device rejects it: error *setting not applied*; the entity keeps the value
-    last reported.
+  - The station refuses it or does not apply it: one of the setting errors in
+    [troubleshooting.md](troubleshooting.md#setting-errors); the entity keeps the value
+    last reported. The error names the station that answered and, for a device behind
+    a HomeBase, the device before the setting.
   - No answer in time: error *setting unconfirmed*; the entity shows unknown until
     the next update shows the value in force.
   - A control the device never reports back is marked as assumed state: unknown until

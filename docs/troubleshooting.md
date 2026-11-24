@@ -70,11 +70,19 @@ an account where no device was found too.
 
 ## Setting errors
 
+An error that names a station names the one that answered: the HomeBase for a camera or
+sensor behind it, which the error then names before the setting, as Home Assistant names
+the entity. "Hallway Hub refused the change to Garage Cam Light" is the HomeBase
+Hallway Hub refusing the Light of the camera Garage Cam. A HomeBase's own setting, and
+a standalone camera's, names the station once ("Porch Cam refused the change to Light").
+
 | Error | Meaning | Entity shows |
 |---|---|---|
-| setting not applied | the device rejected the write | the value last reported |
+| "{station} took the change to {target} but did not apply it." | the station acknowledged the write and did not act on it; check that the device is online and try again | the value last reported |
+| "{station} refused the change to {target}." | the station refused the value | the value last reported |
+| "{station} answered that the device does not support changing {target}." | the station answered that the device does not support the change | the value last reported |
 | setting unconfirmed | no answer in time; the write may still apply | unknown until the next update (a control the device never reports back: until you set it again) |
-| does not accept this eufy account | the station refused the request for the account it was sent under (an arm, a setting, a siren, a pan/tilt or preset command, a record action, a HomeBase card change, the camera card's Station list); trying again changes nothing. In the eufy app, check that the station is shared with this account | a setting entity the value last reported; nothing is recorded or saved |
+| does not accept this eufy account | the station refused the request for the account it was sent under (an arm, a setting, a siren, a pan/tilt or preset command, a record action, a HomeBase card change, the camera card's Station list); an entity's or action's error for a device behind a HomeBase names the device too. Trying again changes nothing. In the eufy app, check that the station is shared with this account | a setting entity the value last reported; nothing is recorded or saved |
 | "{target} was not switched, and nothing was sent: the eufy app turns the lamp's control off while {setting} is off. Turn {setting} on first, in the eufy app or with its switch here." | a camera's light (`{target}`) was turned on or off while the setting that enables its lamp control (`{setting}`, such as **Lighting**) reads off; see [usage.md](usage.md#device-settings) | the state last reported |
 
 ## No detections from a camera

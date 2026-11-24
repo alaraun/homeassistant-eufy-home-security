@@ -218,6 +218,9 @@ class EufyDefaultPresetSelect(EufyPushAvailability, EufyDeviceEntity, SelectEnti
                 err,
                 self._write_target(),
                 station_name=errors.station_display_name(self.coordinator),
+                station_target=errors.station_named_target(
+                    self.coordinator, self._serial, self._write_target()
+                ),
                 on_demand=station.connects_on_demand,
             ) from err
         except EufySecurityError as err:
@@ -228,6 +231,9 @@ class EufyDefaultPresetSelect(EufyPushAvailability, EufyDeviceEntity, SelectEnti
                 err,
                 self._write_target(),
                 station_name=errors.station_display_name(self.coordinator),
+                station_target=errors.station_named_target(
+                    self.coordinator, self._serial, self._write_target()
+                ),
                 on_demand=station.connects_on_demand,
             ) from err
         _LOGGER.debug("Default preset of %s is now %d (read back)", serial, index)
@@ -313,10 +319,12 @@ class EufyLivePresetSelect(EufyPushAvailability, EufyDeviceEntity, SelectEntity,
         except EufySecurityError as err:
             _LOGGER.debug("Live view of %s not turned: %s", serial, errors.failure_reason(err))
             name = self.name
+            target = name if isinstance(name, str) else LIVE_PRESET_KEY
             raise errors.setting_write_failed(
                 err,
-                name if isinstance(name, str) else LIVE_PRESET_KEY,
+                target,
                 station_name=errors.station_display_name(self.coordinator),
+                station_target=errors.station_named_target(self.coordinator, self._serial, target),
                 on_demand=station.connects_on_demand,
             ) from err
         streams.async_choose_live_preset(self._serial, index)

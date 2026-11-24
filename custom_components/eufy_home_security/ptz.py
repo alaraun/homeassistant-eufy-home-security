@@ -54,14 +54,16 @@ def _not_handled(action: str, serial: str, err: CommandUnsupportedError) -> Exce
     return errors.ptz_command_not_handled()
 
 
-def _account_rejected(
-    coordinator: StationCoordinator, err: AccountRejectedError, target: str
+def _write_failed(
+    coordinator: StationCoordinator, device_sn: str, err: EufySecurityError, target: str
 ) -> Exception:
-    """The error of a command the station refused for this account (-104)."""
+    """The translated error of a failed command to ``device_sn``; a message naming the
+    station names ``target`` with the device's name (:func:`errors.station_named_target`)."""
     return errors.setting_write_failed(
         err,
         target,
         station_name=errors.station_display_name(coordinator),
+        station_target=errors.station_named_target(coordinator, device_sn, target),
         on_demand=coordinator.station.connects_on_demand,
     )
 
@@ -87,7 +89,9 @@ async def async_pan_tilt(
     except CommandUnsupportedError as err:
         raise _not_handled(f"Pan/tilt {direction.name}", serial, err) from err
     except AccountRejectedError as err:
-        raise _account_rejected(coordinator, err, _target(name, direction.name.lower())) from err
+        raise _write_failed(
+            coordinator, device_sn, err, _target(name, direction.name.lower())
+        ) from err
     except CommandError as err:
         _LOGGER.debug(
             "Pan/tilt %s of %s refused by the camera: %s",
@@ -100,11 +104,8 @@ async def async_pan_tilt(
         _LOGGER.debug(
             "Pan/tilt %s of %s failed: %s", direction.name, serial, errors.failure_reason(err)
         )
-        raise errors.setting_write_failed(
-            err,
-            _target(name, direction.name.lower()),
-            station_name=errors.station_display_name(coordinator),
-            on_demand=station.connects_on_demand,
+        raise _write_failed(
+            coordinator, device_sn, err, _target(name, direction.name.lower())
         ) from err
     _LOGGER.debug("Pan/tilt %s of %s done", direction.name, serial)
 
@@ -116,7 +117,6 @@ async def async_goto_preset(
     streams = runtime.streaming(coordinator.config_entry)
     if streams is None:
         return
-    station = coordinator.station
     serial = redact_serial(device_sn)
     try:
         watching = await streams.async_goto_preset(device_sn, index)
@@ -129,18 +129,13 @@ async def async_goto_preset(
         _LOGGER.debug("Go-to %d of %s refused: slot not set, nothing sent", index, serial)
         raise errors.preset_not_set(index) from err
     except AccountRejectedError as err:
-        raise _account_rejected(coordinator, err, _target(name, "goto_preset")) from err
+        raise _write_failed(coordinator, device_sn, err, _target(name, "goto_preset")) from err
     except CommandError as err:
         _LOGGER.debug("Go-to %d of %s refused by the camera: %s", index, serial, type(err).__name__)
         raise errors.pan_tilt_not_applied() from err
     except EufySecurityError as err:
         _LOGGER.debug("Go-to %d of %s failed: %s", index, serial, errors.failure_reason(err))
-        raise errors.setting_write_failed(
-            err,
-            _target(name, "goto_preset"),
-            station_name=errors.station_display_name(coordinator),
-            on_demand=station.connects_on_demand,
-        ) from err
+        raise _write_failed(coordinator, device_sn, err, _target(name, "goto_preset")) from err
     _LOGGER.debug("Go-to %d of %s sent%s", index, serial, " during a live view" if watching else "")
 
 
@@ -164,12 +159,7 @@ async def async_set_live_zoom(
         raise errors.zoom_needs_single_view() from err
     except EufySecurityError as err:
         _LOGGER.debug("Zoom of %s failed: %s", serial, errors.failure_reason(err))
-        raise errors.setting_write_failed(
-            err,
-            _target(name, LIVE_ZOOM_KEY),
-            station_name=errors.station_display_name(coordinator),
-            on_demand=coordinator.station.connects_on_demand,
-        ) from err
+        raise _write_failed(coordinator, device_sn, err, _target(name, LIVE_ZOOM_KEY)) from err
     _LOGGER.debug(
         "Live view zoom of %s is now %g%s",
         serial,
@@ -230,7 +220,9 @@ async def async_save_preset(
         _LOGGER.debug("Save to %s of %s not read back (command %d)", target, serial, err.command)
         raise errors.preset_not_saved() from err
     except AccountRejectedError as err:
-        raise _account_rejected(coordinator, err, _target(name, SERVICE_SAVE_PRESET)) from err
+        raise _write_failed(
+            coordinator, device_sn, err, _target(name, SERVICE_SAVE_PRESET)
+        ) from err
     except CommandRejectedError as err:
         _LOGGER.debug("Save to %s of %s rejected with code %d", target, serial, err.code)
         if err.code == _NEEDS_CONFIRMATION_CODE:
@@ -238,11 +230,8 @@ async def async_save_preset(
         raise errors.preset_not_saved() from err
     except EufySecurityError as err:
         _LOGGER.debug("Save to %s of %s failed: %s", target, serial, errors.failure_reason(err))
-        raise errors.setting_write_failed(
-            err,
-            _target(name, SERVICE_SAVE_PRESET),
-            station_name=errors.station_display_name(coordinator),
-            on_demand=station.connects_on_demand,
+        raise _write_failed(
+            coordinator, device_sn, err, _target(name, SERVICE_SAVE_PRESET)
         ) from err
     manager.async_forget_image(device_sn, slot.index)
     _LOGGER.debug(
@@ -283,7 +272,9 @@ async def async_delete_preset(
         _LOGGER.debug("Delete of preset %d of %s refused: %s", index, serial, type(err).__name__)
         raise errors.preset_slot_unknown(index) from err
     except AccountRejectedError as err:
-        raise _account_rejected(coordinator, err, _target(name, SERVICE_DELETE_PRESET)) from err
+        raise _write_failed(
+            coordinator, device_sn, err, _target(name, SERVICE_DELETE_PRESET)
+        ) from err
     except CommandError as err:
         _LOGGER.debug(
             "Delete of preset %d of %s not applied: %s", index, serial, type(err).__name__
@@ -293,11 +284,8 @@ async def async_delete_preset(
         _LOGGER.debug(
             "Delete of preset %d of %s failed: %s", index, serial, errors.failure_reason(err)
         )
-        raise errors.setting_write_failed(
-            err,
-            _target(name, SERVICE_DELETE_PRESET),
-            station_name=errors.station_display_name(coordinator),
-            on_demand=station.connects_on_demand,
+        raise _write_failed(
+            coordinator, device_sn, err, _target(name, SERVICE_DELETE_PRESET)
         ) from err
     manager.async_forget_image(device_sn, index)
     _LOGGER.debug("Deleted preset %d of %s", index, serial)

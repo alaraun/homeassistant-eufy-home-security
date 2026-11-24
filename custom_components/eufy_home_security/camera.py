@@ -373,10 +373,10 @@ class EufyCamera(EufyPushAvailability, EufyDeviceEntity, small_images.SmallImage
         except CaptureStoppedError as err:
             raise errors.recording_stopped_empty() from err
         except EufySecurityError as err:
-            state = self.hass.states.get(self.entity_id)
+            # Behind a HomeBase the camera's name; a standalone camera (the station) by the action.
             raise errors.recording_failed_to_capture(
                 err,
-                target=state.name if state is not None else CAMERA_KEY,
+                target=errors.device_display_name(self.coordinator, self._serial) or SERVICE_RECORD,
                 station_name=errors.station_display_name(self.coordinator),
             ) from err
         except (history.ClipStoreError, OSError, TimeoutError) as err:
