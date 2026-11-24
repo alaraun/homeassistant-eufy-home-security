@@ -24,6 +24,7 @@ from conftest import (
 from eufy_home_security import DeviceTimeoutError, EufySecurity, Station, entity_unique_id
 from eufy_home_security.devices import Setting
 from eufy_home_security.devices.model_settings import settings_of
+from eufy_home_security.p2p import session as session_module
 from eufy_home_security.testing import SYNTHETIC, FakeStation
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.const import (
@@ -222,16 +223,22 @@ async def test_a_write_only_switch_whose_write_timed_out_shows_unknown(
 _ALARM_DELAY: Final = "notification_alarm_delay_value"
 
 
+@pytest.mark.parametrize("replied", [True, False], ids=["result", "receipt-only"])
 async def test_the_homebase_alarm_delay_is_a_switch_and_its_sensor_row_is_forgotten(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    replied: bool,
 ) -> None:
     """The alarm delay is the eufy app's on/off switch: an enabled config switch that
-    writes 1 and 0. The sensor row an earlier release built under its unique id goes."""
+    writes 1 and 0. The sensor row an earlier release built under its unique id goes.
+    A write the station only acknowledges with its receipt (no result) shows as on."""
     seed_setting(fake_station, _ALARM_DELAY, 0, channel=_STATION_CHANNEL)
-    fake_station.reply_to_settings = True
+    fake_station.reply_to_settings = replied
+    # Without a result the write waits out the command timeout before it counts as delivered.
+    monkeypatch.setattr(session_module, "COMMAND_TIMEOUT", 0.5)
     seed_warm_cache()
     entry = add_entry(hass)
     registry = er.async_get(hass)
