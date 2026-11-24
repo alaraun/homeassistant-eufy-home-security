@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.21-3';
+const CARD_VERSION = '2026.11.24-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -54,6 +54,12 @@ const CTL_HIDE_MS = 4000;
 // Home Assistant's Android app hides the page for a moment while it moves it into or out of the browser's full
 // screen: a hide in it or this soon after it changes ends a timed live view only once it lasts this long
 const FS_HIDE_MS = 1500;
+// Taps on the bare picture (`tap_to_live`, `double_tap_fullscreen`): a press that ends within TAP_SLOP px of where it
+// began, with no second pointer down meanwhile (two pointers are a multi-touch gesture, never a tap). With
+// `double_tap_fullscreen` a second tap within DTAP_MS (HA's own double-tap window) is a double tap, and a single tap
+// acts only once that window has passed.
+const TAP_SLOP = 10;
+const DTAP_MS = 250;
 // Save view: the integration's command that keeps a frame as a preset's picture (preset_upload.py), and the frame:
 // the live video drawn at most PRESET_PIC_W wide (aspect kept) as a JPEG, at the first quality whose size stays
 // within PRESET_PIC_MAX (the integration's limit, under the websocket's message size)
@@ -447,6 +453,7 @@ class EufyCameraCard extends HTMLElement {
     this._recStop = false;
     this._sfetch = new Map();
     this._lact = null;
+    this._tapCancel();
     clearTimeout(this._ringT);
     this._stg = {};
     this._keys = {};
@@ -640,6 +647,7 @@ class EufyCameraCard extends HTMLElement {
     clearTimeout(this._quietT);
     clearTimeout(this._ringT);
     clearTimeout(this._lactT);
+    this._tapCancel();
     clearTimeout(this._visT);
     this._visT = null;
     this._hidAt = null;
@@ -1721,6 +1729,41 @@ class EufyCameraCard extends HTMLElement {
     if (this._pic && this._live && this._live.video && !this._preOpen && this._dd !== CAM_DD) this._pic.classList.add('quiet');
   }
 
+  // Stop pressed (bar, menu, a tap on the picture): it holds for the rest of a running detection
+  _userStop() {
+    if (this._detActive) this._detStopped = true;
+    this._stop('');
+  }
+
+  // A tap on the bare picture; wake: it brought faded controls back, which is all it does. With
+  // `double_tap_fullscreen` (and full screen offered: not on a history item in the card) the tap waits DTAP_MS for a
+  // second one, which toggles full screen instead; a single tap acts after the window.
+  _picTap(wake) {
+    if (this._tapT) { this._tapCancel(); this._fullscreen(); return; }
+    const run = () => { this._tapT = null; if (!wake) this._singleTap(); };
+    if (this._config.double_tap_fullscreen && (!this._view || this._isFull())) this._tapT = setTimeout(run, DTAP_MS);
+    else run();
+  }
+
+  _tapCancel() {
+    clearTimeout(this._tapT);
+    this._tapT = null;
+  }
+
+  // A single tap: `tap_to_live` starts a timed live view (live_seconds) or stops the running one, as the play and
+  // Stop buttons do (not over a history item); else it hides the live controls (with controls on the picture: the
+  // open preset row closes with them, its replace question answered no; a running save and the open camera list
+  // keep it)
+  _singleTap() {
+    if (this._config.tap_to_live && !this._view) {
+      if (this._live) this._userStop(); else this._start(false);
+      return;
+    }
+    if (!this._show('controls')) return;
+    if (this._preOpen && !this._psave && this._dd !== CAM_DD) { this._preOpen = false; this.render(); }
+    this._hush();
+  }
+
   // ok: a confirmation (neutral, check icon) rather than a failure
   _toast(text, ok, icon) {
     this._toastText = text;
@@ -1974,10 +2017,7 @@ class EufyCameraCard extends HTMLElement {
         this._focus(this._live ? 'live-rec' : 'play');
         return;
       }
-      if (v === 'stop') {
-        if (this._detActive) this._detStopped = true;
-        this._stop('');
-      }
+      if (v === 'stop') this._userStop();
       else if (v === 'mute') { if (this._live) { this._live.muted = !this._live.muted; this._applyMute(); this.render(); } }
       else if (v === 'full') { if (this._menuOpen) this._setMenu(false); this._fullscreen(); this._focus('live-full'); return; }
       else if (v === 'presets') { this._preOpen = !this._preOpen; this.render(); this._focus(this._preOpen ? `lp-${this._firstPreset()}` : 'live-presets'); return; }
@@ -2654,6 +2694,9 @@ class EufyCameraCard extends HTMLElement {
     const L = this._live;
     const multi = this._cams.length > 1;
     const showHdr = this._show('header');
+    // show_controls: false leaves the picture without buttons (live, record, full screen, pan/tilt, zoom, presets,
+    // live view buttons); the chips, messages and the exit from full screen stay
+    const ctls = this._show('controls');
     const recording = avail && this._recording();
     if (!recording) this._recStop = false;
     const recStop = recording && this._recStop;
@@ -2953,7 +2996,7 @@ class EufyCameraCard extends HTMLElement {
     // Full screen and its exit: one button at the top right, in the card and in either full screen. In full screen it
     // never fades (the live bar goes with the live view, and a tablet or phone has no Esc).
     const full = this._isFull();
-    const fullBtn = vItem && !full ? '' : `<button type="button" class="wfx" data-live="full" data-focus="live-full" aria-label="${full ? 'Exit full screen' : 'Full screen'}"><ha-icon icon="${full ? 'mdi:fullscreen-exit' : 'mdi:fullscreen'}"></ha-icon></button>`;
+    const fullBtn = (vItem || !ctls) && !full ? '' : `<button type="button" class="wfx" data-live="full" data-focus="live-full" aria-label="${full ? 'Exit full screen' : 'Full screen'}"><ha-icon icon="${full ? 'mdi:fullscreen-exit' : 'mdi:fullscreen'}"></ha-icon></button>`;
     // Recording a clip: its own chip with the seconds so far; it stays while the live controls are faded
     const recChip = recording && !vItem ? chip('', 'rec recc', `<i class="dot"></i><span class="rw">REC</span><span class="tv" data-rect>${this._recSeconds()} s</span>`, 'Recording a clip') : '';
     // A station play: starting, playing (HA's player in the slot under the overlay), ended with Play again
@@ -2965,14 +3008,14 @@ class EufyCameraCard extends HTMLElement {
     const centre = vItem ? (P ? pCentre : (vPic && vPic.src ? '' : '<div class="ctr wake" role="status"><i class="spin"></i></div>')) : !avail
       ? '<div class="ctr off"><ha-icon icon="mdi:cctv-off"></ha-icon><span>Unavailable</span></div>'
       : (!L && !canLive ? '<div class="ctr off"><ha-icon icon="mdi:video-off-outline"></ha-icon><span>No live view for this model</span></div>'
-        : !L ? `<div class="ctr">
+        : !L ? (!ctls ? '' : `<div class="ctr">
             <button type="button" class="play" data-live="timed" data-focus="play" aria-label="Start live view for ${mmss(this._liveSeconds())}"><ha-icon icon="mdi:play"></ha-icon></button>
             <button type="button" class="pin0" data-live="continuous" data-focus="pin0" aria-label="Start live view, continuous"><ha-icon icon="mdi:all-inclusive"></ha-icon></button>
             <span class="plbl" aria-hidden="true">Live · ${mmss(this._liveSeconds())}</span>
-          </div>`
+          </div>`)
         : (!L.video ? '<div class="ctr wake" role="status"><i class="spin"></i><span class="wt">Waking camera…</span><span class="ws" data-wake></span></div>' : ''));
     const aimOK = avail && !!L && L.video;
-    const canPre = aimOK && E.hasPan && hasPresets;
+    const canPre = ctls && aimOK && E.hasPan && hasPresets;
     if (!canPre) this._preOpen = false;
     if (!this._preOpen || !presetIdx.includes(this._pconfirm)) this._pconfirm = null;
     const sv = this._psave;
@@ -2986,11 +3029,12 @@ class EufyCameraCard extends HTMLElement {
       // armed: its second press would send the action shown now
       const la = this._lact, armed = !!la && la.id === id && !!a.service && la.domain === a.domain && la.service === a.service;
       const nm = bs.attributes.friendly_name || id;
+      // icon: a lock's state icon when it offers nothing, else the registry's, the entity's own (a script's), the domain's
       const reg = this._hass.entities && this._hass.entities[id];
       const lbl = !a.service ? `${nm}: ${a.verb}` : (armed ? `Press again to ${a.verb.toLowerCase()} ${nm}` : `${a.verb} ${nm}`);
-      return `<button type="button" class="lb lact${armed ? ' arm' : ''}" data-lact="${escapeHtml(id)}" data-focus="lact-${escapeHtml(id)}" aria-label="${escapeHtml(lbl)}"${bs.state === 'unavailable' || !a.service ? ' disabled' : ''}><ha-icon icon="${escapeHtml((!a.service && a.icon) || (reg && reg.icon) || a.icon)}"></ha-icon></button>`;
+      return `<button type="button" class="lb lact${armed ? ' arm' : ''}" data-lact="${escapeHtml(id)}" data-focus="lact-${escapeHtml(id)}" aria-label="${escapeHtml(lbl)}"${bs.state === 'unavailable' || !a.service ? ' disabled' : ''}><ha-icon icon="${escapeHtml((!a.service && a.icon) || (reg && reg.icon) || bs.attributes.icon || a.icon)}"></ha-icon></button>`;
     }).join('');
-    const bar = L ? `<div class="lbar" role="group" aria-label="Live view">
+    const bar = L && ctls ? `<div class="lbar" role="group" aria-label="Live view">
             <button type="button" class="lb" data-live="stop" data-focus="live-stop" aria-label="Stop live view"><ha-icon icon="mdi:stop"></ha-icon></button>
             <button type="button" class="lb${L.continuous ? ' on' : ''}" data-live="pin" data-focus="live-pin" aria-pressed="${L.continuous}" aria-label="Continuous live view"><ha-icon icon="mdi:all-inclusive"></ha-icon></button>
             <button type="button" class="lb rec${recording ? ' on' : ''}" data-live="rec" data-focus="live-rec" aria-label="${recording ? 'Stop recording' : 'Record a clip'}"${recStop ? ' disabled' : ''}><ha-icon icon="${recording ? 'mdi:stop' : 'mdi:record-rec'}"></ha-icon></button>
@@ -3061,7 +3105,7 @@ class EufyCameraCard extends HTMLElement {
     : `<img class="stillimg" src="${escapeHtml(vPic.src)}" alt="" draggable="false">`) : ''}</div>` : ''}
         <div class="ovl${L ? ' live' : ''}${aimOK ? ' aim' : ''}${vItem && vItem.video ? ' hvo' : ''}">
           ${toast ? '' : (vItem ? tl : `<div class="crow">${tl}${camChip}${recChip}${tr}</div>`)}${fullBtn}${centre}${vItem ? '' : bar + lpre}
-          ${!vItem && aimOK && (pad || zpill) ? `<div class="ptzw">${zpill}${pad}</div>` : ''}
+          ${ctls && !vItem && aimOK && (pad || zpill) ? `<div class="ptzw">${zpill}${pad}</div>` : ''}
           ${toast}
         </div>`;
 
@@ -3301,6 +3345,9 @@ class EufyCameraCard extends HTMLElement {
     // A station play's player keeps its own controls: the overlay lets presses through except on its chips and buttons
     this._pic.classList.toggle('rplay', pOn);
     this._pic.classList.toggle('has-ptz', !!(E.hasPan || E.zoom));
+    this._pic.classList.toggle('noctl', !ctls);
+    // A double tap is the card's: the browser's double-tap zoom stays off the picture
+    this._pic.classList.toggle('dtap', !!this._config.double_tap_fullscreen);
     this.content.classList.toggle('nohdr', !showHdr);
     // The frame: 16:9, or the camera's portrait ratio (a CSS variable, so full screen still overrides it)
     const shape = this._shape();
@@ -3437,8 +3484,21 @@ class EufyCameraCard extends HTMLElement {
       || (n.classList && ['lbar', 'ptzw', 'lpre', 'crow', 'toast'].some(c => n.classList.contains(c)))));
     // Its start and end count too: a mouse press slid between a control and the bare picture is no bare tap (the click
     // then lands on their common ancestor)
-    this._pic.addEventListener('pointerdown', (ev) => { this._wasQuiet = this._isQuiet(); this._downCtl = onCtl(ev); this._awake(true); });
-    this._pic.addEventListener('pointerup', (ev) => { this._upCtl = onCtl(ev); });
+    // Pointers down on the picture (id -> start): one that ends near its start is a tap; a second one down makes the
+    // press a multi-touch gesture (room for a pinch), never a tap. A press on a control drops a single tap still
+    // waiting for its double-tap window (it would act after the control).
+    this._ptrs = new Map();
+    this._pic.addEventListener('pointerdown', (ev) => {
+      this._ptrs.set(ev.pointerId, [ev.clientX, ev.clientY]);
+      if (this._ptrs.size > 1) this._multi = true;
+      else { this._multi = false; this._down0 = [ev.clientX, ev.clientY]; }
+      this._wasQuiet = this._isQuiet();
+      this._downCtl = onCtl(ev);
+      if (this._downCtl) this._tapCancel();
+      this._awake(true);
+    });
+    this._pic.addEventListener('pointerup', (ev) => { this._upCtl = onCtl(ev); this._ptrs.delete(ev.pointerId); });
+    this._pic.addEventListener('pointercancel', (ev) => { this._ptrs.delete(ev.pointerId); });
     // Keyboard focus only: a tapped button keeps focus on a phone and would hold the controls on screen
     this._pic.addEventListener('focusin', (ev) => { const t = ev.composedPath()[0]; if (t && t.matches && t.matches(':focus-visible')) this._awake(true); });
     // A mouse moving over the picture keeps shown controls up (the timer restarts); faded ones need a click
@@ -3452,12 +3512,11 @@ class EufyCameraCard extends HTMLElement {
       const was = this._wasQuiet;
       this._wasQuiet = false;
       if (was && ctl && !ev.composedPath().some(n => n.classList && n.classList.contains('crow'))) { ev.stopPropagation(); ev.preventDefault(); return; }
-      if (!ctl && !edgeCtl && !was) {
-        // The open preset row closes with the controls (its replace question answered no); a running save and the
-        // open camera list (this tap closes the list) keep it
-        if (this._preOpen && !this._psave && this._dd !== CAM_DD) { this._preOpen = false; this.render(); }
-        this._hush();
-      }
+      // A click without a press on the picture before it (a script's click()) counts as a tap
+      const d0 = this._down0;
+      this._down0 = null;
+      const tap = !d0 || (!this._multi && Math.hypot(ev.clientX - d0[0], ev.clientY - d0[1]) <= TAP_SLOP);
+      if (!ctl && !edgeCtl && tap) this._picTap(was);
     }, true);
     const rangeOf = ev => ev.composedPath().find(n => n.classList && n.classList.contains('ctl-range'));
     this.content.addEventListener('input', (ev) => {
@@ -3658,6 +3717,11 @@ const CSS_TEXT = `
   .crow > .chip.tl { flex: 0 1 auto; min-width: 0; }
   .crow > .chip.camchip { flex: 0 1000 auto; min-width: 48px; max-width: 50%; padding-right: 4px; }
   .crow > .chip.camchip.one { min-width: 28px; padding-right: 6px; }
+  /* Without controls (show_controls: false) the chips take the full-screen button's place, and the scrim only the top */
+  .noctl:not(.winfull, :fullscreen) .crow { right: 10px; }
+  .noctl:not(.winfull, :fullscreen) .toast { max-width: calc(100% - 20px); }
+  .noctl .ovl::before { background: linear-gradient(180deg, rgba(0,0,0,0.38), transparent 26%); }
+  .pic.dtap { touch-action: manipulation; }
   .chip.hi ha-icon { color: var(--cc-bat-hi); } .chip.mid ha-icon { color: var(--cc-bat-mid); } .chip.lo ha-icon { color: var(--cc-bat-lo); }
   .chip.rec { gap: 6px; padding: 0 10px 0 9px; font-weight: 600; letter-spacing: 0.02em; }
   .chip.rec .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cc-live); box-shadow: 0 0 6px var(--cc-live); animation: pulse 2s ease-in-out infinite; }
@@ -4126,6 +4190,9 @@ const EDITOR_SCHEMA = [
   { name: 'show_header', selector: { boolean: {} } },
   { name: 'show_history', selector: { boolean: {} } },
   { name: 'show_settings', selector: { boolean: {} } },
+  { name: 'show_controls', selector: { boolean: {} } },
+  { name: 'tap_to_live', selector: { boolean: {} } },
+  { name: 'double_tap_fullscreen', selector: { boolean: {} } },
   { name: 'auto_live', selector: { select: { mode: 'dropdown', options: [
     { value: 'off', label: 'Off: start by hand' }, { value: 'timed', label: 'Timed live view' }, { value: 'continuous', label: 'Continuous live view' }] } } },
   { name: 'live_on_detection', selector: { boolean: {} } },
@@ -4136,7 +4203,8 @@ const EDITOR_SCHEMA = [
     { value: 'auto', label: 'Auto (compact below 400 px)' }, { value: 'compact', label: 'Compact' }, { value: 'regular', label: 'Regular' }] } } },
 ];
 const EDITOR_LABELS = { entity: 'Camera', entities: 'More cameras', picture: 'Picture shape', show_header: 'Header',
-  show_history: 'History', show_settings: 'Settings', live_buttons: 'Live view buttons', name: 'Name', history_folder: 'History folder', auto_live: 'Start live view when the dashboard opens', live_on_detection: 'Start live view on detection', live_seconds: 'Live view length', layout: 'Layout',
+  show_history: 'History', show_settings: 'Settings', show_controls: 'Controls on the picture',
+  tap_to_live: 'Tap the picture: live view on or off', double_tap_fullscreen: 'Double tap the picture: full screen', live_buttons: 'Live view buttons', name: 'Name', history_folder: 'History folder', auto_live: 'Start live view when the dashboard opens', live_on_detection: 'Start live view on detection', live_seconds: 'Live view length', layout: 'Layout',
   settings_include: 'Settings to add', settings_exclude: 'Hidden settings', settings_groups: 'Settings tabs' };
 // Settings tabs as HA's reorderable multi-select: a chip per shown tab (drag to reorder, ✕ to hide), the rest to add.
 // Options: the camera's layout sections, More, and any listed id the layout lacks (kept, never dropped from the list).
@@ -4151,6 +4219,9 @@ const EDITOR_HELPERS = {
   entities: 'With more than one camera, the name opens a list to switch cameras; history and settings follow. Name and history folder apply to the first camera',
   picture: 'Auto takes the shape of the camera\'s picture (a portrait doorbell shows upright); portrait shows the whole picture, at most 80 % of the screen high',
   show_header: 'Name, status and the camera menu; off with History and Settings off leaves the picture alone. Several cameras: the name moves onto the picture',
+  show_controls: 'Off: no buttons on the picture (play, live view bar, full screen, pan/tilt, zoom, presets) for a clean tile; the chips and messages stay. Combine with the tap options below',
+  tap_to_live: 'A tap on the picture starts a timed live view or stops the running one',
+  double_tap_fullscreen: 'A double tap on the picture enters or leaves full screen; a single tap then acts a quarter second later',
   live_buttons: 'Buttons on the live view bar, e.g. a door lock (Open or Unlock) for a doorbell, a gate, a light, a script; each needs a second press within 4 s',
   history_folder: 'The camera\'s folder under Media › eufy_home_security; only when the camera was renamed after its stills were saved',
   auto_live: 'Wakes the camera on every opening: costs battery',
@@ -4199,12 +4270,12 @@ class EufyCameraCardEditor extends HTMLElement {
     if (s.key !== this._schemaKey || !this._form.schema) { this._schemaKey = s.key; this._form.schema = s.schema; }
   }
   // auto_live: true is the YAML short form of 'timed'; no settings_groups shows every section in the layout's order;
-  // show_* default on, picture auto
+  // show_* default on, picture auto; the on/off options shown as true when set
   _data() {
     const d = { ...(this._config || {}) };
     if (d.auto_live === true) d.auto_live = 'timed';
-    if (d.live_on_detection) d.live_on_detection = true;
-    ['header', 'history', 'settings'].forEach((k) => { if (d[`show_${k}`] === undefined) d[`show_${k}`] = true; });
+    ['live_on_detection', 'tap_to_live', 'double_tap_fullscreen'].forEach((k) => { if (d[k]) d[k] = true; });
+    ['header', 'history', 'settings', 'controls'].forEach((k) => { if (d[`show_${k}`] === undefined) d[`show_${k}`] = true; });
     if (!PICTURE_MODES.includes(d.picture)) d.picture = 'auto';
     const secs = this._lay && this._lay.secs;
     const v = d.settings_groups;
@@ -4233,7 +4304,7 @@ class EufyCameraCardEditor extends HTMLElement {
             if (!list.length || list.join() === shownTabs(null, secs).join()) delete next[k]; else next[k] = list;
             return;
           }
-          if (v === '' || v === undefined || v === null || (Array.isArray(v) && !v.length) || (k === 'layout' && v === 'auto') || (k === 'picture' && v === 'auto') || (/^show_/.test(k) && v === true) || (k === 'auto_live' && v === 'off') || (k === 'live_seconds' && v === LIVE_S) || (k === 'live_on_detection' && !v)) delete next[k]; else next[k] = v;
+          if (v === '' || v === undefined || v === null || (Array.isArray(v) && !v.length) || (k === 'layout' && v === 'auto') || (k === 'picture' && v === 'auto') || (/^show_/.test(k) && v === true) || (k === 'auto_live' && v === 'off') || (k === 'live_seconds' && v === LIVE_S) || (['live_on_detection', 'tap_to_live', 'double_tap_fullscreen'].includes(k) && !v)) delete next[k]; else next[k] = v;
         });
         this._config = next;
         this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: next }, bubbles: true, composed: true }));
