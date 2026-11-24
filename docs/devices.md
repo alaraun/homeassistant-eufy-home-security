@@ -85,7 +85,7 @@ are offered, but none is tested:
 | T90M0 | eufy Motion Sensor E20 | as the T8910: Motion and a motion-only Detection event |
 | T8900 | Entry Sensor, on a HomeBase | door (binary sensor, on = open; follows each open and close), low battery |
 | T90E0 | eufy Entry Sensor E20, on a HomeBase | door (binary sensor, on = open; follows each open and close), tamper |
-| T84A1 | Wall Light Cam S100, standalone | **Spotlight** light turns the lamp on and off and sets its brightness (the **Lighting** switch is a separate setting); **Microphone** switch, write-only (assumed state), also behind a HomeBase, where Spotlight is no light but a read-only diagnostic binary sensor, off by default |
+| T84A1 | Wall Light Cam S100, standalone | **Light** light turns the lamp on and off and sets its brightness (the **Lighting** switch is a separate setting); **Microphone** switch, write-only (assumed state), also behind a HomeBase, where its lamp is no light but a read-only diagnostic binary sensor, off by default |
 | T90S0 | eufy Smoke Sensor E10, on a HomeBase | **Smoke** (on in an alarm), **Problem**, **End of life**, **Low battery**, **Alarm muted** and **Testing** binary sensors, from its status; the eufy app's card shows all but **Testing**, the library's reading of the test flags. The HomeBase reports a change at once |
 | T8931 | Smoke Alarm Listener, on a HomeBase | as the T90S0 |
 
