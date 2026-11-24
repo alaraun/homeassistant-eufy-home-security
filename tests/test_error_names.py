@@ -49,6 +49,7 @@ from custom_components.eufy_home_security.const import (
     LIVE_ZOOM_KEY,
     PAN_LEFT_KEY,
     SAVE_VIEW_KEY,
+    SERVICE_DELETE_PRESET,
     SERVICE_GOTO_PRESET,
     SERVICE_RECORD,
     SIREN_KEY,
@@ -433,6 +434,7 @@ _ACCOUNT: Final = AccountRejectedError(6033, -104)
         (LIVE_PRESET_KEY, "select", _ACCOUNT, "account_rejected"),
         (LIVE_ZOOM_KEY, "zoom", _ACCOUNT, "account_rejected"),
         (CAMERA_KEY, SERVICE_GOTO_PRESET, _ACCOUNT, "account_rejected"),
+        (CAMERA_KEY, SERVICE_DELETE_PRESET, _ACCOUNT, "account_rejected"),
     ],
     ids=lambda value: value if isinstance(value, str) else type(value).__name__,
 )
@@ -455,6 +457,7 @@ async def test_a_refused_camera_command_names_the_camera_and_the_station(
         (Station, "async_pan_tilt"),
         (Station, "async_store_preset"),
         (Station, "async_set_default_preset"),
+        (Station, "async_delete_preset"),
         (StreamManager, "async_turn_live_view"),
         (StreamManager, "async_set_live_zoom"),
         (StreamManager, "async_goto_preset"),
@@ -525,7 +528,11 @@ async def test_a_paired_device_is_named_as_home_assistant_names_it(
             config_entry_id=entry.entry_id, identifiers={(DOMAIN, SYNTHETIC.camera_sn)}
         )
         devices.async_update_device(row.id, name=registered, name_by_user=by_user)
-    coordinator = _coordinator(hass, entry, {} if eufy is None else {SYNTHETIC.camera_sn: eufy})
+    # Another paired device listed first: the lookup must take the camera's own name.
+    listed = {"T8160P0000000002": "Back"}
+    if eufy is not None:
+        listed[SYNTHETIC.camera_sn] = eufy
+    coordinator = _coordinator(hass, entry, listed)
 
     assert errors.station_named_target(coordinator, SYNTHETIC.camera_sn, "Light") == expected
 
