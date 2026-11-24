@@ -43,6 +43,7 @@ from custom_components.eufy_home_security.settings import (
     json_value,
     setting_platform,
     setting_specs,
+    without_location,
 )
 
 # An entry sensor with door and low-battery statuses, and one with door and tamper.
@@ -347,6 +348,14 @@ async def _enabled_station_sensor(
 
 
 _DOCUMENT: Final = {"mode": 1, "devices": [{"channel": 0, "action": 3}]}
+# The same document with the house's location in it, as a light's object stores it.
+_LOCATED: Final = {
+    "mode": 1,
+    "latitude": "1.5",
+    "Longtitude": "2.5",
+    "devices": [{"channel": 0, "action": 3, "lat": "1.5", "lng": "2.5"}],
+    "house_address": "x",
+}
 
 
 @pytest.mark.parametrize(
@@ -355,6 +364,7 @@ _DOCUMENT: Final = {"mode": 1, "devices": [{"channel": 0, "action": 3}]}
         ("ai_empower", "1", "1"),
         ("ai_empower", '[{"ch": 0, "on": 1}]', [{"ch": 0, "on": 1}]),
         (_JSON_SETTING, json.dumps(_DOCUMENT), _DOCUMENT),
+        (_JSON_SETTING, json.dumps(_LOCATED), _DOCUMENT),
         (_JSON_SETTING, "y" * 400, "y" * 400),
     ],
 )
@@ -367,8 +377,8 @@ async def test_a_structured_value_is_never_the_state(
     raw: str,
     expected: Any,
 ) -> None:
-    """A structured setting's value: state unknown, ``value`` the decoded JSON, or the
-    raw value when it does not parse."""
+    """A structured setting's value: state unknown, ``value`` the decoded JSON without
+    the house's location, or the raw value when it does not parse."""
     seed_warm_cache()
     entry, setting, entity_id = await _enabled_station_sensor(hass, fake_station, key, raw)
     assert setting.structured
@@ -650,6 +660,25 @@ async def test_an_enabled_status_row_whose_setting_is_diagnostic_now_is_forgotte
         entity_unique_id(SYNTHETIC.station_sn, "hb_keypad_is_password_set"),
     )
     await _stop(hass, entry)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (
+            {"Lat": 1, "LNG": 2, "long-titude": 3, "lon": 4, "location": 5, "enable": 1},
+            {"enable": 1},
+        ),
+        # Whole keys only: a member that only starts with a location word stays.
+        ({"latency": 1, "location_mode": 2}, {"latency": 1, "location_mode": 2}),
+        ([{"address": "x", "a": 1}, [{"lng": 2}]], [{"a": 1}, [{}]]),
+        ({"schedule": {"sun_rise": "06:00", "lat": 1}}, {"schedule": {"sun_rise": "06:00"}}),
+        ("lat", "lat"),
+        (5, 5),
+    ],
+)
+def test_location_members_are_left_out_at_any_depth(value: Any, expected: Any) -> None:
+    assert without_location(value) == expected
 
 
 async def test_a_row_with_a_translation_key_or_another_class_is_not_a_setting_row(

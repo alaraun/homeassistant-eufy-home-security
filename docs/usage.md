@@ -638,10 +638,12 @@ the camera and its settings. The limits above apply.
   Their rows from an earlier release are removed at the next start.
 - A setting value made of several fields is never shown as the state: the state is
   unknown and the attribute `value` holds the fields, or the value as the device
-  reported it when it does not parse. A text longer than 255 characters is cut to 255.
-  Such a value gets no control even when writable (a floodlight's light schedule): a
-  sensor when readable, else no entity; the text entity of an earlier release is
-  removed at the next start.
+  reported it when it does not parse. Fields that locate your home (`latitude`,
+  `longitude` and their short forms `lat`, `lng`, an address) are left out: a light's
+  motion-activated, ambient-light and dusk-to-dawn settings can carry them. A text longer than 255
+  characters is cut to 255. Such a value gets no control even when writable (a light's
+  schedule or motion-activated settings): a sensor when readable, else no entity; the
+  text entity of an earlier release is removed at the next start.
 - A read-only status an earlier release created disabled is enabled at the next start
   (Home Assistant reloads the integration once), unless you disabled it yourself or
   "Enable newly added entities" is off.

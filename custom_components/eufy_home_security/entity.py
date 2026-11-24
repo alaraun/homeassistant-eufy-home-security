@@ -20,6 +20,7 @@ from eufy_home_security import (
     UnsupportedError,
     entity_unique_id,
 )
+from eufy_home_security.devices.model_settings import Value
 
 from . import errors, runtime
 from .const import (
@@ -38,8 +39,8 @@ from .settings import SettingEntitySpec, member_in_use, setting_platform
 if TYPE_CHECKING:
     from .runtime import EufyConfigEntry
 
-type SettingValue = bool | int | float | str
-"""A setting's public value (``Setting.validate``)."""
+type SettingValue = Value
+"""A setting's public value (``Setting.validate``): a bool, a number, text or a JSON object."""
 
 
 def device_block(data: StationState | None, device_sn: str) -> SubDeviceState | None:
