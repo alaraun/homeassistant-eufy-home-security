@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.24-2';
+const CARD_VERSION = '2026.11.24-3';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -658,6 +658,10 @@ class EufyCameraCard extends HTMLElement {
     clearTimeout(this._ringT);
     clearTimeout(this._lactT);
     this._tapCancel();
+    // pointers down now never see their end
+    if (this._ptrs) this._ptrs.clear();
+    this._dzP.clear();
+    this._dzG = null;
     clearTimeout(this._visT);
     this._visT = null;
     this._hidAt = null;
@@ -3565,6 +3569,8 @@ class EufyCameraCard extends HTMLElement {
     // (a pinch, or a drag while zoomed).
     this._ptrs = new Map();
     this._pic.addEventListener('pointerdown', (ev) => {
+      // a primary pointer starts a new press: drop pointers whose end never arrived (the card left the page mid-touch)
+      if (ev.isPrimary) { this._ptrs.clear(); this._dzP.clear(); }
       this._ptrs.set(ev.pointerId, [ev.clientX, ev.clientY]);
       if (this._ptrs.size > 1) { this._multi = true; this._tapCancel(); }
       else { this._multi = false; this._down0 = [ev.clientX, ev.clientY]; }
