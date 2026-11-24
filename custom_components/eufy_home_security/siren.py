@@ -96,16 +96,23 @@ class _EufySiren(SirenEntity):
 
     _attr_translation_key = SIREN_KEY
     coordinator: StationCoordinator
+    # The siren's device; None for the station's own.
+    _device_sn: str | None = None
 
     def _failed(self, err: EufySecurityError) -> HomeAssistantError:
         """The translated error for a failed command, naming this entity by its shown
-        name (device and siren), never a serial."""
+        name (device and siren), never a serial; the station's account refusal names
+        the siren of the station itself without the station's name again."""
         state = self.hass.states.get(self.entity_id) if self.entity_id else None
         name = state.name if state is not None else self.name
+        own = self.name
         return errors.siren_failed(
             err,
             name if isinstance(name, str) else SIREN_KEY,
             station_name=errors.station_display_name(self.coordinator),
+            station_target=errors.station_named_target(
+                self.coordinator, self._device_sn, own if isinstance(own, str) else SIREN_KEY
+            ),
             on_demand=self.coordinator.station.connects_on_demand,
         )
 

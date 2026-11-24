@@ -203,10 +203,10 @@ async def test_a_select_write_under_another_account_keeps_the_last_option(
     assert raised.value.translation_domain == DOMAIN
     assert raised.value.translation_key == "account_rejected"
     placeholders = raised.value.translation_placeholders
-    assert placeholders == {
-        "target": setting.name,
-        "station": entry.runtime_data.coordinators[SYNTHETIC.station_sn].station.name,
-    }
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+    # The camera's name in front: the station answers for it.
+    camera = station.sub_device(SYNTHETIC.camera_sn).name
+    assert placeholders == {"target": f"{camera} {setting.name}", "station": station.name}
     assert shown == []
     assert state_of(hass, entity_id) == setting.label(1)
 

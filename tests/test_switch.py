@@ -258,9 +258,12 @@ async def test_a_switch_write_under_another_account_raises_the_account_hint(
 
     assert raised.value.translation_domain == DOMAIN
     assert raised.value.translation_key == "account_rejected"
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+    # The camera's name in front: the station answers for it.
+    camera = station.sub_device(SYNTHETIC.camera_sn).name
     assert raised.value.translation_placeholders == {
-        "target": settings_of("T8160")[_STATUS_LED].name,
-        "station": entry.runtime_data.coordinators[SYNTHETIC.station_sn].station.name,
+        "target": f"{camera} {settings_of('T8160')[_STATUS_LED].name}",
+        "station": station.name,
     }
     assert shown == []
     assert state_of(hass, led_id) == STATE_OFF

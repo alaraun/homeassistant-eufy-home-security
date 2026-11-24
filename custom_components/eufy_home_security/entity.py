@@ -394,6 +394,7 @@ class EufySettingEntity(EufyDeviceEntity):
                 err,
                 self._write_target(),
                 station_name=errors.station_display_name(self.coordinator),
+                station_target=self._station_target(),
                 on_demand=self.coordinator.station.connects_on_demand,
             ) from err
         except UnsupportedError:
@@ -406,6 +407,7 @@ class EufySettingEntity(EufyDeviceEntity):
             self.async_write_ha_state()
             raise errors.setting_write_unconfirmed(self._write_target()) from err
         except EufySecurityError as err:
+            # Not the station's answer (that is a CommandError): no message names it.
             raise errors.setting_write_failed(
                 err,
                 self._write_target(),
@@ -440,6 +442,7 @@ class EufySettingEntity(EufyDeviceEntity):
                 err,
                 self._write_target(),
                 station_name=errors.station_display_name(self.coordinator),
+                station_target=self._station_target(),
                 on_demand=self.coordinator.station.connects_on_demand,
             ) from err
         self._async_show_written(self._spec.setting.key, None, readable=True)
@@ -478,6 +481,12 @@ class EufySettingEntity(EufyDeviceEntity):
         """How a failed write names this setting: the entity's name, else its key; never a serial."""
         name = self.name
         return name if isinstance(name, str) else self._spec.setting.key
+
+    def _station_target(self) -> str:
+        """How a message naming the station names this setting: with its device's name."""
+        return errors.station_named_target(
+            self.coordinator, self._spec.device_sn, self._write_target()
+        )
 
     @callback
     def _async_show_written(self, key: str, value: SettingValue | None, *, readable: bool) -> None:

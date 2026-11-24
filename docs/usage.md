@@ -653,7 +653,9 @@ the camera and its settings. The limits above apply.
   tested).
 - A write shows the written value at once.
   - The device rejects it: error *setting not applied*; the entity keeps the value
-    last reported.
+    last reported. The error names the station that answered and, for a device behind
+    a HomeBase, the device before the setting (see
+    [troubleshooting.md](troubleshooting.md#setting-errors)).
   - No answer in time: error *setting unconfirmed*; the entity shows unknown until
     the next update shows the value in force.
   - A control the device never reports back is marked as assumed state: unknown until
