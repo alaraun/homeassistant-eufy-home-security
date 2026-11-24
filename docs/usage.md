@@ -3,13 +3,15 @@
 ## Options
 
 **Settings → Devices & services → Anker eufy Home Security → Configure**. The options
-sit in six collapsible sections.
+sit in seven collapsible sections.
 
 | Section | Option | Default | Description |
 |---|---|---|---|
 | Detections and alarm | Detection hold (seconds) | 10 | 5–300. How long a detection sensor stays on; the HomeBase never reports a detection's end |
 | | Alarm safety-net timeout (minutes) | 10 | 1–60. Ends Triggered or Pending if the HomeBase never reports the alarm's end |
 | | Repair when a security mode holds detections back | On | The repair naming cameras whose detections the security mode in force holds back. Off removes it and raises none; each camera's **Detections in current mode** sensor still shows it. See [Detections in the security mode](#detections-in-the-security-mode) |
+| Camera activity polling | Enable fast camera activity polling | Off | Optional faster full-station reads for activity counters; see [Optional faster camera activity polling](#optional-faster-camera-activity-polling) |
+| | Activity polling interval (seconds) | 5 | 1–44 seconds when enabled; continuously connected stations only |
 | Camera images | Event image | Thumbnail, then HD | What a detection and **Refresh event image** show; see [Camera images](#camera-images) |
 | | Refresh event image keyframe | 1 | 1–5. Selects the keyframe for Refresh event image unless Event image is Thumbnail only. Later keyframes take longer and can delay image fetches for other cameras on the same HomeBase. Short recordings use their last keyframe; detection images are unchanged |
 | | Live snapshot for cameras without a detection image | Off | A camera with live video and without a detection image takes one live still, at most every 5 min. Wakes battery cameras |
@@ -36,7 +38,8 @@ reloads the integration.
   except Off and Geofencing, Schedule and the Custom modes included, under their names
   (in an automation: `select.select_option`). It shows the selected mode (Schedule while
   a schedule runs); the panel shows the mode in force.
-- A mode changed in the eufy app shows within 45 s.
+- A mode changed in the eufy app is reflected by the next scheduled station read
+  (45 seconds by default, faster when configured), or sooner if the HomeBase reports it.
 - **Entry delay:** when an armed HomeBase starts its alarm delay for a trigger (an
   entry sensor's door opened in a mode with a delay), the panel shows **Pending**
   with the attributes `delay_seconds` (the delay) and `delay_until` (when it runs
@@ -44,7 +47,7 @@ reloads the integration.
   - the alarm sounds: **Triggered**, as for any alarm;
   - the HomeBase ends the delay without an alarm: the mode again;
   - a disarm in Home Assistant, on a keypad or in the eufy app: **Disarmed** as soon
-    as the HomeBase reports it (its own report comes at once; otherwise the 45 s
+    as the HomeBase reports it (its own report comes at once; otherwise the next scheduled station
     refresh shows it);
   - another trigger during the delay: Pending runs to whichever end is later;
   - nothing more is heard: Pending ends on its own 2 s after `delay_until` (the
@@ -206,6 +209,38 @@ Counter observations require an updated station parameter snapshot. Reporting
 and latency depend on polling frequency, station model and firmware. These
 events do not remove the existing notification-delivery repair warning: detailed
 detection pushes remain unavailable when the HomeBase suppresses them.
+
+#### Optional faster camera activity polling
+
+By default, each station coordinator refreshes its state every **45 seconds**.
+To observe changes to the camera activity counters sooner, open the eufy Home
+Security integration's **Configure** options and expand **Camera activity
+polling**:
+
+- **Enable fast camera activity polling:** Off by default.
+- **Activity polling interval:** 1–44 seconds; 5 seconds by default when enabled.
+
+The faster interval applies to continuously connected stations belonging to
+this integration entry. It replaces their normal 45-second coordinator interval;
+it does **not** add a second independent polling loop. Changing these options
+reloads the integration.
+
+**Each refresh reads the full station parameter snapshot**, including all
+paired-device parameters, rather than only counters 1192 and 1193. Fast polling
+therefore increases local P2P traffic and station work. For context, one
+HomeBase 2 test returned roughly 51 KB per read; response sizes vary by
+station and firmware. One-second polling was tested on that HomeBase 2, but
+is not guaranteed to be suitable for other models. Choose a longer interval
+if responsiveness is less important than reducing station traffic.
+
+On-demand battery stations retain the normal coordinator interval. Their
+cached state is returned without waking them for a fresh read, so the fast
+option does not force those cameras awake.
+
+Faster polling can reduce the delay between a counter increase becoming
+available and Home Assistant observing it. It cannot guarantee immediate
+notifications, determine the original event time, or turn aggregate counts
+into individual detection events. Existing detection pushes remain separate.
 
 ### Detections in the security mode
 
@@ -593,7 +628,8 @@ push. Whether a HomeBase 3 also delivers these events over LAN is unverified.
 
 ## Power and storage state
 
-Read from the HomeBase's parameter report, refreshed every 45 s; nothing wakes a
+Read from the HomeBase's parameter report, refreshed every 45 seconds by
+default (or faster on eligible stations when configured); nothing wakes a
 camera. Each entity appears once its device reports the value; a value its device
 stops reporting shows unknown. The code meanings are declared from eufy's app code,
 not checked against the app's display.
@@ -674,10 +710,12 @@ actions:
 
 - `not_from` and the condition skip a restart or reload (the change to and from
   unavailable, the entity added or removed) and the counter's reset after a USB charge.
-- The station counts a recording some seconds after it starts, and the sensor shows the
-  count at the next refresh (45 s), so the trigger fires up to about a minute after the
-  recording started. Several recordings between two refreshes fire once; `to - from` is
-  their number.
+- The station counts a recording some seconds after it starts. The sensor shows the
+  count at the next station refresh: normally every 45 seconds, or at the configured
+  faster interval for an eligible station when fast camera activity polling is enabled.
+  Actual notification delay also depends on when the station updates its counter,
+  so the polling interval is not a guaranteed detection latency. Several recordings
+  between refreshes fire once; `to - from` is their number.
 - It carries no time, kind, picture or clip. Where the **Detection** event fires, an
   automation on both notifies twice.
 
@@ -791,7 +829,7 @@ the camera and its settings. The limits above apply.
   settings page is listed under Diagnostic. A
   status the device has not reported shows unknown. The door (and tamper) state
   follows each open and close as the HomeBase reports it, without waiting for the
-  45 s refresh.
+  scheduled station refresh.
 - A setting it can only read but the app offers as a control is a diagnostic sensor
   or binary sensor, disabled until you enable it. A value the app does not show, one
   another entity already gives (battery, firmware update in progress), a status made

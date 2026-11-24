@@ -1,13 +1,13 @@
-"""One coordinator per station: the local P2P parameter read, on a generous interval."""
+"""One coordinator per station: scheduled P2P reads, optionally faster."""
 
 from __future__ import annotations
 
 import dataclasses
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import timedelta
 from enum import Enum
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, Any, override
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -22,12 +22,37 @@ from eufy_home_security import (
 )
 
 from . import errors
-from .const import DOMAIN, POLL_INTERVAL_SECONDS
+from .const import (
+    CONF_FAST_ACTIVITY_POLL,
+    CONF_FAST_ACTIVITY_POLL_INTERVAL,
+    DEFAULT_FAST_ACTIVITY_POLL_SECONDS,
+    DOMAIN,
+    MAX_FAST_ACTIVITY_POLL_SECONDS,
+    MIN_FAST_ACTIVITY_POLL_SECONDS,
+    POLL_INTERVAL_SECONDS,
+)
 
 if TYPE_CHECKING:
     from .runtime import EufyConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def activity_poll_interval(options: Mapping[str, Any], *, on_demand: bool) -> int:
+    """Select one coordinator interval, without adding a second polling loop.
+
+    Fast polling performs full station reads, not counter-only queries.
+    On-demand battery stations retain the normal 45-second schedule.
+    """
+    if on_demand or options.get(CONF_FAST_ACTIVITY_POLL) is not True:
+        return POLL_INTERVAL_SECONDS
+
+    value = options.get(CONF_FAST_ACTIVITY_POLL_INTERVAL, DEFAULT_FAST_ACTIVITY_POLL_SECONDS)
+    if type(value) is not int or not (
+        MIN_FAST_ACTIVITY_POLL_SECONDS <= value <= MAX_FAST_ACTIVITY_POLL_SECONDS
+    ):
+        return POLL_INTERVAL_SECONDS
+    return value
 
 
 class ModeRead(Enum):
@@ -76,13 +101,15 @@ class StationCoordinator(DataUpdateCoordinator[StationState]):
             # HA names the coordinator in every failed-poll log line: never the
             # full serial.
             name=f"{DOMAIN} {redact_serial(station.serial)}",
-            update_interval=timedelta(seconds=POLL_INTERVAL_SECONDS),
+            update_interval=timedelta(
+                seconds=activity_poll_interval(entry.options, on_demand=station.connects_on_demand)
+            ),
             # A poll that read the same state notifies no entity.
             always_update=False,
         )
         self.station = station
         # Channels already reported without a serial, so a station that keeps
-        # reporting one says so once rather than on every 45 s poll.
+        # reporting one says so once rather than on every scheduled poll.
         self._logged_serialless: set[int] = set()
         self._mode_read_listeners: list[Callable[[ModeRead], None]] = []
         # `Station.config`, built again after a `StationConfigChanged` (`_config_stale`).
@@ -174,7 +201,7 @@ class StationCoordinator(DataUpdateCoordinator[StationState]):
         identity that would survive the device being moved to another HomeBase, so it
         becomes no device and no entities rather than a slot-numbered one that breaks
         on the next re-pair. Said at DEBUG once per channel: a station that
-        keeps reporting the slot would otherwise repeat it on every 45 s poll. The
+        keeps reporting the slot would otherwise repeat it on every poll. The
         line carries the station's redacted serial and the slot number only.
         """
         for device in state.devices.values():
@@ -208,7 +235,7 @@ class StationCoordinator(DataUpdateCoordinator[StationState]):
         ``async_update_listeners``, which only notifies
         the entities. The coordinator's set-updated-data method would also cancel
         and reschedule the poll, so a steady stream
-        of reports would postpone the 45 s poll that stays authoritative.
+        of reports would postpone the scheduled guard-mode poll.
 
         Nothing happens before the first read (there is no state to amend, and the
         first refresh reads the mode) or when the mode is already shown, so a
@@ -237,8 +264,8 @@ class StationCoordinator(DataUpdateCoordinator[StationState]):
         ``data`` and calls ``async_update_listeners``,
         which only notifies the entities. The coordinator's set-updated-data method
         would also cancel and reschedule the poll,
-        so a steady stream of dumps would postpone the 45 s poll that stays
-        authoritative for guard mode.
+        so a steady stream of dumps would postpone the scheduled poll that
+        stays authoritative for guard mode.
 
         Nothing happens before the station has a state, or when that state is the
         one already shown, so a repeated dump writes no entity state. A repeated

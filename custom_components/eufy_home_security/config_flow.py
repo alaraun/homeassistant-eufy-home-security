@@ -57,6 +57,8 @@ from .const import (
     CONF_EVENT_HISTORY_DAYS,
     CONF_EVENT_VIDEOS,
     CONF_EXTRA_COUNTRIES,
+    CONF_FAST_ACTIVITY_POLL,
+    CONF_FAST_ACTIVITY_POLL_INTERVAL,
     CONF_FULL_RESOLUTION_CAPTURE,
     CONF_LIVE_SNAPSHOT,
     CONF_MODE_HOLDS_DETECTIONS_REPAIR,
@@ -70,6 +72,7 @@ from .const import (
     DEFAULT_CAMERA_IMAGE,
     DEFAULT_DETECTION_HOLD_SECONDS,
     DEFAULT_EVENT_HISTORY_DAYS,
+    DEFAULT_FAST_ACTIVITY_POLL_SECONDS,
     DEFAULT_RECORD_LENGTH_SECONDS,
     DEFAULT_REFRESH_KEYFRAME,
     DOMAIN,
@@ -80,11 +83,14 @@ from .const import (
     MAX_ALARM_TIMEOUT_MINUTES,
     MAX_DETECTION_HOLD_SECONDS,
     MAX_EVENT_HISTORY_DAYS,
+    MAX_FAST_ACTIVITY_POLL_SECONDS,
     MAX_RECORD_LENGTH_SECONDS,
     MAX_REFRESH_KEYFRAME,
     MIN_ALARM_TIMEOUT_MINUTES,
     MIN_DETECTION_HOLD_SECONDS,
+    MIN_FAST_ACTIVITY_POLL_SECONDS,
     MIN_RECORD_LENGTH_SECONDS,
+    OPTIONS_SECTION_CAMERA_ACTIVITY,
     OPTIONS_SECTION_CAMERA_IMAGES,
     OPTIONS_SECTION_DETECTIONS,
     OPTIONS_SECTION_EUFY_ACCOUNT,
@@ -144,7 +150,7 @@ def _whole(unit: UnitOfTime, low: int, high: int) -> NumberSelector:
     )
 
 
-# The entry's sixteen options, flat, in form order. Read once at setup, so a change
+# The entry's eighteen options, flat, in form order. Read once at setup, so a change
 # applies on the reload, except the recording length and the sessions per HomeBase.
 # Ranges and defaults of the sessions are the library's; an empty country means Home
 # Assistant's; each extra country is one more sign-in (a change of either country
@@ -158,6 +164,12 @@ OPTIONS_SCHEMA = vol.Schema(
             UnitOfTime.MINUTES, MIN_ALARM_TIMEOUT_MINUTES, MAX_ALARM_TIMEOUT_MINUTES
         ),
         vol.Required(CONF_MODE_HOLDS_DETECTIONS_REPAIR, default=True): BooleanSelector(),
+        vol.Required(CONF_FAST_ACTIVITY_POLL, default=False): BooleanSelector(),
+        vol.Required(
+            CONF_FAST_ACTIVITY_POLL_INTERVAL, default=DEFAULT_FAST_ACTIVITY_POLL_SECONDS
+        ): _whole(
+            UnitOfTime.SECONDS, MIN_FAST_ACTIVITY_POLL_SECONDS, MAX_FAST_ACTIVITY_POLL_SECONDS
+        ),
         vol.Required(CONF_CAMERA_IMAGE, default=DEFAULT_CAMERA_IMAGE.value): SelectSelector(
             SelectSelectorConfig(
                 options=[mode.value for mode in CameraImageMode],
@@ -206,6 +218,10 @@ OPTIONS_SECTIONS: Mapping[str, tuple[str, ...]] = MappingProxyType(
             CONF_DETECTION_HOLD,
             CONF_ALARM_TIMEOUT,
             CONF_MODE_HOLDS_DETECTIONS_REPAIR,
+        ),
+        OPTIONS_SECTION_CAMERA_ACTIVITY: (
+            CONF_FAST_ACTIVITY_POLL,
+            CONF_FAST_ACTIVITY_POLL_INTERVAL,
         ),
         OPTIONS_SECTION_CAMERA_IMAGES: (
             CONF_CAMERA_IMAGE,
@@ -787,7 +803,7 @@ class EufyHomeSecurityConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
-    """The entry's sixteen options, in six collapsible sections, stored flat.
+    """The entry's eighteen options, in seven collapsible sections, stored flat.
 
     Three things worth knowing about this class:
 
@@ -806,10 +822,10 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
     """
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Show the options in their sections, and save exactly the sixteen they offer
-        flat: seven bools, six ints, a choice, a country and a country list.
+        """Show the options in their sections, and save exactly the eighteen they offer
+        flat: eight bools, seven ints, a choice, a country and a country list.
 
-        The saved mapping is rebuilt from those sixteen keys rather than passing
+        The saved mapping is rebuilt from those eighteen keys rather than passing
         ``user_input`` through, so a submission carrying more than the schema asked
         for cannot persist anything else into the entry's options. The selectors
         have already refused a duration outside its range.
@@ -828,6 +844,8 @@ class EufyHomeSecurityOptionsFlow(OptionsFlowWithReload):
                 CONF_DETECTION_HOLD: int(flat[CONF_DETECTION_HOLD] + 0.5),
                 CONF_ALARM_TIMEOUT: int(flat[CONF_ALARM_TIMEOUT] + 0.5),
                 CONF_MODE_HOLDS_DETECTIONS_REPAIR: bool(flat[CONF_MODE_HOLDS_DETECTIONS_REPAIR]),
+                CONF_FAST_ACTIVITY_POLL: bool(flat[CONF_FAST_ACTIVITY_POLL]),
+                CONF_FAST_ACTIVITY_POLL_INTERVAL: int(flat[CONF_FAST_ACTIVITY_POLL_INTERVAL] + 0.5),
                 CONF_CAMERA_IMAGE: CameraImageMode(flat[CONF_CAMERA_IMAGE]).value,
                 CONF_REFRESH_KEYFRAME: int(flat[CONF_REFRESH_KEYFRAME] + 0.5),
                 CONF_LIVE_SNAPSHOT: bool(flat[CONF_LIVE_SNAPSHOT]),

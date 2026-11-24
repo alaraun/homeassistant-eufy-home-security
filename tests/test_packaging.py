@@ -684,8 +684,8 @@ def _option_texts(step: dict[str, Any], part: str) -> dict[str, str]:
     return {key: text for texts in step["sections"].values() for key, text in texts[part].items()}
 
 
-def test_the_options_flow_offers_exactly_its_sixteen_options() -> None:
-    """The entry's options are exactly these sixteen; a new one needs a deliberate change here.
+def test_the_options_flow_offers_exactly_its_eighteen_options() -> None:
+    """The entry's options are exactly these eighteen; a new one needs a deliberate change here.
 
     The detection hold (seconds) and the alarm safety-net timeout (minutes) default
     to 10. The mode-holds-detections repair shows by default. The live snapshot is
@@ -721,6 +721,8 @@ def test_the_options_flow_offers_exactly_its_sixteen_options() -> None:
         CONF_EVENT_HISTORY_DAYS,
         CONF_EVENT_VIDEOS,
         CONF_EXTRA_COUNTRIES,
+        CONF_FAST_ACTIVITY_POLL,
+        CONF_FAST_ACTIVITY_POLL_INTERVAL,
         CONF_FULL_RESOLUTION_CAPTURE,
         CONF_LIVE_SNAPSHOT,
         CONF_MODE_HOLDS_DETECTIONS_REPAIR,
@@ -730,6 +732,7 @@ def test_the_options_flow_offers_exactly_its_sixteen_options() -> None:
         CONF_SESSION_PROBE,
         CONF_STATION_SESSIONS,
         DEFAULT_EVENT_HISTORY_DAYS,
+        DEFAULT_FAST_ACTIVITY_POLL_SECONDS,
         DEFAULT_RECORD_LENGTH_SECONDS,
         DEFAULT_REFRESH_KEYFRAME,
         OPTIONS_SECTION_MORE_COUNTRIES,
@@ -749,6 +752,8 @@ def test_the_options_flow_offers_exactly_its_sixteen_options() -> None:
         CONF_DETECTION_HOLD,
         CONF_ALARM_TIMEOUT,
         CONF_MODE_HOLDS_DETECTIONS_REPAIR,
+        CONF_FAST_ACTIVITY_POLL,
+        CONF_FAST_ACTIVITY_POLL_INTERVAL,
         CONF_CAMERA_IMAGE,
         CONF_REFRESH_KEYFRAME,
         CONF_LIVE_SNAPSHOT,
@@ -765,7 +770,7 @@ def test_the_options_flow_offers_exactly_its_sixteen_options() -> None:
     ]
     keys = [str(key) for key in OPTIONS_SCHEMA.schema]
     assert keys == expected, (
-        f"the options schema offers {keys}; this entry has exactly sixteen options, and "
+        f"the options schema offers {keys}; this entry has exactly eighteen options, and "
         f"another one added here without a decision would ship unannounced"
     )
     assert [key for keys in OPTIONS_SECTIONS.values() for key in keys] == expected, (
@@ -775,6 +780,8 @@ def test_the_options_flow_offers_exactly_its_sixteen_options() -> None:
         hold,
         timeout,
         repair,
+        fast_enabled,
+        fast_interval,
         camera_image,
         refresh_keyframe,
         live,
@@ -802,6 +809,8 @@ def test_the_options_flow_offers_exactly_its_sixteen_options() -> None:
     assert hold.default() == 10, "the detection hold does not default to 10 s"
     assert timeout.default() == 10, "the alarm timeout does not default to 10 min"
     assert repair.default() is True, "the mode-holds-detections repair shows by default"
+    assert fast_enabled.default() is False, "fast polling must be opt-in"
+    assert fast_interval.default() == DEFAULT_FAST_ACTIVITY_POLL_SECONDS == 5
     assert camera_image.default() == "hd", (
         "the camera image does not default to hd, the library's suggested configuration"
     )

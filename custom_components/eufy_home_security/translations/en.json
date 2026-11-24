@@ -87,6 +87,18 @@
               "mode_holds_detections_repair": "On by default. A repair names the cameras whose Notification action is off in the armed security mode in force, so the station sends none of their detections. Off removes these repairs and raises none; the cameras, the modes and their notifications are unchanged, and each camera's Detections in current mode sensor still shows it."
             }
           },
+          "camera_activity": {
+            "name": "Camera activity polling",
+            "description": "Optional faster observation of camera activity counters. Uses the full HomeBase parameter snapshot, not a counter-only request.",
+            "data": {
+              "fast_activity_poll": "Enable fast camera activity polling",
+              "fast_activity_poll_interval": "Activity polling interval (seconds)"
+            },
+            "data_description": {
+              "fast_activity_poll": "Off by default: normal station polling stays at 45 seconds. On: continuously connected stations read their full parameter snapshot more often to notice increases in detected-events (1192) and recorded-events (1193) counters sooner. This increases P2P traffic and does not change individual detection notifications. On-demand battery stations keep their normal polling.",
+              "fast_activity_poll_interval": "1–44 seconds, 5 by default when fast polling is enabled. Every read retrieves all station and paired-device parameters, not only the activity counters. One-second polling was tested on a HomeBase 2 only; other models and firmware may behave differently. Longer intervals reduce traffic."
+            }
+          },
           "camera_images": {
             "name": "Camera images",
             "description": "What a camera shows for a detection.",
