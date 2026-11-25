@@ -78,8 +78,9 @@ shows or what the user must be told:
   device.
 - ``DeviceAlarmChanged`` goes to that device's siren on its device alarm signal, inside
   the consuming window, as ``AlarmChanged``.
-- ``LockStateChanged`` goes to that lock's entity on its lock signal, inside the
-  consuming window. Outside it it is dropped: setup reads the state afresh.
+- ``LockStateChanged`` goes to that lock's entity on its lock signal, and
+  ``GarageDoorChanged`` to that door's cover on its garage door signal, inside the
+  consuming window. Outside it they are dropped: setup reads each state afresh.
 - ``PresetsChanged`` goes to the preset manager (``PresetManager.async_apply_presets``),
   which tells the preset platforms only inside the consuming window: they add the
   entities of a slot that appeared and mark a removed one unavailable, never
@@ -130,6 +131,7 @@ from eufy_home_security import (
     EventScope,
     EventSource,
     FrameCipher,
+    GarageDoorChanged,
     GuardModeChanged,
     GuardModeOrigin,
     KeyRejectedError,
@@ -402,6 +404,15 @@ class EventRouter:
             if self._consuming:
                 async_dispatcher_send(
                     self._hass, detections.lock_signal(self._entry.entry_id, event.device_sn), event
+                )
+        elif isinstance(event, GarageDoorChanged):
+            if self._consuming:
+                async_dispatcher_send(
+                    self._hass,
+                    detections.garage_door_signal(
+                        self._entry.entry_id, event.device_sn, event.door
+                    ),
+                    event,
                 )
         elif isinstance(event, AccountMismatch):
             # After the push's own SecurityEvent, which was routed as a detection.

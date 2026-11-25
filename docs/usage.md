@@ -98,6 +98,32 @@ reloads the integration.
 - A Wi-Fi lock the library reaches through no station gets no entity yet.
 - Based on the eufy app's behaviour, not tested on a real lock.
 
+## Garage doors
+
+- **Garage door** cover of a garage-door camera (T8452, T8453), one per door the camera
+  reports a motor or a sensor bound to; a door bound later appears with the report that
+  binds it. A camera with two doors names them **Garage door A** and **Garage door B**,
+  as the eufy app letters them. A door bound while the other was the camera's only one
+  is **Garage door B** (or **A**) at once; the first door keeps **Garage door** until the
+  integration reloads (a restart, or **Reload** in its menu), then reads **Garage door
+  A** (or **B**) with the same entity id.
+- Open and close where the door has a motor bound; a door with only a sensor shows its
+  state only.
+- Open, closed, opening, closing or unknown as the camera reports. Open and close return
+  at once: the door shows opening or closing until the camera's next report for it (the
+  camera reports no movement in between), for at most 5 minutes. A door that then
+  reports another state, a refused command, or no report logs one warning, and the door
+  shows the state it last reported.
+- The camera takes one door command at a time. While one waits for its report, the same
+  command of the same door again does nothing; the opposite command is refused with "The
+  garage door is still moving. Try again when it has stopped.", and a command of the
+  camera's other door with "The other garage door on this camera is still moving. Try
+  again when it has stopped."; nothing is sent. Reloading the integration ends the wait.
+- A door whose position is unknown refuses open and close with "The garage door's
+  position is unknown. Use the eufy app to move it." and sends nothing. The eufy app's
+  operate command, which runs the motor whichever way, is not offered.
+- Based on the eufy app's behaviour, not tested on a real garage door.
+
 ## Detections
 
 A motion sensor has a **Motion** binary sensor and a **Detection** event entity

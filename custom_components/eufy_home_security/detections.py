@@ -15,7 +15,8 @@ bus event.
 Station pushes (arming, alarm, alarm delay) are decided by
 :func:`station_event_consumed` and travel on :func:`station_signal`, one per station.
 The alarm's own state, the library's ``AlarmChanged``, travels on
-:func:`alarm_signal`. A lock's state (``LockStateChanged``) travels on :func:`lock_signal`.
+:func:`alarm_signal`. A lock's state (``LockStateChanged``) travels on :func:`lock_signal`,
+a garage door's (``GarageDoorChanged``) on :func:`garage_door_signal`.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from eufy_home_security import (
     DetectionType,
     DeviceAlarm,
     DeviceAlarmChanged,
+    GarageDoorChanged,
     GuardMode,
     LockStateChanged,
     PtzAction,
@@ -376,6 +378,13 @@ def has_lock(serial: str) -> bool:
     return _graded(serial, Capability.LOCK)
 
 
+def has_garage_doors(serial: str) -> bool:
+    """Whether the device ``serial`` can get garage door covers: the library grades its
+    ``Capability.GARAGE_DOOR`` other than unknown. Which doors it has is
+    ``Station.garage_doors``."""
+    return _graded(serial, Capability.GARAGE_DOOR)
+
+
 def _graded(serial: str, capability: Capability) -> bool:
     profile = profile_for_serial(serial)
     return profile is not None and profile.support(capability) is not Support.UNKNOWN
@@ -626,3 +635,11 @@ def lock_signal(entry_id: str, device_sn: str) -> SignalType[LockStateChanged]:
     The name is never logged or stored.
     """
     return SignalType(f"{DOMAIN}_lock_state_changed_{entry_id}_{device_sn}")
+
+
+def garage_door_signal(entry_id: str, device_sn: str, door: int) -> SignalType[GarageDoorChanged]:
+    """The dispatcher signal of one garage door's state changes in one entry.
+
+    The name is never logged or stored.
+    """
+    return SignalType(f"{DOMAIN}_garage_door_changed_{entry_id}_{device_sn}_{door}")

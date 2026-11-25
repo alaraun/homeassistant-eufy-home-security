@@ -1118,6 +1118,7 @@ _PLATFORM_MODULES = frozenset(
         "binary_sensor",
         "button",
         "camera",
+        "cover",
         "event",
         "image",
         "light",

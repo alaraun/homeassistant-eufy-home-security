@@ -150,6 +150,24 @@
           "unlocking": "mdi:lock-clock"
         }
       }
+    },
+    "cover": {
+      "garage_door": {
+        "default": "mdi:garage",
+        "state": {
+          "open": "mdi:garage-open",
+          "opening": "mdi:arrow-up-box",
+          "closing": "mdi:arrow-down-box"
+        }
+      },
+      "garage_door_lettered": {
+        "default": "mdi:garage",
+        "state": {
+          "open": "mdi:garage-open",
+          "opening": "mdi:arrow-up-box",
+          "closing": "mdi:arrow-down-box"
+        }
+      }
     }
   },
   "services": {
