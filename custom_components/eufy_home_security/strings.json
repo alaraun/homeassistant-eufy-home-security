@@ -518,6 +518,18 @@
     },
     "siren_duration_invalid": {
       "message": "The HomeBase siren sounds for at most {max} seconds. Choose a duration of {max} seconds or less."
+    },
+    "lock_not_supported": {
+      "message": "Locking and unlocking from Home Assistant is not supported yet. Use the eufy app."
+    },
+    "garage_door_position_unknown": {
+      "message": "The garage door's position is unknown. Use the eufy app to move it."
+    },
+    "garage_door_moving": {
+      "message": "The garage door is still moving. Try again when it has stopped."
+    },
+    "garage_other_door_moving": {
+      "message": "The other garage door on this camera is still moving. Try again when it has stopped."
     }
   },
   "entity": {
@@ -622,6 +634,19 @@
     "siren": {
       "siren": {
         "name": "Siren"
+      }
+    },
+    "lock": {
+      "lock": {
+        "name": "Lock"
+      }
+    },
+    "cover": {
+      "garage_door": {
+        "name": "Garage door"
+      },
+      "garage_door_lettered": {
+        "name": "Garage door {door}"
       }
     },
     "switch": {},

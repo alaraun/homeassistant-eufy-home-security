@@ -11,12 +11,14 @@ from types import SimpleNamespace
 from typing import Any, Final
 
 import pytest
-from conftest import entity_id_for, now_ms, record_states, set_up_warm, wait_until
+from conftest import entity_id_for, now_ms, record_states, set_up_warm, state_of, wait_until
 from eufy_home_security import DetectionType, ImageSource, SecurityEvent, Station
 from eufy_home_security.devices import DeviceKind, Support, model_for_serial
 from eufy_home_security.p2p.messages import STANDALONE_RECEIPT_LEN
 from eufy_home_security.push.decode import decode_push
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
+from homeassistant.components.lock import DOMAIN as LOCK_DOMAIN
+from homeassistant.components.lock import LockState
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
@@ -25,6 +27,7 @@ from pytest_homeassistant.common import async_fire_time_changed
 from custom_components.eufy_home_security import detections
 from custom_components.eufy_home_security.const import (
     CONF_CAMERA_IMAGE,
+    LOCK_KEY,
     PERSON_DETECTED_KEY,
     STANDALONE_THUMBNAIL_DELAY_SECONDS,
 )
@@ -35,6 +38,8 @@ NO_LIVE_SN: Final = "T8530P0000000001"
 LIVE_SN: Final = "T8531P0000000001"
 # The parameter block a standalone device labels with its device type (synthetic).
 DEVICE_TYPE: Final = 51
+# The lock-state parameter of a lock that is its own station (library guide, Locks).
+STANDALONE_LOCK_STATE_PARAM: Final = 6000
 
 
 @pytest.fixture
@@ -231,3 +236,20 @@ def test_standalone_image_wanted_refuses_a_device_it_may_not_wake() -> None:
     kind = detections.entity_kind(NO_LIVE_SN)
     assert detections.has_detection_entities(kind)
     assert not detections.standalone_image_wanted(Standalone(), kind, event)  # type: ignore[arg-type]
+
+
+@pytest.mark.usefixtures("built_clients")
+async def test_a_standalone_video_lock_shows_its_own_lock_state(
+    hass: HomeAssistant, fake_station: FakeStation, seed_warm_cache: Callable[..., None]
+) -> None:
+    """A video lock that is its own station reads its lock state (parameter 6000) on its
+    own device's lock entity and follows a new report."""
+    fake_station.params[DEVICE_TYPE][STANDALONE_LOCK_STATE_PARAM] = "4"
+    fake_station.sd_info = (0, 32000, 16000)  # answers setup's storage query at once
+    await set_up_warm(hass, seed_warm_cache)
+    entity_id = entity_id_for(hass, LOCK_DOMAIN, NO_LIVE_SN, LOCK_KEY)
+    assert state_of(hass, entity_id) == LockState.LOCKED
+
+    fake_station.params[DEVICE_TYPE][STANDALONE_LOCK_STATE_PARAM] = "3"
+    fake_station.send_param_dump()
+    await wait_until(lambda: state_of(hass, entity_id) == LockState.UNLOCKED)

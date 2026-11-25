@@ -103,12 +103,16 @@ from .const import (
     EXC_CLOUD_UNAVAILABLE,
     EXC_DEFAULT_PRESET_NEEDS_CONFIRMATION,
     EXC_DEVICE_LIST_REFRESH_FAILED,
+    EXC_GARAGE_DOOR_MOVING,
+    EXC_GARAGE_DOOR_POSITION_UNKNOWN,
+    EXC_GARAGE_OTHER_DOOR_MOVING,
     EXC_GUARD_MODE_COMMAND_UNSUPPORTED,
     EXC_GUARD_MODE_NOT_APPLIED,
     EXC_GUARD_MODE_NOT_SUPPORTED,
     EXC_GUARD_MODE_REJECTED,
     EXC_LIGHT_CONTROL_OFF,
     EXC_LIVE_STREAM_LIMIT,
+    EXC_LOCK_NOT_SUPPORTED,
     EXC_ON_DEMAND_UNREACHABLE,
     EXC_PAN_TILT_NOT_APPLIED,
     EXC_PAN_TILT_UNSUPPORTED,
@@ -554,6 +558,34 @@ def siren_failed(
         translation_domain=DOMAIN,
         translation_key=key,
         translation_placeholders=placeholders,
+    )
+
+
+def lock_not_supported() -> ServiceValidationError:
+    """A lock or unlock asked of a lock: the library sends no lock command yet, so nothing
+    was sent."""
+    return ServiceValidationError(translation_domain=DOMAIN, translation_key=EXC_LOCK_NOT_SUPPORTED)
+
+
+def garage_door_position_unknown() -> ServiceValidationError:
+    """An open or close of a garage door whose position is unknown: open and close cannot
+    be told apart, so nothing was sent."""
+    return ServiceValidationError(
+        translation_domain=DOMAIN, translation_key=EXC_GARAGE_DOOR_POSITION_UNKNOWN
+    )
+
+
+def garage_door_moving() -> ServiceValidationError:
+    """An open or close of a garage door whose other command still waits for its report;
+    nothing was sent."""
+    return ServiceValidationError(translation_domain=DOMAIN, translation_key=EXC_GARAGE_DOOR_MOVING)
+
+
+def garage_other_door_moving() -> ServiceValidationError:
+    """An open or close of a garage door while a command of the other door on its camera
+    still waits for its report (the camera takes one at a time); nothing was sent."""
+    return ServiceValidationError(
+        translation_domain=DOMAIN, translation_key=EXC_GARAGE_OTHER_DOOR_MOVING
     )
 
 
