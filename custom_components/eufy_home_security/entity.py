@@ -20,6 +20,7 @@ from eufy_home_security import (
     UnsupportedError,
     entity_unique_id,
 )
+from eufy_home_security.devices.model_settings import Value
 
 from . import errors, runtime
 from .const import (
@@ -38,8 +39,8 @@ from .settings import SettingEntitySpec, member_in_use, setting_platform
 if TYPE_CHECKING:
     from .runtime import EufyConfigEntry
 
-type SettingValue = bool | int | float | str
-"""A setting's public value (``Setting.validate``)."""
+type SettingValue = Value
+"""A setting's public value (``Setting.validate``): a bool, a number, text or a JSON object."""
 
 
 def device_block(data: StationState | None, device_sn: str) -> SubDeviceState | None:
@@ -220,8 +221,12 @@ class EufySettingEntity(EufyDeviceEntity):
     def __init__(self, coordinator: StationCoordinator, spec: SettingEntitySpec) -> None:
         super().__init__(coordinator, spec.device_sn, spec.key)
         self._spec = spec
-        # Vendor identifiers carry no translation of ours; the library names them.
-        self._attr_name = spec.setting.name
+        if spec.meaning is None:
+            # Vendor identifiers carry no translation of ours; the library names them.
+            self._attr_name = spec.setting.name
+        else:
+            # A flags status's binary sensor is named by its meaning.
+            self._attr_translation_key = f"meaning_{spec.meaning.value}"
         self._attr_assumed_state = not spec.setting.readable
         self._attr_entity_category = spec.entity_category
         self._attr_entity_registry_enabled_default = spec.enabled_by_default

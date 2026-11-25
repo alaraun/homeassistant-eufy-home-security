@@ -103,19 +103,27 @@ MEANING_TYPING: Final[Mapping[SettingMeaning, EntityTyping]] = MappingProxyType(
         SettingMeaning.MOISTURE: EntityTyping(binary_sensor=BinarySensorDeviceClass.MOISTURE),
         SettingMeaning.COLD: EntityTyping(binary_sensor=BinarySensorDeviceClass.COLD),
         SettingMeaning.SIREN_RINGING: EntityTyping(binary_sensor=BinarySensorDeviceClass.SOUND),
+        SettingMeaning.SMOKE: EntityTyping(binary_sensor=BinarySensorDeviceClass.SMOKE),
+        SettingMeaning.PROBLEM: EntityTyping(binary_sensor=BinarySensorDeviceClass.PROBLEM),
+        SettingMeaning.END_OF_LIFE: EntityTyping(binary_sensor=BinarySensorDeviceClass.PROBLEM),
+        # Binary, with no Home Assistant class for a silenced alarm or a running test.
+        SettingMeaning.MUTED: EntityTyping(),
+        SettingMeaning.TESTING: EntityTyping(),
     }
 )
 # No meaning, or one the table does not list: no device class, the setting's own unit.
 UNTYPED: Final = EntityTyping(unit_from_setting=True)
 
 
-def entity_typing(setting: Setting) -> EntityTyping:
-    """The device classes and unit of ``setting``'s entity, from its meaning and unit.
+def entity_typing(setting: Setting, meaning: SettingMeaning | None = None) -> EntityTyping:
+    """The device classes and unit of ``setting``'s entity, from its meaning and unit;
+    ``meaning`` (a ``FLAGS`` member's) in place of the setting's own.
 
     A class whose unit comes from the setting (a duration) is dropped when the setting
     has no unit: Home Assistant converts such a value by its unit.
     """
-    rule = UNTYPED if setting.meaning is None else MEANING_TYPING.get(setting.meaning, UNTYPED)
+    meaning = meaning or setting.meaning
+    rule = UNTYPED if meaning is None else MEANING_TYPING.get(meaning, UNTYPED)
     if not rule.unit_from_setting:
         return rule
     unit = setting.unit.value if setting.unit is not None and setting.unit.value else None
@@ -235,10 +243,16 @@ class SettingEntitySpec:
     """The lamp a ``light`` entity of this on/off setting switches; None for any other."""
     covered: bool = False
     """A brightness the device's light entity sets: registered disabled."""
+    meaning: SettingMeaning | None = None
+    """The member meaning (``Setting.flag_meanings``) this binary sensor of a ``FLAGS``
+    status shows; None for any other entity."""
 
     @property
     def key(self) -> str:
-        """The key of the unique id: the setting key, plus the member for a ``FLAGS`` switch."""
+        """The key of the unique id: the setting key, plus the member for a ``FLAGS``
+        switch or the meaning for a ``FLAGS`` status's binary sensor."""
+        if self.meaning is not None:
+            return f"{self.setting.key}_{self.meaning.value}"
         if self.flag is None:
             return self.setting.key
         return f"{self.setting.key}_{self.flag}"
@@ -324,7 +338,9 @@ def setting_platform(setting: Setting) -> Platform | None:
       (``Setting.structured``): no control, it is treated as read-only below.
     - A diagnostic value (``SettingRole.DIAGNOSTIC``): none; the app shows it nowhere, or
       a device field already gives it.
-    - Otherwise, when readable: binary sensor for a bool, sensor for the rest.
+    - Otherwise, when readable: binary sensor for a bool and for a ``FLAGS`` status whose
+      members carry meanings (``Setting.flag_meanings``: one per meaning), sensor for the
+      rest.
     - Neither (a cloud-listed model, an app-local value): no entity, it never has a value.
     """
     if is_per_mode(setting):
@@ -333,7 +349,9 @@ def setting_platform(setting: Setting) -> Platform | None:
         return _CONTROLS[setting.control]
     if not setting.readable or setting.role is SettingRole.DIAGNOSTIC:
         return None
-    if setting.kind is SettingKind.BOOL:
+    if setting.kind is SettingKind.BOOL or (
+        setting.kind is SettingKind.FLAGS and setting.flag_meanings
+    ):
         return Platform.BINARY_SENSOR
     return Platform.SENSOR
 
@@ -345,6 +363,9 @@ def setting_specs(station: Station) -> list[SettingEntitySpec]:
     registers; a paired device with no serial has no identity and is skipped. The
     parameter dump is never enumerated: a camera offline at setup still gets its
     entities, and a setting the station does not report shows as unknown.
+
+    A ``FLAGS`` status with member meanings gives one binary sensor per distinct meaning,
+    in the library's member order; members without a meaning get none.
 
     A lamp's on/off setting that is writable where the device is (``Station.lights_for``,
     ``Light.on_off_writable``) is a light, and the brightness that light sets is
@@ -382,6 +403,19 @@ def setting_specs(station: Station) -> list[SettingEntitySpec]:
                         grouped=grouped,
                     )
                     for member in setting.flags
+                )
+            elif platform is Platform.BINARY_SENSOR and setting.flag_meanings:
+                specs.extend(
+                    SettingEntitySpec(
+                        platform=platform,
+                        setting=setting,
+                        device_sn=device_sn,
+                        variant=setting.variant_of is not None,
+                        in_use=in_use,
+                        grouped=grouped,
+                        meaning=meaning,
+                    )
+                    for meaning in dict.fromkeys(setting.flag_meanings.values())
                 )
             else:
                 specs.append(

@@ -40,6 +40,7 @@ from eufy_home_security import (
     StorageMedium,
     SubDeviceState,
     guard_mode_label,
+    redact_location,
 )
 from eufy_home_security.devices import SettingKind
 
@@ -620,8 +621,9 @@ class EufySettingSensor(EufySettingEntity, SensorEntity):
 
     A structured value (``Setting.structured``) is never the state: the state is unknown
     and the ``value`` attribute holds the decoded JSON, or the raw value when it does not
-    parse. A JSON object or array text of another setting is treated the same. A longer
-    text is cut to the state limit. Device class and unit come from the setting's meaning
+    parse, without the members that locate the house (the library's ``redact_location``).
+    A JSON object or array text of another setting is treated the same. A longer text is
+    cut to the state limit. Device class and unit come from the setting's meaning
     (``entity_typing``): a timestamp is a datetime, a value with a unit a number (unknown
     when it is not one). No state class: a setting keeps no long-term statistics.
     """
@@ -666,19 +668,20 @@ class EufySettingSensor(EufySettingEntity, SensorEntity):
             return None
         if isinstance(value, str):
             return capped_state(value)
-        return value
+        return value if isinstance(value, int | float) else None
 
     @property
     @override
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        """The base attributes, plus ``value`` holding a structured or JSON value."""
+        """The base attributes, plus ``value`` holding a structured or JSON value, its
+        location members left out."""
         attributes = super().extra_state_attributes
         value = self.setting_value
         decoded: object = json_value(value)
         if decoded is None and self._spec.setting.structured:
             decoded = value
         if decoded is not None:
-            attributes = {**(attributes or {}), ATTR_VALUE: decoded}
+            attributes = {**(attributes or {}), ATTR_VALUE: redact_location(decoded)}
         return attributes
 
 

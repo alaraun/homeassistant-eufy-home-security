@@ -1236,11 +1236,14 @@ def _async_forget_dropped_setting_entities(
 ) -> None:
     """Forget a served device's setting row the library no longer lists.
 
-    Two kinds of row, never a unique id this setup builds and only this entry's rows on
+    Three kinds of row, never a unique id this setup builds and only this entry's rows on
     the setting platforms of a served station or its paired devices:
 
     - a ``toggles`` member switch of a setting still listed, for a member the library no
       longer names (``<serial>_<key>_<member>``);
+    - a meaning binary sensor of a ``FLAGS`` status still listed with member meanings,
+      for a meaning the library no longer gives (``<serial>_<key>_<meaning>``; named by a
+      translation key, so ``is_setting_row`` skips it);
     - a setting row (``is_setting_row``) whose key the library answers for: not a setting
       of the device in this release (``Station.has_setting`` False), or one this setup
       builds no row for. Kept while the device's settings are not known (None).
@@ -1249,6 +1252,7 @@ def _async_forget_dropped_setting_entities(
     built: set[str] = set()
     served: dict[str, tuple[Station, str | None]] = {}
     members: dict[str, set[str]] = {}
+    meanings: dict[str, set[str]] = {}
     for coordinator in coordinators:
         station = coordinator.station
         served[station.serial] = (station, None)
@@ -1264,6 +1268,10 @@ def _async_forget_dropped_setting_entities(
                 members.setdefault(serial, set()).add(
                     f"{entity_unique_id(serial, spec.setting.key)}_"
                 )
+            if spec.meaning is not None:
+                meanings.setdefault(serial, set()).add(
+                    f"{entity_unique_id(serial, spec.setting.key)}_"
+                )
     for registered in er.async_entries_for_config_entry(registry, entry.entry_id):
         unique_id = registered.unique_id
         if registered.domain not in _SETTING_DOMAINS or unique_id in built:
@@ -1274,9 +1282,14 @@ def _async_forget_dropped_setting_entities(
         dropped_member = registered.domain == Platform.SWITCH and any(
             unique_id.startswith(prefix) for prefix in members.get(serial, ())
         )
+        dropped_meaning = registered.domain == Platform.BINARY_SENSOR and any(
+            unique_id.startswith(prefix) for prefix in meanings.get(serial, ())
+        )
         station, device_sn = served[serial]
-        if dropped_member or (
-            is_setting_row(registered) and station.has_setting(key, device_sn) is not None
+        if (
+            dropped_member
+            or dropped_meaning
+            or (is_setting_row(registered) and station.has_setting(key, device_sn) is not None)
         ):
             registry.async_remove(registered.entity_id)
 

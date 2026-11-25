@@ -566,7 +566,16 @@ the camera and its settings. The limits above apply.
     none is recorded;
   - a time of day is text (`20:00`);
   - an on/off status is a binary sensor of class door (on = open), tamper, battery
-    (on = low), moisture, cold or sound (a siren ringing).
+    (on = low), moisture, cold, sound (a siren ringing), smoke or problem (a fault, or a
+    device at the end of its service life);
+  - a status made of on/off parts (a smoke sensor's) is one binary sensor per meaning
+    of its parts, on while any part of that meaning is on: **Smoke** (smoke class; an
+    alarm or a high alarm), **Problem**, **End of life** (problem class), **Low battery**
+    (battery class), and **Alarm muted** and **Testing** without a class (Home Assistant
+    has none for them). Unknown until the device reports its status. Declared from the
+    eufy app, not tested on hardware: whether a test press also turns **Smoke** on is
+    not known. A meaning a later release no longer gives loses its binary sensor at the
+    next start.
 
   A setting sensor has no state class, so Home Assistant keeps no long-term
   statistics for it and a unit change never raises a statistics issue.
@@ -638,10 +647,14 @@ the camera and its settings. The limits above apply.
   Their rows from an earlier release are removed at the next start.
 - A setting value made of several fields is never shown as the state: the state is
   unknown and the attribute `value` holds the fields, or the value as the device
-  reported it when it does not parse. A text longer than 255 characters is cut to 255.
-  Such a value gets no control even when writable (a floodlight's light schedule): a
-  sensor when readable, else no entity; the text entity of an earlier release is
-  removed at the next start.
+  reported it when it does not parse. Fields that locate your home (`location`,
+  `latitude`, `longitude` and their short forms `lat`, `lng`, `lon`) and address fields
+  (a name whose last word is `address` or `addr`: `home_address`, `routerAddr`, so a
+  network or e-mail address too) are left out, at any depth: a light's motion-activated,
+  ambient-light and dusk-to-dawn settings can carry them. A text longer than 255
+  characters is cut to 255. Such a value gets no control even when writable (a light's
+  schedule or motion-activated settings): a sensor when readable, else no entity; the
+  text entity of an earlier release is removed at the next start.
 - A read-only status an earlier release created disabled is enabled at the next start
   (Home Assistant reloads the integration once), unless you disabled it yourself or
   "Enable newly added entities" is off.

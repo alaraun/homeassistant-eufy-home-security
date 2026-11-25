@@ -18,6 +18,7 @@ generated from eufy's own model data. What the file says decides the entity:
 | switch a camera's lamp | a light, with brightness where the library can write it; the brightness setting stays, disabled by default ([usage.md](usage.md#device-settings)) |
 | only read a status the eufy app shows on the device card (an entry sensor's door) | sensor or binary sensor, enabled |
 | only read a status the eufy app shows on a settings page | diagnostic sensor or binary sensor, enabled |
+| only read a status made of on/off parts with a meaning each (a smoke sensor's smoke, fault and test flags) | one binary sensor per meaning, enabled |
 | only read a setting the app offers as a control | diagnostic sensor or binary sensor, disabled by default |
 | only read a value the app does not show, one another entity already gives (battery, firmware update in progress), a status made of several fields, or a code the device card shows only as an icon (connection type, Wi-Fi level) | none |
 | neither | none |
@@ -84,7 +85,9 @@ are offered, but none is tested:
 | T90M0 | eufy Motion Sensor E20 | as the T8910: Motion and a motion-only Detection event |
 | T8900 | Entry Sensor, on a HomeBase | door (binary sensor, on = open; follows each open and close), low battery |
 | T90E0 | eufy Entry Sensor E20, on a HomeBase | door (binary sensor, on = open; follows each open and close), tamper |
-| T84A1 | Wall Light Cam S100, standalone | **Spotlight** light turns the lamp on and off and sets its brightness (the **Lighting** switch is a separate setting); **Microphone** switch, write-only (assumed state), also behind a HomeBase, where Spotlight is no light but a read-only diagnostic binary sensor, off by default |
+| T84A1 | Wall Light Cam S100, standalone | **Light** light turns the lamp on and off and sets its brightness (the **Lighting** switch is a separate setting); **Microphone** switch, write-only (assumed state), also behind a HomeBase, where its lamp is no light but a read-only diagnostic binary sensor, off by default |
+| T90S0 | eufy Smoke Sensor E10, on a HomeBase | **Smoke** (on in an alarm), **Problem**, **End of life**, **Low battery**, **Alarm muted** and **Testing** binary sensors, from its status; the eufy app's card shows all but **Testing**, the library's reading of the test flags. The HomeBase reports a change at once |
+| T8931 | Smoke Alarm Listener, on a HomeBase | as the T90S0 |
 
 Report what works and what does not ([below](#reporting-a-new-device)).
 

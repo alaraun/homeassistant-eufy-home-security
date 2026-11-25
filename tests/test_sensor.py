@@ -24,7 +24,8 @@ from conftest import (
     wait_until,
 )
 from eufy_home_security import EufySecurity, Station, entity_unique_id
-from eufy_home_security.devices import Setting, SettingKind, model_for_serial
+from eufy_home_security.devices import Setting, SettingKind, model_for_serial, product_name
+from eufy_home_security.devices import types as device_types
 from eufy_home_security.devices.model_settings import settings_of
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation, camera_device
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
@@ -180,13 +181,21 @@ async def test_camera_and_motion_sensor_diagnostics_with_the_firmware_fallback(
     await hass.async_block_till_done()
 
 
+# A product row of the model-name table (base name, no serial rules), under a code no
+# bundled row uses, so the name can only come from the product code.
+_PRODUCT_CODE: Final = "T8170Z"
+_PRODUCT_NAME: Final = "Synthetic Product Cam"
+_PRODUCT_ROW: Final = (_PRODUCT_NAME, (), _PRODUCT_CODE)
+
+
 @pytest.mark.parametrize(
     ("serial", "product_code", "name"),
     [
         # The serial makes this T814X an eufyCam C36; the prefix alone names a C37.
         ("T814XZ5000000001", None, "eufyCam C36"),
-        # The cloud record's product code names one of the prefix's two products.
-        ("T8124P0000000001", "T8124R", "SoloCam S40"),
+        # With the cloud record's product code, that product's row names the unit; the
+        # prefix's row names another (the row is patched in: see _PRODUCT_ROW).
+        ("T8170P0000000001", _PRODUCT_CODE, _PRODUCT_NAME),
     ],
     ids=["by-serial", "by-product-code"],
 )
@@ -196,6 +205,7 @@ async def test_a_unit_shows_its_own_product_name_on_device_and_sensor(
     fake_cloud: FakeCloud,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
     serial: str,
     product_code: str | None,
     name: str,
@@ -204,6 +214,9 @@ async def test_a_unit_shows_its_own_product_name_on_device_and_sensor(
     the name of its serial prefix."""
     paired = camera_device(serial, station_sn=fake_station.serial, channel=_SENSOR_CHANNEL)
     if product_code is not None:
+        assert product_code not in device_types.MODEL_NAMES
+        monkeypatch.setitem(device_types.MODEL_NAMES, product_code, _PRODUCT_ROW)
+        assert product_name(serial) != name, "the prefix's row names another product"
         paired["device_new_pn"] = product_code
     fake_cloud.devices.append(paired)
     fake_station.params[_SENSOR_CHANNEL] = {_BATTERY_PARAM: "80"}

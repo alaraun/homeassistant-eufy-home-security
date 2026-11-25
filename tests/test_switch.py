@@ -12,16 +12,19 @@ from typing import Any, Final
 
 import pytest
 from conftest import (
+    add_entry,
     entity_id_for,
     record_states,
     seed_setting,
     set_up_warm,
     setting_param,
+    setup_entry,
     state_of,
 )
 from eufy_home_security import DeviceTimeoutError, EufySecurity, Station, entity_unique_id
 from eufy_home_security.devices import Setting
 from eufy_home_security.devices.model_settings import settings_of
+from eufy_home_security.p2p import session as session_module
 from eufy_home_security.testing import SYNTHETIC, FakeStation
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.const import (
@@ -33,6 +36,7 @@ from homeassistant.const import (
     STATE_ON,
     STATE_UNKNOWN,
     EntityCategory,
+    Platform,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -48,6 +52,7 @@ _STATUS_LED: Final = "led_on_off"
 _AUDIO_RECORDING: Final = "audio_recording_on_off"
 
 _CAMERA_CHANNEL: Final = 0
+_STATION_CHANNEL: Final = 255
 _NOT_APPLIED: Final = "setting_not_applied"
 _UNCONFIRMED: Final = "setting_unconfirmed"
 
@@ -215,6 +220,60 @@ async def test_a_write_only_switch_whose_write_timed_out_shows_unknown(
     await hass.async_block_till_done()
 
 
+_ALARM_DELAY: Final = "notification_alarm_delay_value"
+
+
+@pytest.mark.parametrize("replied", [True, False], ids=["result", "receipt-only"])
+async def test_the_homebase_alarm_delay_is_a_switch_and_its_sensor_row_is_forgotten(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    replied: bool,
+) -> None:
+    """The alarm delay is the eufy app's on/off switch: an enabled config switch that
+    writes 1 and 0. The sensor row an earlier release built under its unique id goes.
+    A write the station only acknowledges with its receipt (no result) shows as on."""
+    seed_setting(fake_station, _ALARM_DELAY, 0, channel=_STATION_CHANNEL)
+    fake_station.reply_to_settings = replied
+    # Without a result the write waits out the command timeout before it counts as delivered.
+    monkeypatch.setattr(session_module, "COMMAND_TIMEOUT", 0.5)
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    unique_id = entity_unique_id(SYNTHETIC.station_sn, _ALARM_DELAY)
+    old = registry.async_get_or_create(
+        Platform.SENSOR,
+        DOMAIN,
+        unique_id,
+        config_entry=entry,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        original_name=_ALARM_DELAY,
+    )
+    assert await setup_entry(hass, entry)
+
+    assert registry.async_get(old.entity_id) is None
+    entity_id = entity_id_for(hass, SWITCH_DOMAIN, SYNTHETIC.station_sn, _ALARM_DELAY)
+    registered = registry.async_get(entity_id)
+    assert registered is not None
+    assert (registered.entity_category, registered.disabled_by) == (EntityCategory.CONFIG, None)
+    assert state_of(hass, entity_id) == STATE_OFF
+
+    await set_switch(hass, entity_id, True)
+    await hass.async_block_till_done()
+    sent = fake_station.received[-1]
+    assert (sent["cmd"], sent["mChannel"], sent["payload"]) == (
+        setting_param(_ALARM_DELAY, model="T8030"),
+        _STATION_CHANNEL,
+        {"notify_alarm_delay": 1},
+    )
+    assert state_of(hass, entity_id) == STATE_ON
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
 async def test_an_inverted_1350_switch_writes_the_wire_code_the_library_renders(
     hass: HomeAssistant,
     fake_station: FakeStation,
@@ -278,7 +337,6 @@ _DETECTION_TYPES: Final = "detection_type_set"
 # human (bits 0-1), vehicle (2), pet (3), plus 0x30000 no member of this key names.
 _DETECTION_MASK: Final = 196623
 _IGNORE_SWITCH: Final = "notification_ignore_switch"
-_STATION_CHANNEL: Final = 255
 
 
 async def test_each_flags_member_is_a_switch_named_by_the_app(
