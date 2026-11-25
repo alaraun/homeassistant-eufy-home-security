@@ -285,17 +285,25 @@
       "description": "The eufy account {account} lists no devices ({regions}), so Home Assistant has nothing to set up. Home Assistant does not ask again by itself. Check in the eufy app that the account sees the HomeBase or camera; a shared account sees only what the owner shared with it, and only after it accepted the invitation. Check that the integration's eufy sign-in country (in its options) is the country your eufy app signs in with, and add the country of anyone who shared a home with this account as an extra sign-in country: eufy lists a device only under the country it was set up or shared under. Changing a country asks eufy again. Otherwise turn on Look for devices under every sign-in country on each refresh and press Refresh device list on the eufy account device; you can turn it off again once the devices show."
     },
     "variant_reset": {
-      "title": "Setting versions the eufy app does not use are enabled for {account}",
+      "title": "Some eufy settings show extra copies",
       "fix_flow": {
         "step": {
           "confirm": {
-            "title": "Reset setting versions to the eufy app's defaults",
-            "description": "Some eufy settings come in several versions, and the eufy app uses one of them per device. On {devices} of the eufy account {account}, controls of versions the eufy app does not use are enabled. Confirm to disable {disable} setting entities of those versions and enable {enable} of the version the eufy app uses; if it enables any, Home Assistant reloads the eufy account. A setting whose version in use stays disabled (you or Home Assistant disabled it) is left as it is, so the device keeps a working version of each setting. With Enable newly added entities turned off for this integration, the version in use is enabled only for a setting whose other version this disables. Entities you enabled or disabled yourself since the integration set them stay as they are. Each setting entity's in_use attribute names the version in use. To keep them as they are, ignore this repair."
+            "title": "Remove the extra copies of eufy settings",
+            "description": "These devices show some settings more than once, under the same name:\n\n{devices}\n\nThe eufy app uses only one copy of each setting. The other copies may not work.\n\nSubmit to disable the {disable} extra copies. Nothing is deleted: you can enable a copy again later under Settings → Devices & services → Entities (choose to show disabled entities in the filter). Copies you enabled or disabled yourself stay as they are.\n\nTo keep everything as it is, ignore this repair."
+          },
+          "confirm_swap": {
+            "title": "Fix the copies of eufy settings",
+            "description": "On these devices, some settings show copies the eufy app does not use:\n\n{devices}\n\nThose copies may not work, and for some settings the copy the eufy app uses is disabled.\n\nSubmit to disable the {disable} copies the eufy app does not use and enable the {enable} copies it uses. Nothing is deleted. The eufy account then reloads, which can take about a minute. Copies you enabled or disabled yourself stay as they are.\n\nTo keep everything as it is, ignore this repair."
+          },
+          "confirm_enable": {
+            "title": "Turn the eufy settings back on",
+            "description": "Some settings the eufy app uses are disabled on these devices:\n\n{devices}\n\nSubmit to enable those {enable} settings. The eufy account then reloads, which can take about a minute. Settings you disabled yourself stay as they are.\n\nTo keep everything as it is, ignore this repair."
           }
         },
         "abort": {
-          "entry_not_loaded": "The eufy account is not loaded in Home Assistant right now. Wait until it has finished loading, then open this repair again.",
-          "nothing_to_reset": "Nothing is left to reset: the setting versions of the eufy account are as the eufy app uses them, or as you set them yourself."
+          "entry_not_loaded": "The eufy account is still loading. Open this repair again when it is ready.",
+          "nothing_to_reset": "Nothing to fix: each setting is shown once, or you chose the copies yourself."
         }
       }
     },

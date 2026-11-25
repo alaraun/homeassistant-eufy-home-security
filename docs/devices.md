@@ -37,17 +37,16 @@ Each entity of such a setting has an `in_use` attribute: `true` on the version t
 eufy app uses for the device, `false` on the others. It is missing while the library
 cannot tell. The versions share one name, and Home Assistant numbers their entity ids
 by creation order (`_2`, `_3`), not by version: the attribute tells them apart.
-While versions the eufy app does not use are enabled (from an older release, or before
-the integration recorded who set them), the repair *Setting versions the eufy app does
-not use are enabled* counts them and names their devices. Confirming it disables those
-and enables the version in use where it is disabled, then the integration reloads if it
-enabled one; entities you enabled or disabled yourself after the integration set them
-stay as they are. A setting whose version in use stays disabled (you or Home Assistant
-disabled it) is left as it is, so the device keeps a working version of each setting.
-With "Enable newly added entities" turned off, it enables the version in use only for a
-setting of which it disables another version; it enables nothing for other settings. If
-the counts change while the repair is open, confirming shows the new counts first; when
-nothing is left to change, the repair closes and goes. Ignore it to keep them.
+While unused versions are enabled (from an older release, or before the integration
+recorded who set them), the repair *Some eufy settings show extra copies* lists their
+devices. Submitting it disables the unused versions and enables the version in use where
+it is disabled, then the integration reloads if it enabled one; entities you changed
+yourself stay as they are. A setting whose version in use stays disabled (you or Home
+Assistant disabled it) is left as it is, so the device keeps a working version of each
+setting. With "Enable newly added entities" turned off, it enables the version in use
+only for a setting of which it disables another version. If the counts change while the
+repair is open, submitting shows the new counts first; when nothing is left to change,
+the repair closes and goes. Ignore it to keep them.
 
 A model without a settings file in the library gets no setting entities. A newer
 library release adds models and controls; update the integration to get them.

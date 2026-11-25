@@ -413,6 +413,8 @@ class VariantResetFix(RepairsFlow):
     control is left to reset. The form shows the current plan, not the issue's counts, and
     a confirmation applies only that plan: when it changed in between, the form shows the
     new one instead. A plan that changes no control's state aborts and deletes the issue.
+    The step id follows the counts (:meth:`_step`), so each case has its own text; a
+    submit of any of them applies the plan shown.
     """
 
     def __init__(self, entry_id: str) -> None:
@@ -422,6 +424,13 @@ class VariantResetFix(RepairsFlow):
     async def async_step_init(self, user_input: dict[str, str] | None = None) -> RepairsFlowResult:
         """Open straight on the confirmation."""
         return await self.async_step_confirm()
+
+    @staticmethod
+    def _step(disable: int, enable: int) -> str:
+        """The form for the counts: disables only, disables and enables, enables only."""
+        if not enable:
+            return "confirm"
+        return "confirm_swap" if disable else "confirm_enable"
 
     async def async_step_confirm(
         self, user_input: dict[str, str] | None = None
@@ -439,17 +448,19 @@ class VariantResetFix(RepairsFlow):
                 return self.async_abort(reason="nothing_to_reset")
             self._shown = key
             return self.async_show_form(
-                step_id="confirm",
+                step_id=self._step(summary.disable, summary.enable),
                 data_schema=vol.Schema({}),
                 description_placeholders={
-                    "account": errors.account_label(entry),
                     "disable": str(summary.disable),
                     "enable": str(summary.enable),
-                    "devices": ", ".join(summary.devices),
+                    "devices": errors.markdown_list(summary.devices),
                 },
             )
         async_reset_variant_rows(self.hass, plan)
         return self.async_create_entry(data={})
+
+    async_step_confirm_swap = async_step_confirm
+    async_step_confirm_enable = async_step_confirm
 
 
 async def async_create_fix_flow(
