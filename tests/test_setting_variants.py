@@ -7,8 +7,12 @@ AI empowerment (param 1299 = 1), else the primary ``detection_type_set``.
 from __future__ import annotations
 
 import dataclasses
+import inspect
+import json
+import re
 from collections.abc import Callable
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -29,6 +33,8 @@ from homeassistant.util import dt as dt_util
 from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.eufy_home_security import (
+    VariantReset,
+    repairs,
     variant_mark,
     variant_reset_plan,
     variant_reset_summary,
@@ -570,14 +576,16 @@ async def _all_on_from_before_the_marks(
     return entry
 
 
-async def _confirm(hass: HomeAssistant, entry: MockConfigEntry) -> dict[str, Any]:
-    """Open the reset fix and confirm it; the form's placeholders."""
+async def _confirm(
+    hass: HomeAssistant, entry: MockConfigEntry, step: str = "confirm"
+) -> dict[str, Any]:
+    """Open the reset fix on form ``step`` and confirm it; the form's placeholders."""
     assert await async_setup_component(hass, "repairs", {})
     manager = repairs_flow_manager(hass)
     assert manager is not None
     result = await manager.async_init(DOMAIN, data={"issue_id": f"variant_reset_{entry.entry_id}"})
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "confirm"
+    assert result["step_id"] == step
     placeholders = dict(result["description_placeholders"] or {})
     result = await manager.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -605,7 +613,7 @@ async def test_controls_of_unused_versions_left_on_raise_a_reset_repair(
         (DOMAIN, SYNTHETIC.camera_sn), entry.entry_id
     )
     assert device is not None and device.name
-    assert placeholders["devices"] == device.name
+    assert placeholders["devices"] == f"- {device.name}"
 
     user_on = v2[0]
     _mark_user(hass, user_on)
@@ -614,7 +622,7 @@ async def test_controls_of_unused_versions_left_on_raise_a_reset_repair(
     dr.async_get(hass).async_update_device(device.id, name_by_user="Porch")
     shown = await _confirm(hass, entry)
     assert (shown["disable"], shown["enable"]) == (str(len(v2) - 1), "0")
-    assert shown["devices"] == "Porch"
+    assert shown["devices"] == "- Porch"
     registry = er.async_get(hass)
     assert _all(hass, entry, V1, (None, "on"))
     for row in _rows(hass, entry, V2):
@@ -665,7 +673,7 @@ async def test_the_reset_enables_the_version_in_use_and_the_reload_withdraws_the
 
     user_off = v1[0]
     er.async_get(hass).async_update_entity(user_off.entity_id, disabled_by=USER)
-    shown = await _confirm(hass, entry)
+    shown = await _confirm(hass, entry, "confirm_swap")
     assert (shown["disable"], shown["enable"]) == (str(len(primary)), str(len(v1) - 1))
     await _settle(hass, entry)
     # nothing of the night-vision group is on to move: it stays as the preference left it
@@ -923,7 +931,7 @@ async def test_a_reset_left_with_only_enables_still_asks(
     _set(hass, entry, V2, USER)
     _set(hass, entry, V1, OFF)
     v1 = _rows(hass, entry, V1)
-    shown = await _confirm(hass, entry)
+    shown = await _confirm(hass, entry, "confirm_enable")
     assert (shown["disable"], shown["enable"]) == ("0", str(len(v1)))
     assert _all(hass, entry, V1, (None, "on"))
     assert _all(hass, entry, V2, (USER, None))
@@ -953,6 +961,88 @@ async def test_the_reset_names_the_devices_it_enables_on(
     await _stop(hass, entry)
 
 
+@pytest.mark.parametrize(
+    ("names", "shown"),
+    [
+        (["Garage", "Porch"], "- Garage\n- Porch"),
+        (["# Porch_*1*"], "- \\# Porch\\_\\*1\\*"),
+    ],
+)
+async def test_the_reset_form_lists_the_devices_one_per_line(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    names: list[str],
+    shown: str,
+) -> None:
+    """The form names each device on its own markdown list line, escaped as written."""
+    entry = await _all_on_from_before_the_marks(hass, fake_station, seed_warm_cache)
+    monkeypatch.setattr(
+        repairs, "variant_reset_summary", lambda hass, plan: VariantReset(1, 0, names)
+    )
+    assert await async_setup_component(hass, "repairs", {})
+    manager = repairs_flow_manager(hass)
+    assert manager is not None
+    result = await manager.async_init(DOMAIN, data={"issue_id": f"variant_reset_{entry.entry_id}"})
+    assert result["type"] is FlowResultType.FORM
+    assert (result["description_placeholders"] or {})["devices"] == shown
+    manager.async_abort(result["flow_id"])
+    await _stop(hass, entry)
+
+
+@pytest.mark.parametrize(
+    ("disable", "enable", "step"),
+    [(2, 0, "confirm"), (2, 1, "confirm_swap"), (0, 1, "confirm_enable")],
+)
+async def test_the_reset_form_follows_the_counts(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    disable: int,
+    enable: int,
+    step: str,
+) -> None:
+    """Disables only, disables and enables, and enables only each open their own form."""
+    entry = await _all_on_from_before_the_marks(hass, fake_station, seed_warm_cache)
+    monkeypatch.setattr(
+        repairs,
+        "variant_reset_summary",
+        lambda hass, plan: VariantReset(disable, enable, ["Porch"]),
+    )
+    assert await async_setup_component(hass, "repairs", {})
+    manager = repairs_flow_manager(hass)
+    assert manager is not None
+    result = await manager.async_init(DOMAIN, data={"issue_id": f"variant_reset_{entry.entry_id}"})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == step
+    assert result["description_placeholders"] == {
+        "disable": str(disable),
+        "enable": str(enable),
+        "devices": "- Porch",
+    }
+    manager.async_abort(result["flow_id"])
+    await _stop(hass, entry)
+
+
+def test_every_step_and_reason_of_the_reset_fix_has_its_text() -> None:
+    """Each form the reset fix can show and each abort reason is in the strings, and no
+    other step is."""
+    source = inspect.getsource(repairs.VariantResetFix)
+    strings = json.loads(
+        (Path(repairs.__file__).parent / "strings.json").read_text(encoding="utf-8")
+    )["issues"]["variant_reset"]["fix_flow"]
+    handlers = set(re.findall(r"async_step_(\w+)", source)) - {"init"}
+    chosen = set(re.findall(r'"(confirm\w*)"', source))
+
+    assert handlers == chosen == {"confirm", "confirm_swap", "confirm_enable"}
+    assert handlers == set(strings["step"])
+    assert set(re.findall(r'reason="(\w+)"', source)) == set(strings["abort"])
+
+
 async def test_the_reset_form_shows_again_when_the_plan_changed(
     hass: HomeAssistant,
     fake_station: FakeStation,
@@ -967,7 +1057,10 @@ async def test_the_reset_form_shows_again_when_the_plan_changed(
     manager = repairs_flow_manager(hass)
     assert manager is not None
     result = await manager.async_init(DOMAIN, data={"issue_id": f"variant_reset_{entry.entry_id}"})
-    assert (result["description_placeholders"] or {})["disable"] == str(len(v2))
+    assert (result["step_id"], (result["description_placeholders"] or {})["disable"]) == (
+        "confirm",
+        str(len(v2)),
+    )
     er.async_get(hass).async_update_entity(v2[0].entity_id, disabled_by=USER)
     result = await manager.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.FORM
@@ -979,6 +1072,7 @@ async def test_the_reset_form_shows_again_when_the_plan_changed(
     er.async_get(hass).async_update_entity(v1.entity_id, disabled_by=OFF)
     result = await manager.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "confirm_swap"
     assert (result["description_placeholders"] or {})["enable"] == "1"
     result = await manager.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.CREATE_ENTRY

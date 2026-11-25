@@ -1547,6 +1547,12 @@ def markdown_literal(text: str) -> str:
     return _MARKDOWN_ORDERED.sub(r"\1\\\2", escaped)
 
 
+def markdown_list(items: Iterable[str]) -> str:
+    """``items`` as a markdown list for a repair description placeholder, one escaped
+    ``- item`` line each."""
+    return "\n".join(f"- {markdown_literal(item)}" for item in items)
+
+
 def sync_pending_invites_issue(
     hass: HomeAssistant, entry: ConfigEntry[Any], invites: Sequence[CloudInvite] | None
 ) -> None:
@@ -1777,7 +1783,7 @@ def sync_variant_reset_issue(
             "account": account_label(entry),
             "disable": str(disable),
             "enable": str(enable),
-            "devices": ", ".join(devices),
+            "devices": markdown_list(devices),
         },
     )
 
