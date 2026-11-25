@@ -139,6 +139,17 @@
           "on": "mdi:alarm-light"
         }
       }
+    },
+    "lock": {
+      "lock": {
+        "default": "mdi:lock",
+        "state": {
+          "unlocked": "mdi:lock-open-variant",
+          "jammed": "mdi:lock-alert",
+          "locking": "mdi:lock-clock",
+          "unlocking": "mdi:lock-clock"
+        }
+      }
     }
   },
   "services": {

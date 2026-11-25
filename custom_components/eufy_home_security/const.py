@@ -358,6 +358,8 @@ EXC_SIREN_ACCOUNT_REJECTED: Final = "siren_account_rejected"
 EXC_SIREN_UNSUPPORTED: Final = "siren_unsupported"
 # A HomeBase siren duration above the longest the library sends; nothing was sent.
 EXC_SIREN_DURATION_INVALID: Final = "siren_duration_invalid"
+# A lock or unlock asked of a lock entity: the library sends no lock command yet.
+EXC_LOCK_NOT_SUPPORTED: Final = "lock_not_supported"
 
 # Repair issue translation keys (the top-level "issues" key of strings.json). Each
 # issue id is the key followed by the entry id, and for a station's issue the
@@ -454,6 +456,11 @@ TILT_DOWN_KEY: Final = "tilt_down"
 SAVE_VIEW_KEY: Final = "save_view"
 # The siren's translation and unique-id key: a camera's own siren, or the HomeBase's.
 SIREN_KEY: Final = "siren"
+# The lock entity's translation and unique-id key.
+LOCK_KEY: Final = "lock"
+# The lock entity's attributes: the library's lock state name and the reported raw value.
+ATTR_LOCK_STATE: Final = "lock_state"
+ATTR_RAW_VALUE: Final = "raw_value"
 # The HomeBase siren's length when turn_on names no duration.
 STATION_SIREN_DEFAULT_SECONDS: Final = 30
 # How long a HomeBase session may be down before its entities show unavailable: the

@@ -109,6 +109,7 @@ from .const import (
     EXC_GUARD_MODE_REJECTED,
     EXC_LIGHT_CONTROL_OFF,
     EXC_LIVE_STREAM_LIMIT,
+    EXC_LOCK_NOT_SUPPORTED,
     EXC_ON_DEMAND_UNREACHABLE,
     EXC_PAN_TILT_NOT_APPLIED,
     EXC_PAN_TILT_UNSUPPORTED,
@@ -555,6 +556,12 @@ def siren_failed(
         translation_key=key,
         translation_placeholders=placeholders,
     )
+
+
+def lock_not_supported() -> ServiceValidationError:
+    """A lock or unlock asked of a lock: the library sends no lock command yet, so nothing
+    was sent."""
+    return ServiceValidationError(translation_domain=DOMAIN, translation_key=EXC_LOCK_NOT_SUPPORTED)
 
 
 def siren_duration_invalid(longest: int) -> ServiceValidationError:

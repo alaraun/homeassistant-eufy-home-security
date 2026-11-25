@@ -518,6 +518,9 @@
     },
     "siren_duration_invalid": {
       "message": "The HomeBase siren sounds for at most {max} seconds. Choose a duration of {max} seconds or less."
+    },
+    "lock_not_supported": {
+      "message": "Locking and unlocking from Home Assistant is not supported yet. Use the eufy app."
     }
   },
   "entity": {
@@ -622,6 +625,11 @@
     "siren": {
       "siren": {
         "name": "Siren"
+      }
+    },
+    "lock": {
+      "lock": {
+        "name": "Lock"
       }
     },
     "switch": {},

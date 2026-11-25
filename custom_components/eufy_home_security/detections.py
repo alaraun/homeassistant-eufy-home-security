@@ -15,7 +15,7 @@ bus event.
 Station pushes (arming, alarm, alarm delay) are decided by
 :func:`station_event_consumed` and travel on :func:`station_signal`, one per station.
 The alarm's own state, the library's ``AlarmChanged``, travels on
-:func:`alarm_signal`.
+:func:`alarm_signal`. A lock's state (``LockStateChanged``) travels on :func:`lock_signal`.
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ from eufy_home_security import (
     DeviceAlarm,
     DeviceAlarmChanged,
     GuardMode,
+    LockStateChanged,
     PtzAction,
     PushMessageType,
     SecurityEvent,
@@ -369,6 +370,17 @@ def standalone_wake_allowed(station: Station, serial: str) -> bool:
     return device_kind(serial) in DETECTION_ENTITY_KINDS or has_live_stream(station, serial)
 
 
+def has_lock(serial: str) -> bool:
+    """Whether the device ``serial`` gets a lock entity: the library grades its
+    ``Capability.LOCK`` other than unknown."""
+    return _graded(serial, Capability.LOCK)
+
+
+def _graded(serial: str, capability: Capability) -> bool:
+    profile = profile_for_serial(serial)
+    return profile is not None and profile.support(capability) is not Support.UNKNOWN
+
+
 def has_doorbell_entity(serial: str) -> bool:
     """Whether the device ``serial`` gets the doorbell ring event: the library grades its
     ``DOORBELL_RING`` (a doorbell, a video smart lock), never a serial-prefix list."""
@@ -606,3 +618,11 @@ def alarm_delay_signal(entry_id: str, station_sn: str) -> SignalType[AlarmDelayC
     The name is never logged or stored.
     """
     return SignalType(f"{DOMAIN}_alarm_delay_changed_{entry_id}_{station_sn}")
+
+
+def lock_signal(entry_id: str, device_sn: str) -> SignalType[LockStateChanged]:
+    """The dispatcher signal of one lock's state changes in one entry.
+
+    The name is never logged or stored.
+    """
+    return SignalType(f"{DOMAIN}_lock_state_changed_{entry_id}_{device_sn}")

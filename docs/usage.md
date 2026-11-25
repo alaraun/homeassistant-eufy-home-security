@@ -83,6 +83,21 @@ reloads the integration.
 - A start the device refuses or does not confirm raises an error, and nothing shows on
   that the device did not report. A refused stop raises an error too.
 
+## Locks
+
+- **Lock** of a smart lock, a video smart lock included, where the library reads the
+  lock's state. It shows that state only: lock and unlock raise "Locking and unlocking
+  from Home Assistant is not supported yet. Use the eufy app." and send nothing.
+- Locked, unlocked, locking, unlocking and jammed as the lock reports them; passage mode
+  shows unlocked, privacy mode locked, a bolt stopped between its positions jammed.
+  Uncalibrated, calibrating and nothing reported yet show unknown. The attributes
+  `lock_state` (the library's state, e.g. `passage_mode`) and `raw_value` (the value the
+  lock reported; none for a state from a push) tell them apart.
+- The state follows the lock's reports and pushes; nothing is polled. A jammed push shows
+  until the lock's next report.
+- A Wi-Fi lock the library reaches through no station gets no entity yet.
+- Based on the eufy app's behaviour, not tested on a real lock.
+
 ## Detections
 
 A motion sensor has a **Motion** binary sensor and a **Detection** event entity

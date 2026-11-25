@@ -1120,6 +1120,8 @@ _PLATFORM_MODULES = frozenset(
         "camera",
         "event",
         "image",
+        "light",
+        "lock",
         "number",
         "select",
         "sensor",
