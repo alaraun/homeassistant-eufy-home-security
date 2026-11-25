@@ -290,15 +290,15 @@
         "step": {
           "confirm": {
             "title": "Remove the extra copies of eufy settings",
-            "description": "These devices show some settings more than once, under the same name:\n\n{devices}\n\nThe eufy app uses only one copy of each setting. The other copies may not work.\n\nSubmit to disable the {disable} extra copies. Nothing is deleted: you can enable a copy again later under Settings → Devices & services → Entities (choose to show disabled entities in the filter). Copies you enabled or disabled yourself stay as they are.\n\nTo keep everything as it is, ignore this repair."
+            "description": "These devices show some settings more than once, under the same name:\n\n{devices}\n\nThe eufy app uses only one copy of each setting. The other copies may not work.\n\nSubmit to disable the extra copies ({disable} in total). Nothing is deleted: you can enable a copy again later under Settings → Devices & services → Entities (choose to show disabled entities in the filter). Copies you enabled or disabled yourself stay as they are.\n\nTo keep everything as it is, ignore this repair."
           },
           "confirm_swap": {
             "title": "Fix the copies of eufy settings",
-            "description": "On these devices, some settings show copies the eufy app does not use:\n\n{devices}\n\nThose copies may not work, and for some settings the copy the eufy app uses is disabled.\n\nSubmit to disable the {disable} copies the eufy app does not use and enable the {enable} copies it uses. Nothing is deleted. The eufy account then reloads, which can take about a minute. Copies you enabled or disabled yourself stay as they are.\n\nTo keep everything as it is, ignore this repair."
+            "description": "On these devices, some settings show copies the eufy app does not use:\n\n{devices}\n\nThose copies may not work, and for some settings the copy the eufy app uses is disabled.\n\nSubmit to disable the copies the eufy app does not use ({disable} in total) and enable the copies it uses ({enable} in total). Nothing is deleted. The eufy account then reloads, which can take about a minute. Copies you enabled or disabled yourself stay as they are.\n\nTo keep everything as it is, ignore this repair."
           },
           "confirm_enable": {
             "title": "Turn the eufy settings back on",
-            "description": "Some settings the eufy app uses are disabled on these devices:\n\n{devices}\n\nSubmit to enable those {enable} settings. The eufy account then reloads, which can take about a minute. Settings you disabled yourself stay as they are.\n\nTo keep everything as it is, ignore this repair."
+            "description": "Some settings the eufy app uses are disabled on these devices:\n\n{devices}\n\nSubmit to enable those settings ({enable} in total). The eufy account then reloads, which can take about a minute. Settings you disabled yourself stay as they are.\n\nTo keep everything as it is, ignore this repair."
           }
         },
         "abort": {
