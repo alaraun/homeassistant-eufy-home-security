@@ -647,10 +647,11 @@ the camera and its settings. The limits above apply.
   Their rows from an earlier release are removed at the next start.
 - A setting value made of several fields is never shown as the state: the state is
   unknown and the attribute `value` holds the fields, or the value as the device
-  reported it when it does not parse. Fields that locate your home (`latitude`,
-  `longitude` and their short forms `lat`, `lng`, and any field whose name ends in
-  `address` or `addr`) are left out: a light's
-  motion-activated, ambient-light and dusk-to-dawn settings can carry them. A text longer than 255
+  reported it when it does not parse. Fields that locate your home (`location`,
+  `latitude`, `longitude` and their short forms `lat`, `lng`, `lon`) and address fields
+  (a name whose last word is `address` or `addr`: `home_address`, `routerAddr`, so a
+  network or e-mail address too) are left out, at any depth: a light's motion-activated,
+  ambient-light and dusk-to-dawn settings can carry them. A text longer than 255
   characters is cut to 255. Such a value gets no control even when writable (a light's
   schedule or motion-activated settings): a sensor when readable, else no entity; the
   text entity of an earlier release is removed at the next start.

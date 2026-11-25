@@ -40,6 +40,7 @@ from eufy_home_security import (
     StorageMedium,
     SubDeviceState,
     guard_mode_label,
+    redact_location,
 )
 from eufy_home_security.devices import SettingKind
 
@@ -78,7 +79,6 @@ from .settings import (
     numeric_value,
     setting_specs,
     timestamp_value,
-    without_location,
 )
 from .storage import (
     EufyStorageEntity,
@@ -621,9 +621,9 @@ class EufySettingSensor(EufySettingEntity, SensorEntity):
 
     A structured value (``Setting.structured``) is never the state: the state is unknown
     and the ``value`` attribute holds the decoded JSON, or the raw value when it does not
-    parse, without the members that locate the house (``without_location``). A JSON object
-    or array text of another setting is treated the same. A longer
-    text is cut to the state limit. Device class and unit come from the setting's meaning
+    parse, without the members that locate the house (the library's ``redact_location``).
+    A JSON object or array text of another setting is treated the same. A longer text is
+    cut to the state limit. Device class and unit come from the setting's meaning
     (``entity_typing``): a timestamp is a datetime, a value with a unit a number (unknown
     when it is not one). No state class: a setting keeps no long-term statistics.
     """
@@ -681,7 +681,7 @@ class EufySettingSensor(EufySettingEntity, SensorEntity):
         if decoded is None and self._spec.setting.structured:
             decoded = value
         if decoded is not None:
-            attributes = {**(attributes or {}), ATTR_VALUE: without_location(decoded)}
+            attributes = {**(attributes or {}), ATTR_VALUE: redact_location(decoded)}
         return attributes
 
 

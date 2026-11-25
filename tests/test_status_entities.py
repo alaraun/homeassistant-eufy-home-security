@@ -43,7 +43,6 @@ from custom_components.eufy_home_security.settings import (
     json_value,
     setting_platform,
     setting_specs,
-    without_location,
 )
 
 # An entry sensor with door and low-battery statuses, and one with door and tamper.
@@ -356,12 +355,13 @@ async def _enabled_sensor(
 
 
 _DOCUMENT: Final = {"mode": 1, "devices": [{"channel": 0, "action": 3}]}
-# The same document with the house's location in it, as a light's object stores it.
+# The same document with the house's location and addresses in it, as a light's object
+# stores them, at two depths (the library's ``redact_location`` rule).
 _LOCATED: Final = {
     "mode": 1,
     "latitude": "1.5",
     "Longtitude": "2.5",
-    "devices": [{"channel": 0, "action": 3, "lat": "1.5", "lng": "2.5"}],
+    "devices": [{"channel": 0, "action": 3, "lat": "1.5", "lng": "2.5", "routerAddr": "x"}],
     "house_address": "x",
 }
 
@@ -675,30 +675,6 @@ async def test_an_enabled_status_row_whose_setting_is_diagnostic_now_is_forgotte
         entity_unique_id(SYNTHETIC.station_sn, "hb_keypad_is_password_set"),
     )
     await _stop(hass, entry)
-
-
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        (
-            {"Lat": 1, "LNG": 2, "long-titude": 3, "lon": 4, "location": 5, "enable": 1},
-            {"enable": 1},
-        ),
-        # Whole keys only: a member that only starts with a location word stays.
-        ({"latency": 1, "location_mode": 2}, {"latency": 1, "location_mode": 2}),
-        # A key ending in an address word goes, in any case; one only containing it stays.
-        (
-            {"router_addr": 1, "homeAddress": 2, "IPADDR": 3, "addr_count": 4, "Dst": 5},
-            {"addr_count": 4, "Dst": 5},
-        ),
-        ([{"address": "x", "a": 1}, [{"lng": 2}]], [{"a": 1}, [{}]]),
-        ({"schedule": {"sun_rise": "06:00", "lat": 1}}, {"schedule": {"sun_rise": "06:00"}}),
-        ("lat", "lat"),
-        (5, 5),
-    ],
-)
-def test_location_members_are_left_out_at_any_depth(value: Any, expected: Any) -> None:
-    assert without_location(value) == expected
 
 
 async def test_a_row_with_a_translation_key_or_another_class_is_not_a_setting_row(

@@ -215,38 +215,6 @@ def json_value(value: object) -> dict[str, Any] | list[Any] | None:
     return None
 
 
-# A structured value's members that locate the house (the library masks the same keys in
-# its logs), compared with case, ``_`` and ``-`` ignored: these whole keys, and any key
-# ending in one of ``_ADDRESS_ENDINGS`` (``address``, ``router_addr``, ``homeAddress``).
-_LOCATION_MEMBERS: frozenset[str] = frozenset(
-    {
-        "location",
-        "latitude",
-        "longitude",
-        "longtitude",
-        "lat",
-        "lng",
-        "lon",
-    }
-)
-_ADDRESS_ENDINGS: Final = ("address", "addr")
-
-
-def _locates(key: object) -> bool:
-    """Whether a structured value's member ``key`` names a location or an address."""
-    text = str(key).lower().replace("_", "").replace("-", "")
-    return text in _LOCATION_MEMBERS or text.endswith(_ADDRESS_ENDINGS)
-
-
-def without_location(value: object) -> object:
-    """``value`` with every object member that locates the house left out, at any depth."""
-    if isinstance(value, dict):
-        return {key: without_location(member) for key, member in value.items() if not _locates(key)}
-    if isinstance(value, list):
-        return [without_location(item) for item in value]
-    return value
-
-
 def capped_state(value: str) -> str:
     """``value`` cut to :data:`MAX_STATE_LENGTH` characters, ending in an ellipsis when cut."""
     if len(value) <= MAX_STATE_LENGTH:
