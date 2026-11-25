@@ -11,15 +11,19 @@
 [![License](https://img.shields.io/github/license/alaraun/homeassistant-eufy-home-security)](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/LICENSE)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/alaraun)
 
-Local control of eufy Security HomeBase systems and standalone eufy battery cameras:
-alarm panel, detections, camera stills, live video, pan/tilt presets and device
-settings. The HomeBase is reached over its local P2P protocol; the eufy cloud is
-used for sign-in, the device list and device keys, and, when switched on, for the
-cloud push that detections from standalone cameras and a HomeBase 2 need. The
-protocol work is done by the [`eufy-home-security`](https://pypi.org/project/eufy-home-security/) library
-([source](https://github.com/alaraun/python-eufy-home-security)), which Home
-Assistant installs automatically. Library bugs that show without Home Assistant go to
-[its issue tracker](https://github.com/alaraun/python-eufy-home-security/issues).
+Control of eufy Security HomeBases and the devices paired to them, and of standalone
+eufy cameras: alarm panel, detections, camera stills, live video, pan/tilt presets,
+lights and device settings.
+
+Where a device allows it, Home Assistant talks to it directly on your network. The
+eufy cloud is still used for sign-in, the device list and device keys; for detections
+from standalone cameras and a HomeBase 2 (cloud push, when switched on); and for a
+station that Home Assistant cannot find on its own network and to wake a battery
+camera, both through eufy's servers. The protocol work is done by the
+[`eufy-home-security`](https://pypi.org/project/eufy-home-security/) library
+([source](https://github.com/alaraun/python-eufy-home-security)), which Home Assistant
+installs automatically. Library bugs that show without Home Assistant go to [its issue
+tracker](https://github.com/alaraun/python-eufy-home-security/issues).
 
 > [!WARNING]
 > Beta. Only the devices in
@@ -31,6 +35,23 @@ Assistant installs automatically. Library bugs that show without Home Assistant 
   <img src="https://raw.githubusercontent.com/alaraun/homeassistant-eufy-home-security/main/docs/images/camera-card.png" alt="A eufy camera with live view and setting controls on a dashboard" width="600">
   <br><sub>The camera card that comes with the integration: one or several cameras, live view, pan/tilt, presets, history and settings.</sub>
 </p>
+
+## Supported devices
+
+| Device | In Home Assistant |
+|---|---|
+| HomeBase | alarm panel for the security mode, siren where supported, storage, event history |
+| Cameras: battery and wired, on a HomeBase or standalone, indoor pan & tilt, floodlight and wall light cameras | camera with stills, live video where the model supports it, detections, pan/tilt and presets, the lamp as a light, settings |
+| Video doorbells | as a camera, plus a ring event |
+| Motion and entry sensors | motion or door binary sensor, battery or tamper where reported |
+| Smoke sensors | smoke, problem, end of life, low battery, alarm muted and testing binary sensors |
+| Smart locks, video smart locks included, where the library reads their state (Wi-Fi locks without a HomeBase not yet) | lock showing locked, unlocked or jammed; locking and unlocking from Home Assistant come later |
+| Garage door cameras (T8452, T8453) | a garage door per door, open and close where a motor is connected |
+| Keypads and other eufy devices | added as devices, with the settings the library knows |
+
+Only some models are tested on hardware; the others follow the eufy app's own model
+data. Model by model:
+[Supported devices](https://github.com/alaraun/homeassistant-eufy-home-security/blob/main/docs/devices.md).
 
 ## Requirements
 
