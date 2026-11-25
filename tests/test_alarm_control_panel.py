@@ -170,7 +170,9 @@ async def test_an_unknown_guard_mode_code_is_unknown_and_logged_once(
     warnings = [
         record
         for record in caplog.records
-        if record.levelno == logging.WARNING and "99" in record.getMessage()
+        if record.levelno == logging.WARNING
+        and record.name.startswith("custom_components.eufy_home_security")
+        and "guard mode code 99" in record.getMessage()
     ]
     assert len(warnings) == 1, [record.getMessage() for record in warnings]
     assert entity_id in warnings[0].getMessage()
