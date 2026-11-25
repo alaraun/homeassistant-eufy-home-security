@@ -5,6 +5,29 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.21](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.20...v0.4.21) (2026-11-25)
+
+
+### Features
+
+* **binary_sensor:** smoke sensors get Smoke, Problem, End of life, Low battery, Alarm muted and Testing binary sensors (library 0.4.18) ([issue 204](https://github.com/alaraun/homeassistant-eufy-home-security/issues/204)) ([57b2ff0](https://github.com/alaraun/homeassistant-eufy-home-security/commit/57b2ff0eadd063324ccfde66a9e8ce544df4bc6b))
+* **card:** digital zoom on the camera picture and History pictures: pinch, Ctrl + wheel, drag to pan ([13d4e8c](https://github.com/alaraun/homeassistant-eufy-home-security/commit/13d4e8cd8919a46f94f5878494b809a058b310f5))
+* **card:** live view buttons show the entity's own icon, such as a script's ([issue 173](https://github.com/alaraun/homeassistant-eufy-home-security/issues/173)) ([13d4e8c](https://github.com/alaraun/homeassistant-eufy-home-security/commit/13d4e8cd8919a46f94f5878494b809a058b310f5))
+* **card:** minimal picture tile (show_controls), tap_to_live and double_tap_fullscreen, the bare picture as a keyboard live view button ([issue 206](https://github.com/alaraun/homeassistant-eufy-home-security/issues/206)) ([13d4e8c](https://github.com/alaraun/homeassistant-eufy-home-security/commit/13d4e8cd8919a46f94f5878494b809a058b310f5))
+* **cover:** garage door cover per door, open and close where a motor is connected (declared from the eufy app, not tested on hardware) ([fbc9656](https://github.com/alaraun/homeassistant-eufy-home-security/commit/fbc96567e4107c7805293a64d20921df8db9801c))
+* **devices:** model data refreshed from the eufy app: retired settings lose their entity, new settings on many models, snooze applies, model and lamp names follow the eufy app (library 0.4.18) ([57b2ff0](https://github.com/alaraun/homeassistant-eufy-home-security/commit/57b2ff0eadd063324ccfde66a9e8ce544df4bc6b))
+* **lock:** read-only lock entity per smart lock (declared from the eufy app, not tested on hardware) ([fbc9656](https://github.com/alaraun/homeassistant-eufy-home-security/commit/fbc96567e4107c7805293a64d20921df8db9801c))
+* **switch:** the HomeBase alarm delay is a switch (library 0.4.18) ([57b2ff0](https://github.com/alaraun/homeassistant-eufy-home-security/commit/57b2ff0eadd063324ccfde66a9e8ce544df4bc6b))
+
+
+### Bug Fixes
+
+* **doorbell:** a wired video doorbell's ring over cloud push reaches its Doorbell event (library 0.4.18) ([issue 205](https://github.com/alaraun/homeassistant-eufy-home-security/issues/205)) ([57b2ff0](https://github.com/alaraun/homeassistant-eufy-home-security/commit/57b2ff0eadd063324ccfde66a9e8ce544df4bc6b))
+* **errors:** an error that names the HomeBase also names the device the change was for ([issue 190](https://github.com/alaraun/homeassistant-eufy-home-security/issues/190)) ([9ac0982](https://github.com/alaraun/homeassistant-eufy-home-security/commit/9ac09820d551994031d3a24a35c3f4e10f80c326))
+* **repairs:** counts in the extra copies repair read right for one and for many ([bd7e72c](https://github.com/alaraun/homeassistant-eufy-home-security/commit/bd7e72c0864ca2c57598e2aeba9a0f51ae842e4a))
+* **repairs:** plain, short text for the unused setting versions repair ([0ad24b6](https://github.com/alaraun/homeassistant-eufy-home-security/commit/0ad24b642d29cf261f11131da5e5a99954a498d3))
+* **sensor:** leave the home's location and address fields out of a structured setting's value attribute ([57b2ff0](https://github.com/alaraun/homeassistant-eufy-home-security/commit/57b2ff0eadd063324ccfde66a9e8ce544df4bc6b))
+
 ## [0.4.20](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.19...v0.4.20) (2026-11-22)
 
 
