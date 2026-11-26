@@ -54,8 +54,11 @@ from custom_components.eufy_home_security import history, recording_match, recor
 from custom_components.eufy_home_security.const import (
     CONF_CAMERA_IMAGE,
     CONF_EVENT_VIDEOS,
+    FFMPEG_DECODE_TIMEOUT_SECONDS,
+    MATCHED_FRAME_WAIT_SECONDS,
     RECORDING_SYNC_FIRST_DELAY_SECONDS,
     RECORDING_SYNC_INTERVAL_SECONDS,
+    TRIGGER_FRAME_TIMEOUT_SECONDS,
     CameraImageMode,
 )
 from custom_components.eufy_home_security.recording_match import RecordingMatcher
@@ -674,14 +677,18 @@ async def test_unload_during_a_wait_cancels_it_quietly(
         assert ours == [], seen
     finally:
         loop.set_exception_handler(None)
-    # The wait's own lines (another component's poll may log at its own time).
+    # All but the storage poll's known failure: the fake HomeBase 2 answers no storage
+    # query, and that poll may log at any time.
     loud = [
-        r
+        r.getMessage()
         for r in caplog.records
         if r.levelno >= logging.WARNING
-        and (r.name.endswith(".recording_match") or "recording of a detection" in r.getMessage())
+        and not (
+            r.name == "custom_components.eufy_home_security.storage"
+            and r.getMessage().startswith("Error fetching")
+        )
     ]
-    assert loud == [], [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert loud == []
 
 
 @pytest.mark.parametrize("fake_station", [SYNTHETIC.station_sn], indirect=True)
@@ -1006,15 +1013,17 @@ async def test_an_unauthenticated_lan_frame_starts_no_wait(
     seed_warm_cache: Callable[..., None],
 ) -> None:
     """A detection under the static ECB key, which anyone on the LAN can forge, lists no
-    recordings and takes no slot; the same detection by cloud push does."""
+    recordings and takes no slot; the same occurrence by cloud push after it still does."""
     entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON)
     started = _start(0)
-    forged = _push(started, session_id="forged", cipher=FrameCipher.ECB)
+    forged = _push(started, cipher=FrameCipher.ECB)
+    genuine = _push(started)
     assert not forged.authenticated
+    assert forged.dedupe_key == genuine.dedupe_key
 
     entry.runtime_data.router.handle(forged)
     assert _matcher(entry).waiting == 0
-    entry.runtime_data.router.handle(_push(started, session_id="genuine"))
+    entry.runtime_data.router.handle(genuine)
     assert _matcher(entry).waiting == 1
     await _unload(hass, entry)
 
@@ -1184,4 +1193,96 @@ async def test_a_second_detection_does_not_retry_a_failed_copy_of_its_recording_
     stats = manager.stats(HOMEBASE_2_SN)
     assert stats is not None
     assert (stats["failed"], stats["retrying"]) == (1, 1)
+    await _unload(hass, entry)
+
+
+def test_the_copy_waits_for_the_whole_frame_job() -> None:
+    """The copy's wait for its frame covers the frame fetch's and the decode's caps, so a
+    frame that lands within them names the video (the tests patch the bound short)."""
+    assert (
+        MATCHED_FRAME_WAIT_SECONDS >= TRIGGER_FRAME_TIMEOUT_SECONDS + FFMPEG_DECODE_TIMEOUT_SECONDS
+    )
+
+
+@pytest.mark.parametrize("order", ORDERS, ids=["d1_first", "d2_first"])
+async def test_the_clip_of_two_detections_is_named_after_the_frame_shown(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    order: tuple[str, str],
+) -> None:
+    """D1 plain, D2 a second later with a picture, event videos on: when D1's frame is
+    refused (D2's picture is newer) its copy waits for D2's wait, so the video pairs with
+    the still of the frame shown, in either finish order; one download."""
+    _fake_push_pictures(monkeypatch)
+    gates = _Gates(monkeypatch)
+    downloads = _count_downloads(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON)
+    snapshots = _snapshots(entry)
+    started = _start()
+    record_id = fake_station.add_detection_recording(SYNTHETIC.camera_sn, started, CLIP_SECONDS)
+
+    entry.runtime_data.router.handle(_push(started, session_id="d1"))
+    entry.runtime_data.router.handle(
+        _push(
+            started + timedelta(seconds=1),
+            session_id="d2",
+            pic_url="https://picture.example/event.jpg",
+        )
+    )
+    await wait_until(lambda: snapshots.source_for(SYNTHETIC.camera_sn) == "push_picture")
+    await _finish_in_order(entry, gates, order)
+    await _settled(hass, entry)
+
+    assert snapshots.source_for(SYNTHETIC.camera_sn) == "trigger_frame"
+    assert downloads == [record_id]
+    (video,) = _videos(hass)
+    frame_stills = [still for still in _stills(hass) if still.stem == video.stem]
+    assert frame_stills, (video.name, [still.name for still in _stills(hass)])
+    await _unload(hass, entry)
+
+
+async def test_a_later_detection_asks_again_when_another_recordings_frame_is_shown(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An earlier clip's frame is shown; D1's fetch of the new clip's frame fails, so the
+    camera still shows the other recording's frame: D2 of the new clip asks again."""
+    gates = _Gates(monkeypatch)
+    failed: list[int | None] = []
+    real = Station.async_event_trigger_frame
+    now = datetime.now(UTC).replace(microsecond=0)
+    earlier = fake_station.add_detection_recording(
+        SYNTHETIC.camera_sn, now - timedelta(seconds=60), CLIP_SECONDS
+    )
+    started = _start()
+    record_id = fake_station.add_detection_recording(SYNTHETIC.camera_sn, started, CLIP_SECONDS)
+
+    async def fail_once(self: Station, event: SecurityEvent, **kwargs: Any) -> bytes:
+        if event.record_id == record_id and not failed:
+            failed.append(event.record_id)
+            raise DeviceTimeoutError("no reply")
+        return await real(self, event, **kwargs)
+
+    monkeypatch.setattr(Station, "async_event_trigger_frame", fail_once)
+    entry = await _set_up(hass, seed_warm_cache, {})
+    snapshots = _snapshots(entry)
+    entry.runtime_data.router.handle(_push(now - timedelta(seconds=60), session_id="d0"))
+    await _finish_in_order(entry, gates, ("d0",))
+    assert snapshots.shows_frame_of(SYNTHETIC.camera_sn, earlier)
+
+    second = started + timedelta(seconds=1)
+    entry.runtime_data.router.handle(_push(started, session_id="d1"))
+    entry.runtime_data.router.handle(_push(second, session_id="d2"))
+    await _finish_in_order(entry, gates, ("d1", "d2"))
+    await _settled(hass, entry)
+
+    assert failed == [record_id]
+    assert snapshots.shows_frame_of(SYNTHETIC.camera_sn, record_id)
+    assert snapshots.event_time_for(SYNTHETIC.camera_sn) == round(second.timestamp() * 1000)
     await _unload(hass, entry)
