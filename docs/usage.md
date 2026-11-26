@@ -91,8 +91,8 @@ reloads the integration.
   uses for it: through the lock's HomeBase or its own station session (T8501, T8502,
   T8503, T8506, T8520, T8530, and T8531, T8532, T85M0, T85M1, T85V0 behind a HomeBase),
   or over eufy's MQTT broker (a T8531, T8532, T85M0, T85M1 or T85V0 that is its own
-  station, some T8506, and a Wi-Fi lock that gets an entity). Declared from the eufy app,
-  not tested on hardware.
+  station, and a Wi-Fi lock that gets an entity). Declared from the eufy app, not tested
+  on hardware.
 - The MQTT broker connection is opened only for an account with such a lock: one per
   account entry, following each **Refresh device list**, closed when the entry unloads.
   It needs the library's `mqtt` extra (`eufy-home-security[mqtt]`); without it the log
