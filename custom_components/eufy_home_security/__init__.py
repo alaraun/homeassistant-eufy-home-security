@@ -41,6 +41,7 @@ from . import (
     history,
     homebase,
     preset_upload,
+    recording_match,
     recording_plays,
     recordings,
     runtime,
@@ -475,6 +476,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         if sync_videos
         else None
     )
+    # Each detection whose push names no recording: its trigger frame and its copy.
+    matches = recording_match.RecordingMatcher(hass, entry, snapshots, recording_manager)
     cloud_push = entry.options.get(CONF_CLOUD_PUSH, False) is True
     router = EventRouter(
         hass,
@@ -485,6 +488,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         presets,
         recording_manager,
         cloud_push=cloud_push,
+        matches=matches,
     )
     # The push-not-running issue goes with the entry: registered before the
     # subscription below, so it runs after the router has unsubscribed and before the
@@ -602,6 +606,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         history=event_history,
         recordings=recording_manager,
         station_recordings=station_recordings.StationRecordings(hass, stored_recordings, plays),
+        recording_matches=matches,
     )
     _async_move_lamp_switch_rows(hass, entry, coordinators.values())
     _async_forget_moved_setting_entities(hass, entry, coordinators.values())

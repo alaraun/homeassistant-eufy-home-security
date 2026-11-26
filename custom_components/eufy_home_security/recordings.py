@@ -9,9 +9,12 @@ finished and stored by ``history.EventHistory.async_save_clip``:
   budget, one download per station at a time. A standalone camera keeps no
   recordings on a station, so it has no sync.
 - **When.** One pass per station once after setup, again a clip length plus the
-  library's settle time after each detection push of that station (coalesced), and
-  every 15 minutes as a catch-up. A pass that saw a recording still running comes
-  back once it has settled.
+  library's settle time after each detection push of that station that names its
+  recording (coalesced), and every 15 minutes as a catch-up. A pass that saw a
+  recording still running comes back once it has settled. A detection whose push names
+  no recording (a HomeBase 2's) is copied as soon as the library has matched its
+  recording and that has settled (``recording_match.py``), on the same task, after a
+  running pass.
 - **Only upcoming.** The option syncs recordings that start after it was switched on:
   the first setup with it on marks that moment in the Store (``since``), and no pass
   lists before it. A setup with the option off drops the mark, so switching it on
@@ -416,6 +419,8 @@ class RecordingSync:
     attempts: dict[int, tuple[int, datetime]] = field(default_factory=dict)
     # Where the last good listing leaves the next one to start; None before one.
     watermark: datetime | None = None
+    # Per record id, settled rows a detection was matched to, copied after a running pass.
+    matched: dict[int, HistoryRecord] = field(default_factory=dict)
 
 
 class RecordingManager:
@@ -509,6 +514,21 @@ class RecordingManager:
         )
 
     @callback
+    def async_matched(self, station_sn: str, row: HistoryRecord) -> None:
+        """Copy ``row``, the settled recording a detection was matched to
+        (``recording_match.py``), now: on the station's sync task, after a running pass,
+        through the same store, unless a pass or an earlier match stored it."""
+        sync = self._syncs.get(station_sn)
+        if sync is None or self._stopped or not row.record_id:
+            return
+        sync.matched[row.record_id] = row
+        if sync.task is not None and not sync.task.done():
+            return
+        sync.task = self._entry.async_create_background_task(
+            self._hass, self._async_passes(sync, full=False), name=f"{DOMAIN} recording sync"
+        )
+
+    @callback
     def _async_tick(self, _now: datetime) -> None:
         self._stored.prune()
         for serial in self._syncs:
@@ -546,12 +566,28 @@ class RecordingManager:
             self._hass, self._async_passes(sync), name=f"{DOMAIN} recording sync"
         )
 
-    async def _async_passes(self, sync: RecordingSync) -> None:
+    async def _async_passes(self, sync: RecordingSync, *, full: bool = True) -> None:
+        """A pass (``full``), then the matched rows, again while another pass was asked."""
         while True:
-            sync.again = False
-            await self._async_pass(sync)
+            if full:
+                sync.again = False
+                await self._async_pass(sync)
+            await self._async_store_matched(sync)
             if not sync.again or self._stopped:
                 return
+            full = True
+
+    async def _async_store_matched(self, sync: RecordingSync) -> None:
+        """Store each matched row not stored yet, in the order matched."""
+        while sync.matched and not self._stopped:
+            row = sync.matched.pop(next(iter(sync.matched)))
+            if self._stored.noted(sync.station.serial, row.record_id, row.started_at) is not None:
+                continue
+            _LOGGER.debug(
+                "Recording sync of %s: storing the recording a detection was matched to",
+                redact_serial(sync.station.serial),
+            )
+            await self._async_store(sync, row)
 
     async def _async_pass(self, sync: RecordingSync) -> None:
         """List the station's recordings one day at a time, oldest first, and store each

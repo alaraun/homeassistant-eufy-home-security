@@ -68,7 +68,9 @@ shows or what the user must be told:
   The library has already de-duplicated every event it delivers, so the router keeps
   no seen-set beyond those ranks. Each one received for a station this entry serves is counted by
   cipher for the diagnostics. A camera detection carrying a media path or naming a
-  picture also goes to the snapshot manager, enriching copies included.
+  picture also goes to the snapshot manager, enriching copies included. One the library
+  must match to its recording (``Station.needs_recording_match``: a HomeBase 2's cloud
+  push names none) goes to the recording matcher (``recording_match.py``).
 - ``AlarmChanged`` goes to that station's panel and alarm event on its alarm signal,
   inside the consuming window. The library has already authenticated and ordered
   it, so it needs no check here. Outside the window it is dropped: it is not a push,
@@ -153,6 +155,7 @@ from .const import CONNECTION_LOSS_GRACE_SECONDS, DOMAIN, EVENT_EUFY_HOME_SECURI
 if TYPE_CHECKING:
     from .coordinator import StationCoordinator
     from .presets import PresetManager
+    from .recording_match import RecordingMatcher
     from .recordings import RecordingManager
     from .runtime import EufyConfigEntry
     from .snapshots import SnapshotManager
@@ -200,6 +203,7 @@ class EventRouter:
         recordings: RecordingManager | None = None,
         *,
         cloud_push: bool = False,
+        matches: RecordingMatcher | None = None,
     ) -> None:
         self._hass = hass
         self._cloud_push = cloud_push
@@ -209,6 +213,7 @@ class EventRouter:
         self._snapshots = snapshots
         self._presets = presets
         self._recordings = recordings
+        self._matches = matches
         # Off until setup has made its first reads: until then the start result and
         # the first refresh decide each station's availability.
         self._following_availability = False
@@ -533,17 +538,22 @@ class EventRouter:
                     "Standalone event image requested for %s", redact_serial(event.device_sn)
                 )
                 self._snapshots.async_request_standalone_event(coordinator.station, event)
-            elif not detections.snapshot_wanted(paired[event.device_sn], event):
-                _LOGGER.debug(
-                    "No snapshot for %s: not a catalogued detection with a still to find",
-                    redact_serial(event.device_sn),
-                )
             else:
-                _LOGGER.debug("Snapshot requested for %s", redact_serial(event.device_sn))
-                self._snapshots.async_request_event(coordinator.station, event)
-                if self._recordings is not None:
-                    # The detection's recording, once it has finished (recordings.py).
-                    self._recordings.async_detection(coordinator.station.serial, event)
+                if not detections.snapshot_wanted(paired[event.device_sn], event):
+                    _LOGGER.debug(
+                        "No snapshot for %s: not a catalogued detection with a still to find",
+                        redact_serial(event.device_sn),
+                    )
+                else:
+                    _LOGGER.debug("Snapshot requested for %s", redact_serial(event.device_sn))
+                    self._snapshots.async_request_event(coordinator.station, event)
+                    if self._recordings is not None:
+                        # The detection's recording, once it has finished (recordings.py).
+                        self._recordings.async_detection(coordinator.station.serial, event)
+                if self._matches is not None and coordinator.station.needs_recording_match(event):
+                    # A detection naming no recording (a HomeBase 2's cloud push): its
+                    # trigger frame and clip once the library has matched its recording.
+                    self._matches.async_detection(coordinator.station, event)
         occurrence = event.dedupe_key
         upgrade = occurrence is not None and detections.is_kind_upgrade(
             event, self._delivered_ranks.get(occurrence)

@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from .events import EventRouter
     from .history import EventHistory
     from .presets import PresetManager
+    from .recording_match import RecordingMatcher
     from .recordings import RecordingManager
     from .snapshots import SnapshotManager
     from .station_recordings import StationRecordings
@@ -425,7 +426,8 @@ class EufyRuntimeData:
     broadcast of every camera the library grades capable of one, each opened only when
     a viewer connects. ``history`` writes every still and clip file; ``recordings``
     copies each HomeBase recording into it, None while the event-videos option is off;
-    ``station_recordings`` lists and fetches them on request.
+    ``station_recordings`` lists and fetches them on request. ``recording_matches``
+    waits for the recording of each detection whose push names none.
     """
 
     eufy: EufySecurity
@@ -438,6 +440,7 @@ class EufyRuntimeData:
     history: EventHistory
     recordings: RecordingManager | None = None
     station_recordings: StationRecordings | None = None
+    recording_matches: RecordingMatcher | None = None
 
 
 type EufyConfigEntry = ConfigEntry[EufyRuntimeData]
