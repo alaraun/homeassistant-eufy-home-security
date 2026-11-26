@@ -3,7 +3,10 @@
 The state is the library's lock reading (``Station.lock_state``), followed on the lock's
 ``LockStateChanged``; nothing is polled for it. A lock the library commands over eufy's
 MQTT broker reports its state there after a command, as a ``LockStateChanged`` naming no
-station: that state shows until the station's next change of the lock's state.
+station: that state shows until the station takes a newer report of the lock (a dump, a
+parameter notify, a push), also one that repeats the station's earlier state; the
+library hands a new reading object for each report it takes, and a push about the lock
+is checked once the station has had it.
 
 Lock and unlock go through the library (``EufySecurity.async_lock`` / ``async_unlock``)
 where its ``lock_control`` says the lock is writable; elsewhere they raise
@@ -106,19 +109,25 @@ class EufyLock(EufyPushAvailability, EufyDeviceEntity, LockEntity):
         super().__init__(coordinator, None if serial == station.serial else serial, LOCK_KEY)
         self._serial = serial
         self._command: _Command | None = None
-        # The lock's last report over MQTT, until the station's next change of its state.
+        # The lock's last report over MQTT, and the station's reading it is newer than.
         self._broker_reading: LockReading | None = None
+        self._station_at_broker: LockReading | None = None
 
-    @property
-    def _reading(self) -> LockReading | None:
-        """The library's last lock reading; None before one, or for a device the latest
+    def _station_reading(self) -> LockReading | None:
+        """The station's last lock reading; None before one, or for a device the latest
         device list no longer pairs here (the reload follows)."""
-        if self._broker_reading is not None:
-            return self._broker_reading
         try:
             return self.coordinator.station.lock_state(self._serial)
         except UnsupportedError:
             return None
+
+    @property
+    def _reading(self) -> LockReading | None:
+        """The newest report: the MQTT one while the station has taken nothing since."""
+        station = self._station_reading()
+        if self._broker_reading is not None and station is self._station_at_broker:
+            return self._broker_reading
+        return station
 
     @property
     def _state(self) -> LockState | None:
@@ -178,16 +187,23 @@ class EufyLock(EufyPushAvailability, EufyDeviceEntity, LockEntity):
                 self._async_on_lock_state,
             )
         )
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                detections.lock_push_signal(self.coordinator.config_entry.entry_id, self._serial),
+                self.async_write_ha_state,
+            )
+        )
 
     @callback
     def _async_on_lock_state(self, event: LockStateChanged) -> None:
         """Show the change: a lock's own report naming no station (over MQTT) as the
         event says it, any other from ``Station.lock_state``, which already holds it."""
-        self._broker_reading = (
-            LockReading(state=event.state, source=event.source, raw=event.raw)
-            if event.station_sn is None
-            else None
-        )
+        if event.station_sn is None:
+            self._broker_reading = LockReading(
+                state=event.state, source=event.source, raw=event.raw
+            )
+            self._station_at_broker = self._station_reading()
         self.async_write_ha_state()
 
     @override

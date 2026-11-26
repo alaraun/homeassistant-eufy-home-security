@@ -9,6 +9,7 @@ the library's own client needs ``aiomqtt``, which the test environment does not 
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections.abc import AsyncIterator, Callable, Iterable
 from typing import Any, Final
@@ -301,3 +302,70 @@ async def test_mqtt_account_failures_are_logged_and_setup_goes_on(
         "The MQTT connection for locks did not follow the device list: CommunicationError",
         "The MQTT connection for locks stopped with CommunicationError",
     ]
+
+
+# A lock push reporting an unlock.
+UNLOCK_PUSH: Final = 257
+
+
+def _lock_push(event_type: int) -> SecurityEvent:
+    return SecurityEvent(
+        source=EventSource.CLOUD,
+        station_sn=MQTT_LOCK_SN,
+        device_sn=MQTT_LOCK_SN,
+        event_type=event_type,
+        frame_cipher=None,
+    )
+
+
+def _mqtt_report(state: LockState) -> LockStateChanged:
+    return LockStateChanged(device_sn=MQTT_LOCK_SN, state=state, source=LockStateSource.LOCK)
+
+
+async def test_a_newer_push_replaces_the_mqtt_report_even_repeating_the_station_state(
+    hass: HomeAssistant,
+    seed_warm_cache: Callable[..., None],
+    accounts: list[FakeMqttAccount],
+) -> None:
+    """Push unlocked, then an MQTT report locked, then a push unlocked again: the station's
+    state does not change (no LockStateChanged), yet the newest report shows. The push is
+    delivered as the client does: its event first, then the station takes it."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    router = entry.runtime_data.router
+    station = entry.runtime_data.coordinators[MQTT_LOCK_SN].station
+    assert station.note_lock_push(_lock_push(UNLOCK_PUSH))
+    await hass.async_block_till_done()
+    assert state_of(hass, _lock_id(hass)) == HALockState.UNLOCKED
+
+    router.handle(_mqtt_report(LockState.LOCKED))
+    await hass.async_block_till_done()
+    assert state_of(hass, _lock_id(hass)) == HALockState.LOCKED
+
+    push = _lock_push(UNLOCK_PUSH)
+    router.handle(push)
+    assert station.note_lock_push(push)
+    await hass.async_block_till_done()
+
+    assert station.lock_state(MQTT_LOCK_SN).state is LockState.UNLOCKED
+    assert state_of(hass, _lock_id(hass)) == HALockState.UNLOCKED
+
+
+async def test_a_push_the_station_drops_keeps_the_newer_mqtt_report(
+    hass: HomeAssistant,
+    seed_warm_cache: Callable[..., None],
+    accounts: list[FakeMqttAccount],
+) -> None:
+    """A push about the lock that the station does not take (older than its state) is no
+    newer report: the MQTT report stays shown."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    router = entry.runtime_data.router
+    station = entry.runtime_data.coordinators[MQTT_LOCK_SN].station
+    router.handle(_mqtt_report(LockState.LOCKED))
+    await hass.async_block_till_done()
+
+    stale = dataclasses.replace(_lock_push(UNLOCK_PUSH), event_time_ms=1)
+    router.handle(stale)
+    assert not station.note_lock_push(stale)
+    await hass.async_block_till_done()
+
+    assert state_of(hass, _lock_id(hass)) == HALockState.LOCKED

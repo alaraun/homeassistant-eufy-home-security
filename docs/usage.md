@@ -98,7 +98,8 @@ reloads the integration.
   It needs the library's `mqtt` extra (`eufy-home-security[mqtt]`); without it the log
   says so once at setup, and those locks show their state but refuse lock and unlock.
   After a command over the broker, the lock's own report there sets the state until its
-  station or a push reports a change of the lock's state.
+  station or a push reports the lock again, also when that report repeats the earlier
+  state: the newest report shows.
 - A command counts only once the lock reports the asked state: the call waits for that
   report, up to about 50 s (the eufy app's 20 s for the lock's answer and 30 s for its
   state), and the lock shows **Locking** or **Unlocking** meanwhile. A lock that refuses
