@@ -554,6 +554,10 @@ FFMPEG_DECODE_TIMEOUT_SECONDS: Final = 20
 # library first.
 REFRESH_THUMBNAIL_TIMEOUT_SECONDS: Final = 120
 REFRESH_TRIGGER_FRAME_TIMEOUT_SECONDS: Final = 150
+# How long the copy of a matched recording (recording_match.py) waits for its trigger
+# frame job: the fetch's cap plus the decode's. A longer stills queue only delays the
+# frame; the copy goes on without the still's name.
+MATCHED_FRAME_WAIT_SECONDS: Final = TRIGGER_FRAME_TIMEOUT_SECONDS + FFMPEG_DECODE_TIMEOUT_SECONDS
 # One deferred thumbnail attempt for a detection whose history row had no
 # thumbnail yet and whose own trigger frame did not land. 60 s is the app's default
 # clip length and the live cameras' value (clip_length, command 1249, range 10-120 s).

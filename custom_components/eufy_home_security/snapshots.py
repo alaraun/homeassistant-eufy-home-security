@@ -73,6 +73,12 @@ only decides what Home Assistant shows, and when it asks:
   authenticated push, and only a JPEG, is shown. An enriching copy that adds a source
   fetches that source; one already fetched for the shown occurrence is not fetched
   again. hd_only shows no push picture: it is no trigger frame.
+- **A detection whose push names no recording** (a HomeBase 2's cloud push) gets
+  its trigger frame once the library has matched and settled its recording
+  (``recording_match.py``): in hd and hd_only, never in thumbnail mode, without the
+  thumbnail step (a HomeBase 2 row's still cannot be looked up). Its place in the
+  camera's order is taken when the push arrives (``async_hold_slot``), so a press made
+  after the push outranks the later frame and one made before it does not.
 - **One media operation per station at a time.** Each station has one worker
   that fetches its cameras' stills in turn, so Home Assistant never opens more than one
   short-lived session per station (the station ends sessions past about ten). A
@@ -367,6 +373,10 @@ class _CameraStill:
     shown_authenticated: bool = True
     pending: SecurityEvent | None = None
     pending_time_ms: int = 0
+    # Whether the waiting detection fetches its trigger frame only (a matched
+    # recording, recording_match.py), and the future its requester awaits.
+    pending_frame_only: bool = False
+    pending_done: asyncio.Future[None] | None = None
     # The newest authenticated detection this camera accepted, whether it is shown,
     # pending, in flight or owed a thumbnail retry: its ordering time and
     # occurrence key. An unauthenticated (ECB) push has its own mark, so a forgery
@@ -419,6 +429,8 @@ class _CameraStill:
     standalone_live_tried_ms: int | None = None
     # The start of the recording a refreshed image came from; None for any other image.
     recorded_time: datetime | None = None
+    # The history row (record id) a detection's shown still came from; None otherwise.
+    shown_record_id: int | None = None
     # When the shown image was stored (UTC), strictly increasing per camera.
     stored_time: datetime | None = None
     # The occurrence whose push pictures were fetched, and their sources.
@@ -565,6 +577,15 @@ class SnapshotManager:
         camera = self._cameras.get(device_sn)
         return camera.recorded_time if camera is not None else None
 
+    def shows_frame_of(self, device_sn: str, record_id: int) -> bool:
+        """Whether the camera shows the trigger frame of its history row ``record_id``."""
+        camera = self._cameras.get(device_sn)
+        return (
+            camera is not None
+            and camera.source is StillSource.TRIGGER_FRAME
+            and camera.shown_record_id == record_id
+        )
+
     def stored_time_for(self, device_sn: str) -> datetime | None:
         """When the shown image was stored; differs for every stored image. None before one."""
         camera = self._cameras.get(device_sn)
@@ -599,17 +620,60 @@ class SnapshotManager:
         The router calls this only for a detection of a camera paired to ``station``
         that the library can find a still for (``detections.snapshot_wanted``).
         """
+        self._accept_event(station, event)
+
+    @callback
+    def async_hold_slot(self, device_sn: str) -> int | None:
+        """Take a detection's place in the camera's arrival order now, for a trigger
+        frame that comes later (:meth:`async_request_matched_frame`): a press after this
+        outranks that frame, one before it does not. None in thumbnail mode (no trigger
+        frame) and once stopped."""
+        if self._stopped or self._camera_image is CameraImageMode.THUMBNAIL:
+            return None
+        camera = self._cameras.setdefault(device_sn, _CameraStill())
+        camera.seq += 1
+        return camera.seq
+
+    @callback
+    def async_request_matched_frame(
+        self, station: Station, event: SecurityEvent, seq: int
+    ) -> asyncio.Future[None]:
+        """Fetch the trigger frame of a detection's matched recording, no thumbnail.
+
+        ``event`` names the recording (``Station.event_with_recording``); ``seq`` is the
+        slot :meth:`async_hold_slot` gave the detection when its push arrived. The
+        detection is accepted and ordered as :meth:`async_request_event` does. The
+        returned future is done once the fetch ran or was dropped (ignored, replaced by
+        a newer detection, stopped); it never raises.
+        """
+        done: asyncio.Future[None] = self._hass.loop.create_future()
+        if not self._accept_event(station, event, seq=seq, frame_only=True, done=done):
+            _resolve(done)
+        return done
+
+    def _accept_event(
+        self,
+        station: Station,
+        event: SecurityEvent,
+        *,
+        seq: int | None = None,
+        frame_only: bool = False,
+        done: asyncio.Future[None] | None = None,
+    ) -> bool:
+        """Queue ``event``'s stills unless ignored; whether it was accepted.
+
+        ``seq`` is an arrival slot already taken, None takes the next one."""
         device_sn = event.device_sn
         if device_sn is None:
-            return
+            return False
         if self._stopped:
             _ignored(device_sn, "snapshot manager stopped")
-            return
+            return False
         # Before any camera state or ordering mark: a detection the chosen mode cannot
         # show is never accepted. The same library attributes snapshot_wanted reads.
         if self._camera_image is CameraImageMode.HD_ONLY and event.video_path is None:
             _ignored(device_sn, "no recording, camera image is HD only")
-            return
+            return False
         if (
             self._camera_image is CameraImageMode.THUMBNAIL
             and event.record_id is None
@@ -617,7 +681,7 @@ class SnapshotManager:
             and not event.picture_sources
         ):
             _ignored(device_sn, "no thumbnail to look up, camera image is thumbnail only")
-            return
+            return False
         camera = self._cameras.setdefault(device_sn, _CameraStill())
         when = event.event_time_ms if event.event_time_ms is not None else _host_now_ms()
         authenticated = event.authenticated
@@ -634,16 +698,16 @@ class SnapshotManager:
                     device_sn,
                     "unauthenticated push while a genuine detection is in flight",
                 )
-                return
+                return False
             if camera.pending is not None and camera.pending.authenticated:
                 _ignored(device_sn, "unauthenticated push while a genuine detection is waiting")
-                return
+                return False
             if camera.retry_event is not None and camera.retry_event.authenticated:
                 _ignored(
                     device_sn,
                     "unauthenticated push while a genuine detection is owed its thumbnail retry",
                 )
-                return
+                return False
         same_shown = key is not None and key == camera.occurrence
         if (
             not same_shown
@@ -652,20 +716,20 @@ class SnapshotManager:
             and when < camera.event_time_ms
         ):
             _ignored(device_sn, "older than the shown detection")
-            return
+            return False
         if (
             camera.pending is not None
             and (camera.pending.authenticated or not authenticated)
             and when < camera.pending_time_ms
         ):
             _ignored(device_sn, "older than the waiting detection")
-            return
+            return False
         same_newest = key is not None and key == camera.newest_occurrence
         if not same_newest and camera.newest_ms is not None and when < camera.newest_ms:
             # Older than a genuine detection already accepted: one in flight, or one
             # that showed nothing and may be owed a thumbnail retry.
             _ignored(device_sn, "older than a genuine detection already accepted")
-            return
+            return False
         if not authenticated:
             same_unauthenticated = (
                 key is not None and key == camera.newest_unauthenticated_occurrence
@@ -677,7 +741,7 @@ class SnapshotManager:
                 and when < newest_unauthenticated
             ):
                 _ignored(device_sn, "older than an unauthenticated push already accepted")
-                return
+                return False
             if not same_unauthenticated:
                 camera.newest_unauthenticated_occurrence = key
             camera.newest_unauthenticated_ms = (
@@ -691,16 +755,23 @@ class SnapshotManager:
         if key is None or key != camera.retry_occurrence:
             # A newer detection works for itself.
             self._cancel_retry(camera, device_sn, "newer detection")
-        camera.seq += 1
-        camera.pending_seq = camera.seq
+        if seq is None:
+            camera.seq += 1
+            seq = camera.seq
+        camera.pending_seq = seq
+        # A replaced request's fetch never runs: its requester stops waiting.
+        _resolve(camera.pending_done)
         camera.pending = event
         camera.pending_time_ms = when
+        camera.pending_frame_only = frame_only
+        camera.pending_done = done
         _LOGGER.debug(
             "Snapshot request for %s accepted, authenticated %s",
             redact_serial(device_sn),
             authenticated,
         )
         self._enqueue(station, _EVENT_JOB, device_sn)
+        return True
 
     @callback
     def async_request_standalone_event(self, station: Station, event: SecurityEvent) -> None:
@@ -928,6 +999,8 @@ class SnapshotManager:
         for device_sn, camera in self._cameras.items():
             self._cancel_retry(camera, device_sn, "unload")
             self._drop_standalone(camera, device_sn, "unload")
+            _resolve(camera.pending_done)
+            camera.pending_done = None
         tasks = [w.task for w in self._workers.values() if w.task is not None]
         for task in tasks:
             task.cancel()
@@ -976,15 +1049,27 @@ class SnapshotManager:
                     event = camera.pending
                     when = camera.pending_time_ms
                     seq = camera.pending_seq
+                    frame_only = camera.pending_frame_only
+                    done = camera.pending_done
                     camera.pending = None
-                    if event is not None:
-                        camera.in_flight_authenticated = event.authenticated
-                        try:
-                            await self._async_event_stills(
-                                worker.station, camera, device_sn, event, when, seq
-                            )
-                        finally:
-                            camera.in_flight_authenticated = False
+                    camera.pending_done = None
+                    try:
+                        if event is not None:
+                            camera.in_flight_authenticated = event.authenticated
+                            try:
+                                await self._async_event_stills(
+                                    worker.station,
+                                    camera,
+                                    device_sn,
+                                    event,
+                                    when,
+                                    seq,
+                                    frame_only=frame_only,
+                                )
+                            finally:
+                                camera.in_flight_authenticated = False
+                    finally:
+                        _resolve(done)
                 elif job == _THUMBNAIL_RETRY_JOB:
                     event = camera.retry_event
                     when = camera.retry_time_ms
@@ -1060,12 +1145,14 @@ class SnapshotManager:
         event: SecurityEvent,
         when: int,
         seq: int,
+        *,
+        frame_only: bool = False,
     ) -> None:
         """The thumbnail, then the trigger frame, of one detection.
 
         ``when`` is the ordering time the manager gave the detection when it accepted
         it, and ``seq`` its arrival counter; neither is recomputed here. Each
-        tier fails on its own.
+        tier fails on its own. ``frame_only`` skips the thumbnail tier.
         """
         occurrence = event.dedupe_key
         thumbnail_not_written = False
@@ -1073,6 +1160,9 @@ class SnapshotManager:
         if self._camera_image is CameraImageMode.HD_ONLY:
             # No thumbnail tier, so nothing is owed a retry either.
             _LOGGER.debug("Thumbnail of %s: skipped, camera image is HD only", serial)
+        elif frame_only:
+            # A matched recording's still path cannot be looked up on a HomeBase 2.
+            _LOGGER.debug("Thumbnail of %s: skipped, trigger frame of a matched recording", serial)
         elif self._shows_trigger_frame_of(camera, occurrence):
             _LOGGER.debug("Thumbnail of %s: skipped, its trigger frame is already shown", serial)
         elif event.record_id is None and event.thumb_path is None and event.picture_sources:
@@ -1951,6 +2041,7 @@ class SnapshotManager:
         camera.shown_seq = seq
         camera.shown_on_demand = on_demand
         camera.recorded_time = recorded_time
+        camera.shown_record_id = record_id
         now = _utcnow()
         if camera.stored_time is not None and now <= camera.stored_time:
             # A wall clock stepped back, or two stores within one tick: still a new value.
@@ -2124,6 +2215,12 @@ def _log_decode(device_sn: str, jpeg: bytes | None, start: float, *, current: bo
             len(jpeg),
             _elapsed(start),
         )
+
+
+def _resolve(done: asyncio.Future[None] | None) -> None:
+    """Mark a requester's future done, once."""
+    if done is not None and not done.done():
+        done.set_result(None)
 
 
 def _ignored(device_sn: str, reason: str) -> None:
