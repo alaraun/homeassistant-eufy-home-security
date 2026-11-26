@@ -301,9 +301,9 @@ from then on is copied into the event history as an MP4:
   the latest within 15 minutes. A HomeBase 2 detection's recording is copied once it
   has been found and has finished (see [Camera images](#camera-images): about the clip
   length plus 30 s after the detection), after its HD image (at most about a minute;
-  when that image was not shown and another detection of the camera is still being
-  matched, after that one) and after a copy pass already running; the 15-minute pass
-  copies the rest.
+  when that image was not shown and other detections of the camera are still being
+  matched, once those are done, so a later detection that shows it names the video too)
+  and after a copy pass already running; the 15-minute pass copies the rest.
 - Named like the event's image (same date, time and kind), so the two sit side by
   side; a recording whose image was not saved is named by its start, kind `event`.
 - The HomeBase plays the recording off its own storage: no camera is woken. Each copy
