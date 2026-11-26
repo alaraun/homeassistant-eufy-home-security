@@ -429,6 +429,8 @@ class _CameraStill:
     standalone_live_tried_ms: int | None = None
     # The start of the recording a refreshed image came from; None for any other image.
     recorded_time: datetime | None = None
+    # The history row (record id) a detection's shown still came from; None otherwise.
+    shown_record_id: int | None = None
     # When the shown image was stored (UTC), strictly increasing per camera.
     stored_time: datetime | None = None
     # The occurrence whose push pictures were fetched, and their sources.
@@ -574,6 +576,15 @@ class SnapshotManager:
         """The start of the recording a refreshed image shows; None for any other image."""
         camera = self._cameras.get(device_sn)
         return camera.recorded_time if camera is not None else None
+
+    def shows_frame_of(self, device_sn: str, record_id: int) -> bool:
+        """Whether the camera shows the trigger frame of its history row ``record_id``."""
+        camera = self._cameras.get(device_sn)
+        return (
+            camera is not None
+            and camera.source is StillSource.TRIGGER_FRAME
+            and camera.shown_record_id == record_id
+        )
 
     def stored_time_for(self, device_sn: str) -> datetime | None:
         """When the shown image was stored; differs for every stored image. None before one."""
@@ -2030,6 +2041,7 @@ class SnapshotManager:
         camera.shown_seq = seq
         camera.shown_on_demand = on_demand
         camera.recorded_time = recorded_time
+        camera.shown_record_id = record_id
         now = _utcnow()
         if camera.stored_time is not None and now <= camera.stored_time:
             # A wall clock stepped back, or two stores within one tick: still a new value.

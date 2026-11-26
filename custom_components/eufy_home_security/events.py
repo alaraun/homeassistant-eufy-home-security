@@ -550,9 +550,14 @@ class EventRouter:
                     if self._recordings is not None:
                         # The detection's recording, once it has finished (recordings.py).
                         self._recordings.async_detection(coordinator.station.serial, event)
-                if self._matches is not None and coordinator.station.needs_recording_match(event):
+                if (
+                    self._matches is not None
+                    and event.authenticated
+                    and coordinator.station.needs_recording_match(event)
+                ):
                     # A detection naming no recording (a HomeBase 2's cloud push): its
                     # trigger frame and clip once the library has matched its recording.
+                    # Not for a frame anyone on the LAN could forge.
                     self._matches.async_detection(coordinator.station, event)
         occurrence = event.dedupe_key
         upgrade = occurrence is not None and detections.is_kind_upgrade(
