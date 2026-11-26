@@ -176,6 +176,15 @@ The camera entity shows its latest detection's image.
 On a HomeBase the images come from the HomeBase's storage and no choice wakes a
 camera.
 
+A HomeBase 2 detection arrives by [Cloud push](#cloud-push), which names no recording.
+Home Assistant then looks for the camera's recording that started within 10 s of the
+detection (else the one running at its time) and, once that recording has finished,
+shows its first frame as the HD image (Thumbnail, then HD and HD only, with no
+thumbnail before it; Thumbnail only shows none): about the camera's clip length plus
+30 s after the detection, never later than 3 minutes. With no such recording by then
+the image stays. Two detections inside one recording get its frame once. This works by
+matching the recording by camera and time; not tested on a HomeBase 2.
+
 A camera without a HomeBase has no recordings to read. Each detection wakes it (each
 wake costs battery), and the choice works like this:
 
@@ -211,7 +220,9 @@ refresh takes longer (about 2.4 s more for keyframe 5 on a HomeBase 2), and imag
 fetches for other cameras on the same HomeBase wait meanwhile. A recording with fewer
 keyframes uses its last one. Detection images always use the first keyframe.
 
-A detection after a button press replaces the button's image. For a still at a fixed
+A detection after a button press replaces the button's image; a press after a
+detection keeps its image when that detection's HD image comes later (a HomeBase 2's,
+above). For a still at a fixed
 interval, an automation with a time pattern trigger can press **Capture live image**;
 each press wakes a battery camera. For the camera's full picture size, turn on the option
 **Capture live image at full resolution**.
@@ -283,7 +294,9 @@ from then on is copied into the event history as an MP4:
   HomeBase; play or save one from the camera card's **Station** list under History.
   Switching the option off and on again starts from the new moment.
 - After the recording has finished: within about a minute of the detection, and at
-  the latest within 15 minutes.
+  the latest within 15 minutes. A HomeBase 2 detection's recording is copied as soon as
+  it has been found and has finished (see [Camera images](#camera-images): about the
+  clip length plus 30 s after the detection); the 15-minute pass copies the rest.
 - Named like the event's image (same date, time and kind), so the two sit side by
   side; a recording whose image was not saved is named by its start, kind `event`.
 - The HomeBase plays the recording off its own storage: no camera is woken. Each copy
@@ -473,6 +486,9 @@ push. Whether a HomeBase 3 also delivers these events over LAN is unverified.
   without waking the camera. eufy's encoded pictures are decoded; a picture protected
   by the camera's Video Encryption setting is not shown. Not with the Event image
   choice HD only. Declared from the eufy app's behaviour, not tested on a HomeBase 2.
+- A HomeBase 2 detection's recording is found by camera and time once it has finished:
+  then its first frame replaces the event image and, with **Save event videos**, its
+  video is copied ([Camera images](#camera-images)). Not tested on a HomeBase 2.
 - A standalone camera's detection image follows [Camera images](#camera-images):
   each detection wakes the camera.
 - Push messages pass through eufy's and Google's servers (see
