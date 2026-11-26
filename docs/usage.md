@@ -312,8 +312,8 @@ from then on is copied into the event history as an MP4:
   is tried again on later passes, three times in all; then one warning is logged and
   the recording stays on the HomeBase only. A recording whose video codec changes
   partway is cut at the change on every copy, so it is not tried again; play it in the
-  eufy app. Neither is a recording end-to-end encrypted under an owner's cloud key that
-  eufy serves no usable key for; one whose key fetch fails is tried again.
+  eufy app. A recording end-to-end encrypted under the owner's cloud key whose key could
+  not be fetched or used counts as a failed copy and is tried again the same way.
 - A recording protected by the eufy app's **Local Advanced Encryption** cannot be
   copied: its key is protected by the PIN of that encryption, which Home Assistant
   neither asks for nor stores. It is not tried again and logs no warning; a repair
@@ -323,7 +323,8 @@ from then on is copied into the event history as an MP4:
   Storage Encryption does not matter. Reported with a HomeBase 2 and a Video Doorbell
   S330 (T8213); recordings end-to-end encrypted under the owner's cloud key are
   decoded (based on the eufy app's behaviour, not tested on hardware). The repair goes
-  with the next reload or restart and comes back only for a new such recording.
+  once a later recording of that camera is copied (the encryption is off again), or with
+  the next reload or restart, and comes back only for a new such recording.
 - The HomeBase is asked for one day of recordings at a time, oldest first. A day it
   does not list within a minute is asked again on the next pass; the days before it
   stay copied.
@@ -364,8 +365,9 @@ request (the camera card's **Station** list, over the websocket commands
   recording whose video codec changes partway cannot be saved: the card says so, and
   later requests for it (or one the event-videos sync gave up for this) are refused
   without downloading it again; play it in the eufy app. One protected by Local
-  Advanced Encryption is refused with the same remedy as Play. Needs **Event history**
-  above 0 days.
+  Advanced Encryption is refused: the card shows "Protected by Local Advanced
+  Encryption" and, under that recording's row, how to turn it off. Needs **Event
+  history** above 0 days.
 
 A recording still running can be played or saved once it has finished. A HomeBase 2's
 recordings are listed, played and saved the same way (the library's HomeBase 2 listing, playback and download checked on a
