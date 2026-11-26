@@ -102,6 +102,22 @@ def _live_figures(station: Station) -> dict[str, dict[str, str]]:
     return figures
 
 
+def _sync_figures(data: EufyRuntimeData, station: Station) -> dict[str, Any] | None:
+    """The station's recording-sync counters, with each camera's recordings given up for
+    the PIN-protected key by its :func:`_device_labels` label; None without a sync."""
+    if data.recordings is None:
+        return None
+    figures = data.recordings.stats(station.serial)
+    if figures is None:
+        return None
+    labels = _device_labels(station)
+    figures["pin_protected_by_camera"] = {
+        labels.get(serial) or redact_serial(serial): count
+        for serial, count in data.recordings.pin_protected_counts(station.serial).items()
+    }
+    return figures
+
+
 def _mode_key(mode: GuardMode | int) -> str | int:
     """A mode as diagnostics name it: the code's name, or the bare code GuardMode lacks."""
     return mode.name.lower() if isinstance(mode, GuardMode) else mode
@@ -210,9 +226,7 @@ async def async_get_config_entry_diagnostics(
             "live_support": _live_figures(station),
             # Whether the mode in force lets each device's detections out.
             "detection_delivery": _delivery_figures(station),
-            "recording_sync": (
-                data.recordings.stats(station.serial) if data.recordings is not None else None
-            ),
+            "recording_sync": _sync_figures(data, station),
         }
     # Asked after every station block, so the session figures above precede its requests.
     account_report = await _account_report(data)

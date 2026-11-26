@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.24-4';
+const CARD_VERSION = '2026.11.26-3';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -162,7 +162,11 @@ const STATION_PLAY_WS = 'eufy_home_security/recordings/play';
 const PLAY_ERRORS = {
   busy: 'All sessions to the HomeBase are in use',
   codec_change: 'The recording changes its video format here; Save it to watch the rest',
+  pin_protected: 'Protected by the eufy app\'s Local Advanced Encryption: play it in the eufy app, and turn it off there (Settings > Security > Media Content Encryption) for new recordings to play here',
 };
+// Save refused for the eufy app's Local Advanced Encryption: this toast (one line), and the remedy
+// (PLAY_ERRORS.pin_protected) under the recording's row until a later Save of it ends otherwise
+const SAVE_PIN = 'Protected by Local Advanced Encryption';
 // A station play's websocket dropped: no end event comes, and the integration frees what arrived
 const PLAY_LOST = 'Connection lost';
 // A hidden tab ends a station play after this long (unsubscribing frees the HomeBase session and the segments)
@@ -1026,10 +1030,16 @@ class EufyCameraCard extends HTMLElement {
       if (!r || !r.media_content_id) throw new Error('The station sent no file');
       it.mcid = r.media_content_id;
       it.saved = true;
+      it.pin = false;
       if (r.url) this._histUrls.set(r.media_content_id, { url: r.url, at: Date.now() });
       if (!cam.here()) return;
       if (this._open === 'history') this._loadHistory();
-    }).catch((e) => { if (cam.shown()) this._toast((e && e.message) || 'Not fetched from the station'); })
+    }).catch((e) => {
+      const er = (e && e.error && typeof e.error === 'object' ? e.error : e) || {};
+      // The note under the row follows the row's latest Save
+      it.pin = er.code === 'pin_protected';
+      if (cam.shown()) this._toast(it.pin ? SAVE_PIN : er.message || 'Not fetched from the station');
+    })
       .finally(() => { if (!cam.here()) return; this._sfetch.delete(rid); this.render(); });
   }
 
@@ -3378,6 +3388,7 @@ class EufyCameraCard extends HTMLElement {
             <span class="stx"><span class="sl1"><span class="swhen">${escapeHtml(lb.when)}</span>${dur ? `<span class="sdur">${dur}</span>` : ''}</span>
               <span class="sl2"><span class="skind"><ha-icon icon="${lb.icon}"></ha-icon><span>${escapeHtml(lb.kind)}</span></span>${state ? `<span class="sst${it.saved ? ' ok' : ''}">${state}</span>` : ''}</span></span>
             ${btn('play', 'mdi:play', 'Play', !it.settled || !it.rid)}${btn('save', it.saved ? 'mdi:check' : 'mdi:download', it.saved ? 'Saved:' : 'Save to the history:', !it.settled || it.saved || !it.rid)}
+            ${it.pin ? `<span class="snote" role="note">${escapeHtml(PLAY_ERRORS.pin_protected)}</span>` : ''}
           </div>`;
     };
     const sMsg = t => `<div class="slist msg" role="status"><div class="hmsg">${t}</div></div>`;
@@ -4270,6 +4281,8 @@ const CSS_TEXT = `
   .skind ha-icon { display: flex; flex: none; width: 12px; height: 12px; line-height: 0; color: var(--cc-sub); }
   .skind span { overflow: hidden; text-overflow: ellipsis; }
   .sst { flex: none; }
+  /* A refused Save's remedy: the row's full width, wrapped */
+  .snote { grid-column: 1 / -1; font-size: var(--fs-xs); line-height: 1.3; color: var(--cc-error-text); white-space: normal; }
   /* Show more: the station list's last row */
   .srow.smore { display: block; min-height: 0; }
   .smb { width: 100%; height: 36px; display: flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 8px;

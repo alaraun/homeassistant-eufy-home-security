@@ -309,6 +309,9 @@ async def test_event_videos_never_sync_a_standalone_camera(
     assert recordings.stats(SN) is None
     assert fake_station.history_queries == []
     assert fake_station.conn_inits == 0
+    result = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
+    (station_dict,) = result["stations"].values()
+    assert station_dict["recording_sync"] is None
 
 
 async def test_a_standalone_camera_lists_no_station_recordings(

@@ -37,7 +37,16 @@ finished and stored by ``history.EventHistory.async_save_clip``:
   is another recording under a reused id: it does not count as stored. A download
   that fails or comes back incomplete keeps nothing and is tried again on a later
   pass, up to three attempts; one cut at a video-codec change (``ended_early``) is
-  cut there on every try, so it is given up at once.
+  cut there on every try, so it is given up at once. A recording under the owner's
+  cloud cipher that the library could not open (``EndToEndEncryptedError``: a key fetch
+  still running, no usable key) or whose key fetch failed (``CommunicationError``) is
+  tried again like any failure.
+- **PIN-protected.** A recording end-to-end encrypted with the eufy app's Local Advanced
+  Encryption (``PinProtectedKeyError``, refused by the library before anything is sent)
+  is given up at once without the warning, counted apart, noted in the Store with its
+  camera, and raises the camera's repair issue
+  (``errors.raise_recordings_pin_protected_issue``). A later recording of that camera
+  stored in the same setup withdraws it: the encryption is off again.
 - **One path.** The sync and a fetch on request store through
   :meth:`StoredRecordings.async_store`: same names, same Store, and a second request
   for a recording being downloaded joins that download.
@@ -67,6 +76,7 @@ from eufy_home_security import (
     HistoryRecord,
     IncompleteReason,
     MediaClip,
+    PinProtectedKeyError,
     SecurityEvent,
     Station,
     redact_serial,
@@ -192,7 +202,8 @@ class StoredRecordings:
 
     Per :func:`record_key`: ``file`` (None: given up), ``folder``, ``station``,
     ``device`` and ``started``; a give-up for a cut at a video-codec change also notes
-    ``cut`` True. ``since`` is the event-videos mark: the sync lists nothing before it.
+    ``cut`` True, one for the PIN-protected key ``pin_protected`` True and the camera.
+    ``since`` is the event-videos mark: the sync lists nothing before it.
     """
 
     def __init__(self, hass: HomeAssistant, entry: EufyConfigEntry, events: EventHistory) -> None:
@@ -294,10 +305,17 @@ class StoredRecordings:
         return False
 
     def give_up(
-        self, record_id: int, station_sn: str, started: datetime, *, cut: bool = False
+        self,
+        record_id: int,
+        station_sn: str,
+        started: datetime,
+        *,
+        cut: bool = False,
+        pin_protected_sn: str | None = None,
     ) -> None:
         """Note ``station_sn``'s recording ``record_id`` as never to be synced again;
-        ``cut``: its download stops at a video-codec change."""
+        ``cut``: its download stops at a video-codec change; ``pin_protected_sn``: the
+        camera whose recording is end-to-end encrypted with the PIN-protected key."""
         record: dict[str, Any] = {
             "file": None,
             "station": station_sn,
@@ -305,6 +323,9 @@ class StoredRecordings:
         }
         if cut:
             record["cut"] = True
+        if pin_protected_sn is not None:
+            record["device"] = pin_protected_sn
+            record["pin_protected"] = True
         self.records[record_key(station_sn, record_id)] = record
         self.save()
 
@@ -401,6 +422,8 @@ class SyncStats:
     stored: int = 0
     failed: int = 0
     given_up: int = 0
+    # Given up for the PIN-protected key, apart from ``given_up``.
+    pin_protected: int = 0
     last_pass: str | None = None
     last_error: str | None = None
 
@@ -444,6 +467,8 @@ class RecordingManager:
             if not station.is_standalone
         }
         self._warned: set[str] = set()
+        # Per camera, the start of its latest recording given up for the PIN-protected key.
+        self._pin_started: dict[str, datetime] = {}
         self._stopped = False
 
     @property
@@ -466,6 +491,7 @@ class RecordingManager:
             "stored": sync.stats.stored,
             "failed": sync.stats.failed,
             "given_up": sync.stats.given_up,
+            "pin_protected": sync.stats.pin_protected,
             "retrying": len(sync.attempts),
             "kept": sum(
                 1
@@ -475,6 +501,20 @@ class RecordingManager:
             "last_pass": sync.stats.last_pass,
             "last_error": sync.stats.last_error,
         }
+
+    def pin_protected_counts(self, station_sn: str) -> dict[str, int]:
+        """Per camera serial, the station's recordings the Store notes as given up for
+        the PIN-protected key."""
+        counts: dict[str, int] = {}
+        for record in self._stored.records.values():
+            device = record.get("device")
+            if (
+                record.get("station") == station_sn
+                and record.get("pin_protected") is True
+                and isinstance(device, str)
+            ):
+                counts[device] = counts.get(device, 0) + 1
+        return counts
 
     async def async_start(self) -> None:
         """Mark when the option came on, prune what is stored, arm each station's passes.
@@ -696,6 +736,9 @@ class RecordingManager:
             return
         try:
             await self._stored.async_store(sync.station, row)
+        except PinProtectedKeyError:
+            self._pin_protected(sync, row.record_id, row.device_sn, row.started_at)
+            return
         except (
             EufySecurityError,
             IncompleteClipError,
@@ -708,6 +751,10 @@ class RecordingManager:
         sync.attempts.pop(row.record_id, None)
         sync.stats.stored += 1
         self._warned.discard(row.device_sn)
+        # A later recording of the camera stored: its encryption is off again.
+        pinned = self._pin_started.get(row.device_sn)
+        if pinned is not None and row.started_at > pinned:
+            errors.delete_recordings_pin_protected_issue(self._hass, self._entry, row.device_sn)
 
     def _failed(self, sync: RecordingSync, row: HistoryRecord, err: BaseException) -> None:
         started = row.started_at or dt_util.utcnow()
@@ -746,6 +793,24 @@ class RecordingManager:
                 "attempt" if count == 1 else "attempts",
                 reason,
             )
+
+    def _pin_protected(
+        self, sync: RecordingSync, record_id: int, device_sn: str, started: datetime
+    ) -> None:
+        """Give up a recording under the PIN-protected key at once (no try can open it)
+        and raise its camera's repair issue."""
+        sync.attempts.pop(record_id, None)
+        sync.stats.failed += 1
+        sync.stats.pin_protected += 1
+        sync.stats.last_error = PinProtectedKeyError.__name__
+        self._stored.give_up(record_id, sync.station.serial, started, pin_protected_sn=device_sn)
+        _LOGGER.debug(
+            "Recording sync: a recording of %s is end-to-end encrypted with the PIN-protected"
+            " key; given up",
+            redact_serial(device_sn),
+        )
+        self._pin_started[device_sn] = max(started, self._pin_started.get(device_sn, started))
+        errors.raise_recordings_pin_protected_issue(self._hass, self._entry, device_sn)
 
     @callback
     def _async_follow_up(self, station_sn: str, running: list[HistoryRecord]) -> None:

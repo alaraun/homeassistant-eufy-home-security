@@ -173,6 +173,7 @@ from .const import (
     ISSUE_PENDING_INVITES,
     ISSUE_PUSH_NEEDED,
     ISSUE_PUSH_NOT_RUNNING,
+    ISSUE_RECORDINGS_PIN_PROTECTED,
     ISSUE_SESSION_REPLACED,
     ISSUE_STATION_P2P_ID_UNSUPPORTED,
     ISSUE_STATION_WEBRTC_ONLY,
@@ -1417,10 +1418,62 @@ def raise_account_mismatch_issue(hass: HomeAssistant, entry: ConfigEntry[Any], s
     )
 
 
+def recordings_pin_protected_issue_id(entry_id: str, device_id: str) -> str:
+    """A camera's PIN-protected-recordings issue, by its device-registry id."""
+    return f"{ISSUE_RECORDINGS_PIN_PROTECTED}_{entry_id}_{device_id}"
+
+
+def raise_recordings_pin_protected_issue(
+    hass: HomeAssistant, entry: ConfigEntry[Any], device_sn: str
+) -> None:
+    """One issue for a camera whose recording the event-videos sync gave up because it is
+    end-to-end encrypted with the eufy app's Local Advanced Encryption (the user's
+    PIN-protected key, ``PinProtectedKeyError``).
+
+    The remedy is in the eufy app, so not fixable; a WARNING, not persistent, one per
+    camera's device. Raised again by each such recording the sync gives up; withdrawn when
+    a later recording of the camera is stored (:func:`delete_recordings_pin_protected_issue`)
+    and with the entry's unload and every setup attempt (:func:`delete_reload_scoped_issues`);
+    the recordings given up before do not raise it again.
+    """
+    device = _station_device(hass, entry, device_sn)
+    if device is None:
+        _LOGGER.debug(
+            "Camera %s has no registered device; no PIN-protected recordings issue",
+            redact_serial(device_sn),
+        )
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        recordings_pin_protected_issue_id(entry.entry_id, device.id),
+        is_fixable=False,
+        is_persistent=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=ISSUE_RECORDINGS_PIN_PROTECTED,
+        # The title is plain text, the description markdown.
+        translation_placeholders={
+            "camera": station_label(device),
+            "camera_markdown": markdown_literal(station_label(device)),
+        },
+    )
+
+
+def delete_recordings_pin_protected_issue(
+    hass: HomeAssistant, entry: ConfigEntry[Any], device_sn: str
+) -> None:
+    """Withdraw a camera's PIN-protected-recordings issue, if it has one."""
+    device = _station_device(hass, entry, device_sn)
+    if device is not None:
+        ir.async_delete_issue(
+            hass, DOMAIN, recordings_pin_protected_issue_id(entry.entry_id, device.id)
+        )
+
+
 def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:
     """Delete the entry's account-id-mismatch, cipher-unavailable, cipher-key-missing,
     key-unusable, no-devices, pending-invitations, login-limited, push-needed,
-    mode-holds-detections and skipped-device issues.
+    mode-holds-detections, PIN-protected-recordings and skipped-device issues.
 
     Unload, the start of every setup attempt and entry removal call it, so an issue
     raised by an attempt that then failed (and so was never unloaded) does not
@@ -1439,6 +1492,7 @@ def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) ->
         login_limited_issue_id(entry.entry_id),
         push_needed_issue_id(entry.entry_id),
         mode_holds_detections_issue_prefix(entry.entry_id),
+        recordings_pin_protected_issue_id(entry.entry_id, ""),
         *(skipped_devices_issue_id(entry.entry_id, key) for key in _SKIP_ISSUES.values()),
     )
     cancel_login_limited_expiry(hass, entry.entry_id)

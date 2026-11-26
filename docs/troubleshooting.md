@@ -32,7 +32,8 @@ in `configuration.yaml` (above) for the full request trail.
 LAN, `lan`, or through eufy's servers, `rendezvous`, and `lan_reply_blocked` whether a
 station on Home Assistant's network needed eufy's servers because its LAN reply did not
 arrive), LAN warnings,
-storage figures, event-video copy counters (`recording_sync`), cloud push state
+storage figures, event-video copy counters (`recording_sync`; each camera's recordings
+given up for Local Advanced Encryption in `pin_protected_by_camera`), cloud push state
 (`push`), whether the security mode in force sends each device's detections
 (`detection_delivery`), whether each camera gets a live stream and why (`live_support`:
 its grade, `verified`, `declared` or `unknown`, and the library's reason), options,
@@ -66,6 +67,7 @@ an account where no device was found too.
 | eufy detections need cloud push | cloud push is off, and a station does not send its cameras' detections over the LAN (a standalone camera, a HomeBase 2, a model not yet checked); their detection sensors stay off | **Fix** switches cloud push on and reloads; or ignore it to leave push off; see [usage.md](usage.md#cloud-push) |
 | No detections from some cameras in a mode | the security mode in force has the **Notification** action off for the cameras it names, so the station sends none of their detections while that mode is in force; they keep recording. Not raised while disarmed | in the eufy app: Security mode → the mode → each camera → Notification on (also notifies your phone); see [usage.md](usage.md#detections-in-the-security-mode). Clears when a mode that sends them is in force or the setting changes. To keep the mode silent, ignore it: the ignore applies to that mode only, and is lost when the mode leaves and comes back and on every restart or reload (Home Assistant forgets an ignored repair once it is withdrawn), so the repair shows again then. To turn it off for every mode, switch off the option **Repair when a security mode holds detections back** ([usage.md](usage.md#options)) |
 | eufy stations on this network connect through eufy's servers | a station on Home Assistant's own network does not get its replies to the local search through, so each link is set up through eufy's servers; commands and video stay on the LAN, but a reconnect needs the internet. The repair lists each station's address | allow all UDP from that address in the firewall on the Home Assistant host, then reload the integration; see [network.md](network.md#firewall). Clears after the next link over the LAN; ignore it to keep the path |
+| Some recordings of a camera cannot be saved | the camera's recordings are protected by the eufy app's Local Advanced Encryption, whose key needs a PIN Home Assistant neither asks for nor stores; event videos skips them and the card cannot play them. Raised when such a recording is first met; gone once event videos saves a later recording of the camera, or after a reload or restart, and back only for a new one | in the eufy app: Settings > Security > Media Content Encryption → Local Advanced Encryption off, for new recordings; those made while it was on stay encrypted and play in the eufy app. See [usage.md](usage.md#event-videos) |
 | eufy cloud push is not running | cloud push is on but not receiving; detections of standalone cameras and a HomeBase 2 are late or missing | retries by itself; check internet access and the log, or switch the option off; see [usage.md](usage.md#cloud-push) |
 
 ## Setting errors
@@ -135,4 +137,7 @@ link took.
   30-40 s after the change in our test. Home Assistant's own camera views do not reopen
   their player and stay frozen until they are opened again. HA's stream component logs
   `Error from stream worker: Error demuxing stream` at each change for an HLS viewer.
+- **Recordings protected by the eufy app's Local Advanced Encryption** are not saved
+  or played in Home Assistant (a repair names the camera); see
+  [usage.md](usage.md#event-videos).
 - Not supported: firmware installation.

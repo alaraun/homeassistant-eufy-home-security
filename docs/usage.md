@@ -312,7 +312,19 @@ from then on is copied into the event history as an MP4:
   is tried again on later passes, three times in all; then one warning is logged and
   the recording stays on the HomeBase only. A recording whose video codec changes
   partway is cut at the change on every copy, so it is not tried again; play it in the
-  eufy app.
+  eufy app. A recording end-to-end encrypted under the owner's cloud key whose key could
+  not be fetched or used counts as a failed copy and is tried again the same way.
+- A recording protected by the eufy app's **Local Advanced Encryption** cannot be
+  copied: its key is protected by the PIN of that encryption, which Home Assistant
+  neither asks for nor stores. It is not tried again and logs no warning; a repair
+  names the camera. To have new recordings copied, turn Local Advanced Encryption off
+  in the eufy app (**Settings > Security > Media Content Encryption**). Recordings made
+  while it was on stay encrypted and play only in the eufy app. The always-on Local
+  Storage Encryption does not matter. Reported with a HomeBase 2 and a Video Doorbell
+  S330 (T8213); recordings end-to-end encrypted under the owner's cloud key are
+  decoded (based on the eufy app's behaviour, not tested on hardware). The repair goes
+  once a later recording of that camera is copied (the encryption is off again), or with
+  the next reload or restart, and comes back only for a new such recording.
 - The HomeBase is asked for one day of recordings at a time, oldest first. A day it
   does not list within a minute is asked again on the next pass; the days before it
   stay copied.
@@ -344,14 +356,18 @@ request (the camera card's **Station** list, over the websocket commands
   and a play past it waits for a session, then fails with "every session of the
   HomeBase is in use". Closing the
   player stops the HomeBase sending at once. A recording whose video codec changes
-  partway plays up to the change. Tested with the fake station and with recorded
+  partway plays up to the change. A recording protected by Local Advanced Encryption
+  (see [Event videos](#event-videos)) does not play; the card says how to turn the
+  encryption off. Tested with the fake station and with recorded
   HomeBase video in Firefox and Chrome; not yet checked with a HomeBase.
 - **Save** copies it into the event history exactly as an event video: same name,
   noted as copied (the option's sync skips it), kept and deleted with the history. A
   recording whose video codec changes partway cannot be saved: the card says so, and
   later requests for it (or one the event-videos sync gave up for this) are refused
-  without downloading it again; play it in the eufy app. Needs **Event history** above
-  0 days.
+  without downloading it again; play it in the eufy app. One protected by Local
+  Advanced Encryption is refused: the card shows "Protected by Local Advanced
+  Encryption" and, under that recording's row, how to turn it off. Needs **Event
+  history** above 0 days.
 
 A recording still running can be played or saved once it has finished. A HomeBase 2's
 recordings are listed, played and saved the same way (the library's HomeBase 2 listing, playback and download checked on a
