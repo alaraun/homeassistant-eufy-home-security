@@ -33,6 +33,8 @@ from eufy_home_security import (
     ClipWriter,
     DetectionType,
     DeviceTimeoutError,
+    E2EKeyType,
+    EndToEndEncryptedError,
     EufySecurity,
     HistoryRecord,
     LiveStreamLimitError,
@@ -1091,6 +1093,36 @@ async def test_a_fetch_of_a_pin_protected_recording_names_the_remedy(
     }
     assert _videos(hass) == []
     assert _manager(entry).stats.fetch_failed == 1
+    await _unload(hass, entry)
+
+
+async def test_a_fetch_whose_cloud_key_could_not_be_used_says_so(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recording under the owner's cloud key that the library could not use: still
+    ``unavailable`` (a later try may work), worded as the key, not as the HomeBase."""
+    settled = _row(2)
+    fake_station.rows = [settled]
+    entry = await _set_up(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    entity_id = _camera(hass)
+    refs = await _refs(client, entity_id)
+    _fail_downloads(
+        monkeypatch,
+        EndToEndEncryptedError("no usable key", key_type=E2EKeyType.CIPHER, key_id=2),
+    )
+
+    reply = await _fetch(client, entity_id, refs[settled["record_id"]])
+
+    assert reply["error"] == {
+        "code": station_recordings.ERR_UNAVAILABLE,
+        "message": station_recordings.E2E_KEY_MESSAGE,
+    }
     await _unload(hass, entry)
 
 

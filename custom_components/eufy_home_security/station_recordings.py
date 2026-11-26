@@ -76,6 +76,7 @@ from homeassistant.util.hass_dict import HassKey
 
 from eufy_home_security import (
     AccountRejectedError,
+    EndToEndEncryptedError,
     EufySecurityError,
     HistoryRecord,
     LiveStreamLimitError,
@@ -149,6 +150,10 @@ PIN_PROTECTED_MESSAGE: Final = (
     "This recording is protected by the eufy app's Local Advanced Encryption, so it cannot be"
     " played or saved here; play it in the eufy app. Turn the encryption off there (Settings >"
     " Security > Media Content Encryption) for new recordings to play here"
+)
+
+E2E_KEY_MESSAGE: Final = (
+    "The recording is end-to-end encrypted and its key from eufy could not be used; try again later"
 )
 
 _REGISTERED: HassKey[bool] = HassKey(f"{DOMAIN}_station_recordings")
@@ -527,11 +532,14 @@ class StationRecordings:
 def transfer_error(camera: _Camera, err: EufySecurityError | TimeoutError) -> RecordingError:
     """The answer to a library error of a download or a play: ``busy`` past the session
     budget, ``account_rejected`` with the sharing hint, ``pin_protected`` with the remedy
-    for a recording under the eufy app's Local Advanced Encryption, else ``unavailable``."""
+    for a recording under the eufy app's Local Advanced Encryption, ``unavailable`` naming
+    the key for an owner's cloud key the library could not use, else ``unavailable``."""
     if isinstance(err, LiveStreamLimitError):
         return RecordingError(ERR_BUSY, "Every session of the HomeBase is in use")
     if isinstance(err, PinProtectedKeyError):
         return RecordingError(ERR_PIN_PROTECTED, PIN_PROTECTED_MESSAGE)
+    if isinstance(err, EndToEndEncryptedError):
+        return RecordingError(ERR_UNAVAILABLE, E2E_KEY_MESSAGE)
     if isinstance(err, AccountRejectedError):
         return _account_refused(camera)
     return RecordingError(ERR_UNAVAILABLE, "The HomeBase did not play it")

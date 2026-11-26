@@ -37,14 +37,16 @@ finished and stored by ``history.EventHistory.async_save_clip``:
   is another recording under a reused id: it does not count as stored. A download
   that fails or comes back incomplete keeps nothing and is tried again on a later
   pass, up to three attempts; one cut at a video-codec change (``ended_early``) is
-  cut there on every try, so it is given up at once, and so is one under a cloud
-  cipher the cloud serves no usable key for (``EndToEndEncryptedError``). A failed
-  cloud key fetch (``CommunicationError``) is tried again like any failure.
+  cut there on every try, so it is given up at once. A recording under the owner's
+  cloud cipher that the library could not open (``EndToEndEncryptedError``: a key fetch
+  still running, no usable key) or whose key fetch failed (``CommunicationError``) is
+  tried again like any failure.
 - **PIN-protected.** A recording end-to-end encrypted with the eufy app's Local Advanced
   Encryption (``PinProtectedKeyError``, refused by the library before anything is sent)
   is given up at once without the warning, counted apart, noted in the Store with its
   camera, and raises the camera's repair issue
-  (``errors.raise_recordings_pin_protected_issue``).
+  (``errors.raise_recordings_pin_protected_issue``). A later recording of that camera
+  stored in the same setup withdraws it: the encryption is off again.
 - **One path.** The sync and a fetch on request store through
   :meth:`StoredRecordings.async_store`: same names, same Store, and a second request
   for a recording being downloaded joins that download.
@@ -70,7 +72,6 @@ from homeassistant.util import dt as dt_util
 
 from eufy_home_security import (
     ClipWriter,
-    EndToEndEncryptedError,
     EufySecurityError,
     HistoryRecord,
     IncompleteReason,
@@ -466,6 +467,8 @@ class RecordingManager:
             if not station.is_standalone
         }
         self._warned: set[str] = set()
+        # Per camera, the start of its latest recording given up for the PIN-protected key.
+        self._pin_started: dict[str, datetime] = {}
         self._stopped = False
 
     @property
@@ -748,6 +751,10 @@ class RecordingManager:
         sync.attempts.pop(row.record_id, None)
         sync.stats.stored += 1
         self._warned.discard(row.device_sn)
+        # A later recording of the camera stored: its encryption is off again.
+        pinned = self._pin_started.get(row.device_sn)
+        if pinned is not None and row.started_at > pinned:
+            errors.delete_recordings_pin_protected_issue(self._hass, self._entry, row.device_sn)
 
     def _failed(self, sync: RecordingSync, row: HistoryRecord, err: BaseException) -> None:
         started = row.started_at or dt_util.utcnow()
@@ -770,9 +777,7 @@ class RecordingManager:
             count,
             RECORDING_MAX_ATTEMPTS,
         )
-        # A cloud cipher the cloud serves no usable key for is refused again on every try.
-        final = cut or isinstance(err, EndToEndEncryptedError)
-        if count < RECORDING_MAX_ATTEMPTS and not final:
+        if count < RECORDING_MAX_ATTEMPTS and not cut:
             sync.attempts[row.record_id] = (count, started)
             return
         sync.attempts.pop(row.record_id, None)
@@ -804,6 +809,7 @@ class RecordingManager:
             " key; given up",
             redact_serial(device_sn),
         )
+        self._pin_started[device_sn] = max(started, self._pin_started.get(device_sn, started))
         errors.raise_recordings_pin_protected_issue(self._hass, self._entry, device_sn)
 
     @callback

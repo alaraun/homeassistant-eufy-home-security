@@ -262,7 +262,7 @@
     },
     "recordings_pin_protected": {
       "title": "Some recordings of {camera} cannot be saved",
-      "description": "Some recordings of {camera} are protected by the eufy app's Local Advanced Encryption, so Home Assistant cannot save or play them. They stay on the HomeBase and play in the eufy app. To have new recordings saved here, turn off Local Advanced Encryption in the eufy app under Settings > Security > Media Content Encryption. Recordings made while it was on stay encrypted."
+      "description": "Some recordings of {camera_markdown} are protected by the eufy app's Local Advanced Encryption, so Home Assistant cannot save or play them. They stay on the HomeBase and play in the eufy app. To have new recordings saved here, turn off Local Advanced Encryption in the eufy app under Settings > Security > Media Content Encryption. Recordings made while it was on stay encrypted."
     },
     "mode_holds_detections": {
       "title": "{station}: no detections from some cameras in {mode} mode",

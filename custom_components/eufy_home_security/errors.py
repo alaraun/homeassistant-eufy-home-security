@@ -1431,8 +1431,9 @@ def raise_recordings_pin_protected_issue(
     PIN-protected key, ``PinProtectedKeyError``).
 
     The remedy is in the eufy app, so not fixable; a WARNING, not persistent, one per
-    camera's device. Raised again by each such recording the sync gives up; deleted with
-    the entry's unload and every setup attempt (:func:`delete_reload_scoped_issues`), and
+    camera's device. Raised again by each such recording the sync gives up; withdrawn when
+    a later recording of the camera is stored (:func:`delete_recordings_pin_protected_issue`)
+    and with the entry's unload and every setup attempt (:func:`delete_reload_scoped_issues`);
     the recordings given up before do not raise it again.
     """
     device = _station_device(hass, entry, device_sn)
@@ -1450,8 +1451,23 @@ def raise_recordings_pin_protected_issue(
         is_persistent=False,
         severity=ir.IssueSeverity.WARNING,
         translation_key=ISSUE_RECORDINGS_PIN_PROTECTED,
-        translation_placeholders={"camera": markdown_literal(station_label(device))},
+        # The title is plain text, the description markdown.
+        translation_placeholders={
+            "camera": station_label(device),
+            "camera_markdown": markdown_literal(station_label(device)),
+        },
     )
+
+
+def delete_recordings_pin_protected_issue(
+    hass: HomeAssistant, entry: ConfigEntry[Any], device_sn: str
+) -> None:
+    """Withdraw a camera's PIN-protected-recordings issue, if it has one."""
+    device = _station_device(hass, entry, device_sn)
+    if device is not None:
+        ir.async_delete_issue(
+            hass, DOMAIN, recordings_pin_protected_issue_id(entry.entry_id, device.id)
+        )
 
 
 def delete_reload_scoped_issues(hass: HomeAssistant, entry: ConfigEntry[Any]) -> None:

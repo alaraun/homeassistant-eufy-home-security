@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
 import logging
 import time
 from collections.abc import Callable, Iterator
@@ -1076,6 +1077,7 @@ async def test_a_pin_protected_recording_is_given_up_at_once_without_the_warning
         1,
         0,
     )
+    assert stats["last_error"] == "PinProtectedKeyError"
     assert len(_videos(hass)) == 1
     await _unload(hass, entry)
 
@@ -1090,8 +1092,8 @@ async def test_a_pin_protected_recording_is_given_up_at_once_without_the_warning
         ),
         (
             EndToEndEncryptedError("no usable key", key_type=E2EKeyType.CIPHER, key_id=2),
-            1,
-            "after 1 attempt (EndToEndEncryptedError)",
+            RECORDING_MAX_ATTEMPTS,
+            "after 3 attempts (EndToEndEncryptedError)",
         ),
     ],
     ids=["cloud-key-fetch-failed", "cloud-cipher-unusable"],
@@ -1108,9 +1110,9 @@ async def test_an_end_to_end_recording_without_the_pin_key_follows_the_usual_giv
     tries: int,
     phrase: str,
 ) -> None:
-    """A failed cloud key fetch is tried again until the attempts run out; a cloud cipher
-    the cloud serves no usable key for is given up at once. Both end with the usual
-    warning and count as given up, not as PIN-protected."""
+    """A failed cloud key fetch and a cloud cipher the library could not use (a key fetch
+    still running, no usable key) are tried again until the attempts run out, end with
+    the usual warning and count as given up, not as PIN-protected."""
     calls: list[int] = []
 
     async def failing(
@@ -1174,7 +1176,8 @@ async def test_a_pin_protected_recording_raises_one_repair_per_camera_until_the_
         **_row(7, started=now - timedelta(minutes=15), cipher_id=PIN_CIPHER_ID),
         "device_sn": _BACK_CAMERA,
     }
-    plain = _row(8, started=now - timedelta(minutes=10))
+    # Older than the PIN-protected one: storing it does not withdraw the repair.
+    plain = _row(8, started=now - timedelta(minutes=25))
     fake_station.rows = [plain, back, front]
     entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage)
     await _first_pass(hass, entry)
@@ -1186,8 +1189,11 @@ async def test_a_pin_protected_recording_raises_one_repair_per_camera_until_the_
         assert issue.severity is ir.IssueSeverity.WARNING
         assert not issue.is_fixable
         assert not issue.is_persistent
+        label = errors.station_label(device)
+        # Titles render as plain text, descriptions as markdown.
         assert issue.translation_placeholders == {
-            "camera": name or errors.markdown_literal(errors.station_label(device))
+            "camera": label,
+            "camera_markdown": name or errors.markdown_literal(label),
         }
     assert len(downloads) == 3
 
@@ -1221,8 +1227,8 @@ async def test_diagnostics_count_the_pin_protected_recordings_per_camera(
 ) -> None:
     """The sync's diagnostics count each camera's recordings given up for the
     PIN-protected key, from the Store, so the count survives a reload. A camera no longer
-    paired is named by its redacted serial; another station's and other give-ups do not
-    count."""
+    paired is named by its redacted serial; another station's, other give-ups and a
+    record naming no camera do not count."""
     now = datetime.now().astimezone()
     fake_station.rows = [
         _row(6, started=now - timedelta(minutes=20), cipher_id=PIN_CIPHER_ID),
@@ -1250,6 +1256,11 @@ async def test_diagnostics_count_the_pin_protected_recordings_per_camera(
             **gone,
             "station": SYNTHETIC.station_sn,
             "device": _OTHER_CAMERA,
+        },
+        recordings.record_key(SYNTHETIC.station_sn, 4): {
+            **gone,
+            "station": SYNTHETIC.station_sn,
+            "pin_protected": True,
         },
     }
     assert await setup_entry(hass, entry)
@@ -1318,14 +1329,179 @@ async def test_no_pin_protected_repair_for_a_camera_without_a_device(
     seed_warm_cache: Callable[..., None],
     hass_storage: dict[str, Any],
 ) -> None:
-    """A serial with no registered device raises nothing (the issue is keyed by device)."""
+    """A serial with no registered device raises and withdraws nothing (the issue is keyed
+    by device)."""
     entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage)
 
     errors.raise_recordings_pin_protected_issue(hass, entry, _OTHER_CAMERA)
+    errors.delete_recordings_pin_protected_issue(hass, entry, _OTHER_CAMERA)
 
     assert not [
         issue_id
         for domain, issue_id in ir.async_get(hass).issues
         if domain == DOMAIN and issue_id.startswith("recordings_pin_protected")
     ]
+    await _unload(hass, entry)
+
+
+def test_the_pin_protected_repair_names_the_camera_plain_in_the_title() -> None:
+    """The title takes the raw name (plain text), the description the escaped one."""
+    strings = json.loads(
+        (Path(recordings.__file__).parent / "strings.json").read_text(encoding="utf-8")
+    )
+    issue = strings["issues"]["recordings_pin_protected"]
+    assert "{camera}" in issue["title"]
+    assert "{camera_markdown}" not in issue["title"]
+    assert "{camera_markdown}" in issue["description"]
+    assert "{camera}" not in issue["description"]
+
+
+async def test_a_newer_recording_stored_withdraws_the_cameras_pin_repair(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recording that started after the camera's last PIN-protected one is stored: the
+    encryption is off, so the camera's repair goes in that pass. An older one stored
+    later (a retry) proves nothing and leaves it."""
+    now = datetime.now().astimezone()
+    older = _row(5, started=now - timedelta(minutes=30))
+    pin = _row(6, started=now - timedelta(minutes=20), cipher_id=PIN_CIPHER_ID)
+    newer = _row(7, started=now - timedelta(minutes=5))
+    failed: list[int] = []
+    real = Station.async_download_recording
+
+    async def download(
+        self: Station, record: HistoryRecord, write: ClipWriter, *, wait: bool = True
+    ) -> MediaClip:
+        if record.record_id == older["record_id"] and not failed:
+            failed.append(record.record_id)
+            raise DeviceTimeoutError("no keyframe")
+        return await real(self, record, write, wait=wait)
+
+    monkeypatch.setattr(Station, "async_download_recording", download)
+    fake_station.rows = [pin, older]
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage)
+
+    await _first_pass(hass, entry)
+    assert failed
+    assert _pin_issue(hass, entry, SYNTHETIC.camera_sn)[1] is not None
+    await _pass(hass, entry, RECORDING_SYNC_INTERVAL_SECONDS + 1)
+    assert len(_videos(hass)) == 1
+    assert _pin_issue(hass, entry, SYNTHETIC.camera_sn)[1] is not None
+
+    fake_station.rows = [newer, pin, older]
+    await _pass(hass, entry, RECORDING_SYNC_INTERVAL_SECONDS + 1)
+
+    assert len(_videos(hass)) == 2
+    assert _pin_issue(hass, entry, SYNTHETIC.camera_sn)[1] is None
+    await _unload(hass, entry)
+
+
+async def test_a_pin_protected_refusal_does_not_mute_the_cameras_warning(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """After a PIN-protected recording of the camera, a later one that fails every try
+    still logs the one "could not be saved" warning."""
+    now = datetime.now().astimezone()
+    pin = _row(6, started=now - timedelta(minutes=20), cipher_id=PIN_CIPHER_ID)
+    broken = _row(7, started=now - timedelta(minutes=10))
+    real = Station.async_download_recording
+
+    async def download(
+        self: Station, record: HistoryRecord, write: ClipWriter, *, wait: bool = True
+    ) -> MediaClip:
+        if record.record_id == broken["record_id"]:
+            raise DeviceTimeoutError("no keyframe")
+        return await real(self, record, write, wait=wait)
+
+    monkeypatch.setattr(Station, "async_download_recording", download)
+    fake_station.rows = [broken, pin]
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage)
+    caplog.set_level(logging.WARNING)
+
+    await _first_pass(hass, entry)
+    for _ in range(RECORDING_MAX_ATTEMPTS):
+        await _pass(hass, entry, RECORDING_SYNC_INTERVAL_SECONDS + 1)
+
+    (warning,) = [r for r in caplog.records if "could not be saved" in r.getMessage()]
+    assert "after 3 attempts (DeviceTimeoutError)" in warning.getMessage()
+    await _unload(hass, entry)
+
+
+async def test_a_reload_drops_only_its_own_entrys_pin_repairs(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+) -> None:
+    """The reload-scoped cleanup is keyed by the entry: another entry's issue stays."""
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage)
+    own = errors.recordings_pin_protected_issue_id(entry.entry_id, "device-a")
+    other = errors.recordings_pin_protected_issue_id("other-entry", "device-b")
+    for issue_id in (own, other):
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="recordings_pin_protected",
+        )
+
+    await _unload(hass, entry)
+
+    assert ir.async_get(hass).async_get_issue(DOMAIN, own) is None
+    assert ir.async_get(hass).async_get_issue(DOMAIN, other) is not None
+
+
+async def test_an_older_pin_protected_retry_does_not_move_the_cameras_mark_back(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An older PIN-protected recording given up on its retry after a newer one: a plain
+    recording between the two, stored on its retry, leaves the repair (the newer one is
+    still the latest encrypted)."""
+    now = datetime.now().astimezone()
+    old_pin = _row(5, started=now - timedelta(minutes=30), cipher_id=PIN_CIPHER_ID)
+    between = _row(6, started=now - timedelta(minutes=25))
+    new_pin = _row(7, started=now - timedelta(minutes=20), cipher_id=PIN_CIPHER_ID)
+    first_tries: set[int] = set()
+    real = Station.async_download_recording
+
+    async def download(
+        self: Station, record: HistoryRecord, write: ClipWriter, *, wait: bool = True
+    ) -> MediaClip:
+        if record.record_id in (old_pin["record_id"], between["record_id"]) and (
+            record.record_id not in first_tries
+        ):
+            first_tries.add(record.record_id)
+            raise DeviceTimeoutError("no keyframe")
+        return await real(self, record, write, wait=wait)
+
+    monkeypatch.setattr(Station, "async_download_recording", download)
+    fake_station.rows = [new_pin, between, old_pin]
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage)
+
+    await _first_pass(hass, entry)
+    await _pass(hass, entry, RECORDING_SYNC_INTERVAL_SECONDS + 1)
+
+    stats = _manager(entry).stats(SYNTHETIC.station_sn)
+    assert stats is not None
+    assert (stats["pin_protected"], len(_videos(hass))) == (2, 1)
+    assert _pin_issue(hass, entry, SYNTHETIC.camera_sn)[1] is not None
     await _unload(hass, entry)
