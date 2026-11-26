@@ -665,10 +665,23 @@ async def test_unload_during_a_wait_cancels_it_quietly(
         assert matcher.waiting == 0
         for _ in range(3):
             await asyncio.sleep(0)
-        assert seen == []
+        ours = [
+            context
+            for context in seen
+            if context.get("task") is task
+            or isinstance(context.get("exception"), asyncio.CancelledError)
+        ]
+        assert ours == [], seen
     finally:
         loop.set_exception_handler(None)
-    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+    # The wait's own lines (another component's poll may log at its own time).
+    loud = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.WARNING
+        and (r.name.endswith(".recording_match") or "recording of a detection" in r.getMessage())
+    ]
+    assert loud == [], [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
 
 
 @pytest.mark.parametrize("fake_station", [SYNTHETIC.station_sn], indirect=True)
@@ -1131,4 +1144,44 @@ async def test_a_later_detection_behind_a_held_frame_of_its_recording_goes_on(
     held.set()
     await _settled(hass, entry)
     assert downloads == [record_id]
+    await _unload(hass, entry)
+
+
+async def test_a_second_detection_does_not_retry_a_failed_copy_of_its_recording_at_once(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The copy is asked once per recording: when the first detection's copy failed, the
+    second detection of the same clip leaves the retry to the recording sync's passes."""
+    gates = _Gates(monkeypatch)
+    calls: list[int] = []
+
+    async def failing(
+        self: Station, record: HistoryRecord, write: ClipWriter, *, wait: bool = True
+    ) -> MediaClip:
+        calls.append(record.record_id)
+        raise DeviceTimeoutError("no reply")
+
+    monkeypatch.setattr(Station, "async_download_recording", failing)
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON)
+    manager = entry.runtime_data.recordings
+    assert manager is not None
+    started = _start()
+    record_id = fake_station.add_detection_recording(SYNTHETIC.camera_sn, started, CLIP_SECONDS)
+
+    entry.runtime_data.router.handle(_push(started, session_id="d1"))
+    entry.runtime_data.router.handle(_push(started + timedelta(seconds=1), session_id="d2"))
+    await wait_until(lambda: gates.answered >= {"d1", "d2"}, timeout=8)
+    gates.release("d1")
+    await wait_until(lambda: calls == [record_id] and not manager.busy)
+    gates.release("d2")
+    await _settled(hass, entry)
+
+    assert calls == [record_id]
+    stats = manager.stats(HOMEBASE_2_SN)
+    assert stats is not None
+    assert (stats["failed"], stats["retrying"]) == (1, 1)
     await _unload(hass, entry)
