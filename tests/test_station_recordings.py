@@ -1065,6 +1065,35 @@ async def test_fetch_errors_name_what_failed(
     await _unload(hass, entry)
 
 
+async def test_a_fetch_of_a_pin_protected_recording_names_the_remedy(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A recording under the PIN-protected key (its row's ``cipher_id``) is refused by the
+    library before anything is sent: ``pin_protected`` with the remedy, no file, counted
+    as a failed fetch."""
+    pin = _row(2, cipher_id=(4 << 24) | 10)
+    fake_station.rows = [pin]
+    entry = await _set_up(hass, seed_warm_cache)
+    client = await hass_ws_client(hass)
+    entity_id = _camera(hass)
+    refs = await _refs(client, entity_id)
+
+    reply = await _fetch(client, entity_id, refs[pin["record_id"]])
+
+    assert not reply["success"], reply
+    assert reply["error"] == {
+        "code": station_recordings.ERR_PIN_PROTECTED,
+        "message": station_recordings.PIN_PROTECTED_MESSAGE,
+    }
+    assert _videos(hass) == []
+    assert _manager(entry).stats.fetch_failed == 1
+    await _unload(hass, entry)
+
+
 async def test_a_fetch_cut_at_a_codec_change_says_so_and_is_not_downloaded_again(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,

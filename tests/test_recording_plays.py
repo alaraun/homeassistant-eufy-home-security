@@ -403,6 +403,35 @@ async def test_the_real_library_plays_through_the_fake_station(
     await _unload(hass, entry)
 
 
+async def test_a_pin_protected_recording_is_refused_with_its_own_code_and_remedy(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A recording under the PIN-protected key (its row's ``cipher_id``): the library
+    refuses it before anything is sent, and the play answers ``pin_protected`` with the
+    remedy instead of "The HomeBase did not play it"."""
+    entry = await _set_up(hass, seed_warm_cache, fake_station)
+    fake_station.rows[0]["cipher_id"] = (4 << 24) | 10
+    client = await hass_ws_client(hass)
+
+    reply = await _play(client, _camera(hass), await _ref(client, _camera(hass)))
+
+    assert reply["error"] == {
+        "code": "pin_protected",
+        "message": station_recordings.PIN_PROTECTED_MESSAGE,
+    }
+    assert "Local Advanced Encryption" in reply["error"]["message"]
+    assert "Settings > Security > Media Content Encryption" in reply["error"]["message"]
+    assert [o for o in fake_station.received if o.get("cmd") in RECORDING_COMMANDS] == []
+    assert _remux_threads() == []
+    counts = _plays(entry).diagnostics()
+    assert (counts["failed"], counts["active"]) == ({"pin_protected": 1}, 0)
+    await _unload(hass, entry)
+
+
 async def test_a_size_change_is_served_as_a_second_init_after_a_discontinuity(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,

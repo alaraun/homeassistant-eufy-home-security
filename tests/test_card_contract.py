@@ -280,6 +280,17 @@ def test_the_play_error_codes_the_card_words_are_the_integrations() -> None:
     assert not unknown, f"the card words error codes the integration does not send: {unknown}"
 
 
+def test_the_card_words_a_pin_protected_play_with_the_remedy() -> None:
+    """A play refused for the eufy app's Local Advanced Encryption shows the card's own
+    remedy text, not the integration's fetch message or a generic one."""
+    text = re.search(
+        rf"{station_recordings.ERR_PIN_PROTECTED}: '((?:[^'\\]|\\.)*)'", _block("PLAY_ERRORS")
+    )
+    assert text, "PLAY_ERRORS words pin_protected"
+    assert "Local Advanced Encryption" in text.group(1)
+    assert "Media Content Encryption" in text.group(1)
+
+
 def test_the_preset_picture_the_card_sends_fits_the_command() -> None:
     """Save view sends ``PRESET_IMAGE_WS`` with fields its schema takes, at most the size
     it keeps, and counts the library's preset slots."""

@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.24-4';
+const CARD_VERSION = '2026.11.26-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -162,6 +162,7 @@ const STATION_PLAY_WS = 'eufy_home_security/recordings/play';
 const PLAY_ERRORS = {
   busy: 'All sessions to the HomeBase are in use',
   codec_change: 'The recording changes its video format here; Save it to watch the rest',
+  pin_protected: 'Protected by the eufy app\'s Local Advanced Encryption: play it in the eufy app, and turn it off there (Settings > Security > Media Content Encryption) for new recordings to play here',
 };
 // A station play's websocket dropped: no end event comes, and the integration frees what arrived
 const PLAY_LOST = 'Connection lost';
