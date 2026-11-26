@@ -3,10 +3,11 @@
 The state is the library's lock reading (``Station.lock_state``), followed on the lock's
 ``LockStateChanged``; nothing is polled for it. A lock the library commands over eufy's
 MQTT broker reports its state there after a command, as a ``LockStateChanged`` naming no
-station: that state shows until the station takes a newer report of the lock (a dump, a
-parameter notify, a push), also one that repeats the station's earlier state; the
-library hands a new reading object for each report it takes, and a push about the lock
-is checked once the station has had it.
+station: that state shows until the station takes a newer report of the lock. A push or
+a lock report the station takes counts even when it repeats the station's earlier state:
+the library hands a new reading object for each report it takes, and a push about the
+lock is checked once the station has had it. A station dump or parameter report that
+repeats its last raw value is not taken by the library, so it leaves the MQTT state shown.
 
 Lock and unlock go through the library (``EufySecurity.async_lock`` / ``async_unlock``)
 where its ``lock_control`` says the lock is writable; elsewhere they raise

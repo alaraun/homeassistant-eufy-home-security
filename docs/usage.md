@@ -97,9 +97,10 @@ reloads the integration.
   account entry, following each **Refresh device list**, closed when the entry unloads.
   It needs the library's `mqtt` extra (`eufy-home-security[mqtt]`); without it the log
   says so once at setup, and those locks show their state but refuse lock and unlock.
-  After a command over the broker, the lock's own report there sets the state until its
-  station or a push reports the lock again, also when that report repeats the earlier
-  state: the newest report shows.
+  After a command over the broker, the lock's own report there sets the state until a
+  push or a report from the lock reaches its station, also when it repeats the earlier
+  state: the newest report shows. A station status update that repeats its last value
+  does not count, so the broker's report stays shown then.
 - A command counts only once the lock reports the asked state: the call waits for that
   report, up to 75 s in all (connecting and sending included), and the lock shows
   **Locking** or **Unlocking** meanwhile. As in the eufy app, a lock that does not answer
