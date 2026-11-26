@@ -14,13 +14,21 @@ from typing import Any, Final
 import pytest
 from conftest import entity_id_for, record_states, set_up_warm, state_of, wait_until
 from eufy_home_security import (
+    AccountRejectedError,
+    AuthenticationError,
+    CipherUnusableError,
+    CloudError,
     CommandRejectedError,
     CommandUnsupportedError,
     CommunicationError,
     DeviceBusyError,
     DeviceTimeoutError,
     EufySecurityError,
+    HandshakeError,
+    KeyRejectedError,
     LockState,
+    RateLimitedError,
+    SessionReplacedError,
     UnsupportedError,
 )
 from eufy_home_security.exceptions import (
@@ -36,19 +44,25 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import issue_registry as ir
 
-from custom_components.eufy_home_security import runtime
+from custom_components.eufy_home_security import errors, runtime
 from custom_components.eufy_home_security.const import (
     DOMAIN,
+    EXC_ACCOUNT_REJECTED,
+    EXC_LOCK_CLOUD_UNAVAILABLE,
     EXC_LOCK_COMMAND_CANCELLED,
     EXC_LOCK_COMMAND_FAILED,
     EXC_LOCK_COMMAND_REJECTED,
     EXC_LOCK_COMMAND_WAITING,
     EXC_LOCK_DEVICE_BUSY,
     EXC_LOCK_GUEST,
+    EXC_LOCK_KEY_REJECTED,
+    EXC_LOCK_KEY_UNUSABLE,
     EXC_LOCK_MQTT_REQUIRED,
     EXC_LOCK_NOT_MOVED,
     EXC_LOCK_NOT_WRITABLE,
+    EXC_LOCK_SESSION_REPLACED,
     EXC_LOCK_TIMEOUT,
     EXC_LOCK_UNREACHABLE,
     EXC_LOCK_UNSUPPORTED,
@@ -473,3 +487,86 @@ async def test_an_account_without_an_mqtt_lock_builds_no_mqtt_account(
 
     assert entry.runtime_data.eufy.lock_control(LOCK_SN).path == "station"
     assert built == []
+
+
+# Errors whose remedy is the account's or the station's (a repair, a sign-in): the key, and
+# what the failure routes to (None, a repair issue of the account, or the reauth flow).
+_ROUTED: Final = (
+    (SessionReplacedError("replaced"), EXC_LOCK_SESSION_REPLACED, "issue"),
+    (RateLimitedError("held off", retry_after=600), EXC_LOCK_CLOUD_UNAVAILABLE, "issue"),
+    (AuthenticationError("refused"), EXC_LOCK_CLOUD_UNAVAILABLE, "reauth"),
+    (CloudError("down"), EXC_LOCK_CLOUD_UNAVAILABLE, None),
+    (KeyRejectedError("rejected"), EXC_LOCK_KEY_REJECTED, None),
+    (CipherUnusableError("unusable"), EXC_LOCK_KEY_UNUSABLE, None),
+    (HandshakeError("no session key"), EXC_LOCK_UNREACHABLE, None),
+)
+
+
+@pytest.mark.parametrize(
+    ("error", "key", "route"), _ROUTED, ids=[type(row[0]).__name__ for row in _ROUTED]
+)
+async def test_cloud_and_station_key_failures_point_at_their_remedy(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_lock: FakeLock,
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    error: EufySecurityError,
+    key: str,
+    route: str | None,
+) -> None:
+    """Each class gets its own message; a cloud refusal also goes to the account's repair
+    issue or the reauth flow, as a failed device-list refresh does."""
+    _seed(fake_station, fake_lock, LOCKED)
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    async def fails(device_sn: str, *, timeout: float | None = None) -> LockState:
+        del device_sn, timeout
+        raise error
+
+    monkeypatch.setattr(entry.runtime_data.eufy, "async_unlock", fails)
+    with pytest.raises(HomeAssistantError) as raised:
+        await _call(hass, "unlock")
+
+    assert raised.value.translation_key == key
+    assert not isinstance(raised.value, ServiceValidationError)
+    issues = {
+        issue_id
+        for (domain, issue_id) in ir.async_get(hass).issues
+        if domain == DOMAIN and issue_id.startswith(("session_replaced", "login_limited"))
+    }
+    flows = [
+        f
+        for f in hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+        if f["context"].get("source") == "reauth"
+    ]
+    assert bool(issues) is (route == "issue")
+    assert bool(flows) is (route == "reauth")
+
+
+async def test_an_account_refusal_names_the_station_and_the_lock(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_lock: FakeLock,
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The station refusing the account (-104) shows the shared sharing hint, naming the
+    station and the lock as Home Assistant names them."""
+    _seed(fake_station, fake_lock, LOCKED)
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    async def fails(device_sn: str, *, timeout: float | None = None) -> LockState:
+        del device_sn, timeout
+        raise AccountRejectedError(1961, -104)
+
+    monkeypatch.setattr(entry.runtime_data.eufy, "async_unlock", fails)
+    with pytest.raises(HomeAssistantError) as raised:
+        await _call(hass, "unlock")
+
+    coordinator = entry.runtime_data.coordinators[fake_station.serial]
+    assert raised.value.translation_key == EXC_ACCOUNT_REJECTED
+    assert raised.value.translation_placeholders == {
+        "station": errors.station_display_name(coordinator),
+        "target": f"{errors.device_display_name(coordinator, LOCK_SN)} Lock",
+    }

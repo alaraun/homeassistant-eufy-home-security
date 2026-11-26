@@ -372,6 +372,11 @@ EXC_LOCK_NOT_MOVED: Final = "lock_not_moved"
 EXC_LOCK_TIMEOUT: Final = "lock_timeout"
 EXC_LOCK_UNREACHABLE: Final = "lock_unreachable"
 EXC_LOCK_COMMAND_FAILED: Final = "lock_command_failed"
+# A lock command that needed the cloud or the station's key and did not get it.
+EXC_LOCK_SESSION_REPLACED: Final = "lock_session_replaced"
+EXC_LOCK_CLOUD_UNAVAILABLE: Final = "lock_cloud_unavailable"
+EXC_LOCK_KEY_REJECTED: Final = "lock_key_rejected"
+EXC_LOCK_KEY_UNUSABLE: Final = "lock_key_unusable"
 # A lock command ended by the entry's unload before the lock reported.
 EXC_LOCK_COMMAND_CANCELLED: Final = "lock_command_cancelled"
 # An open or close of a garage door whose position is unknown; nothing was sent.

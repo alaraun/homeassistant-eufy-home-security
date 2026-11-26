@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, Final, override
 
 from homeassistant.components.lock import LockEntity
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -215,7 +216,7 @@ class EufyLock(EufyPushAvailability, EufyDeviceEntity, LockEntity):
         try:
             control = entry.runtime_data.eufy.lock_control(self._serial)
         except UnsupportedError as err:
-            raise errors.lock_failed(err) from err
+            raise self._failed(err) from err
         if not control.writable:
             raise errors.lock_not_writable(control.reason)
         task = entry.async_create_background_task(
@@ -228,7 +229,24 @@ class EufyLock(EufyPushAvailability, EufyDeviceEntity, LockEntity):
         if task.cancelled():
             raise errors.lock_command_cancelled()
         if (failure := task.result()) is not None:
-            raise errors.lock_failed(failure) from failure
+            raise self._failed(failure) from failure
+
+    def _failed(self, err: EufySecurityError) -> HomeAssistantError:
+        """The translated error for ``err``; a message naming the station names this lock
+        with its device's name, never a serial."""
+        own = self.name
+        coordinator = self.coordinator
+        return errors.lock_failed(
+            self.hass,
+            coordinator.config_entry,
+            err,
+            station_name=errors.station_display_name(coordinator),
+            station_target=errors.station_named_target(
+                coordinator,
+                None if self._serial == coordinator.station.serial else self._serial,
+                own if isinstance(own, str) else LOCK_KEY,
+            ),
+        )
 
     async def _async_run(self, send: _Send, action: str) -> EufySecurityError | None:
         """Send the command and wait for the lock; the library's error is returned, so a
