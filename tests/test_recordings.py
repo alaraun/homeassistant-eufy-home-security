@@ -1505,3 +1505,37 @@ async def test_an_older_pin_protected_retry_does_not_move_the_cameras_mark_back(
     assert (stats["pin_protected"], len(_videos(hass))) == (2, 1)
     assert _pin_issue(hass, entry, SYNTHETIC.camera_sn)[1] is not None
     await _unload(hass, entry)
+
+
+async def test_another_cameras_newer_recording_leaves_the_pin_repair(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+) -> None:
+    """Camera A's PIN-protected recording raises A's repair; a newer recording of camera B
+    stored after it says nothing about A's encryption and leaves the repair. A newer one
+    of A withdraws it."""
+    fake_cloud.devices.append(
+        camera_device(_BACK_CAMERA, station_sn=fake_station.serial, channel=1, name="Back")
+    )
+    fake_station.params[1] = {1101: "80", 1142: "-60"}
+    now = datetime.now().astimezone()
+    pin = _row(6, started=now - timedelta(minutes=20), cipher_id=PIN_CIPHER_ID)
+    back = {**_row(7, started=now - timedelta(minutes=10)), "device_sn": _BACK_CAMERA}
+    fake_station.rows = [back, pin]
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage)
+
+    await _first_pass(hass, entry)
+
+    assert len(_videos(hass)) == 1
+    assert _pin_issue(hass, entry, SYNTHETIC.camera_sn)[1] is not None
+
+    fake_station.rows = [_row(8, started=now - timedelta(minutes=5)), back, pin]
+    await _pass(hass, entry, RECORDING_SYNC_INTERVAL_SECONDS + 1)
+
+    assert len(_videos(hass)) == 2
+    assert _pin_issue(hass, entry, SYNTHETIC.camera_sn)[1] is None
+    await _unload(hass, entry)
