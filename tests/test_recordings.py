@@ -1164,7 +1164,7 @@ async def test_a_pin_protected_recording_raises_one_repair_per_camera_until_the_
     repair naming it; a reload drops them, and the recordings given up before it raise
     nothing again: only a new one does."""
     fake_cloud.devices.append(
-        camera_device(_BACK_CAMERA, station_sn=fake_station.serial, channel=1, name="Back")
+        camera_device(_BACK_CAMERA, station_sn=fake_station.serial, channel=1, name="Back *yard*")
     )
     fake_station.params[1] = {1101: "80", 1142: "-60"}
     downloads = _count_downloads(monkeypatch)
@@ -1179,7 +1179,7 @@ async def test_a_pin_protected_recording_raises_one_repair_per_camera_until_the_
     entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage)
     await _first_pass(hass, entry)
 
-    for device_sn in (SYNTHETIC.camera_sn, _BACK_CAMERA):
+    for device_sn, name in ((SYNTHETIC.camera_sn, None), (_BACK_CAMERA, r"Back \*yard\*")):
         device, issue = _pin_issue(hass, entry, device_sn)
         assert issue is not None, device_sn
         assert issue.translation_key == "recordings_pin_protected"
@@ -1187,7 +1187,7 @@ async def test_a_pin_protected_recording_raises_one_repair_per_camera_until_the_
         assert not issue.is_fixable
         assert not issue.is_persistent
         assert issue.translation_placeholders == {
-            "camera": errors.markdown_literal(errors.station_label(device))
+            "camera": name or errors.markdown_literal(errors.station_label(device))
         }
     assert len(downloads) == 3
 
@@ -1308,4 +1308,24 @@ async def test_a_pin_protected_refusal_after_a_failed_try_leaves_no_retry_owed(
     stats = _manager(entry).stats(SYNTHETIC.station_sn)
     assert stats is not None
     assert (stats["retrying"], stats["given_up"], stats["pin_protected"]) == (0, 0, 1)
+    await _unload(hass, entry)
+
+
+async def test_no_pin_protected_repair_for_a_camera_without_a_device(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+) -> None:
+    """A serial with no registered device raises nothing (the issue is keyed by device)."""
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage)
+
+    errors.raise_recordings_pin_protected_issue(hass, entry, _OTHER_CAMERA)
+
+    assert not [
+        issue_id
+        for domain, issue_id in ir.async_get(hass).issues
+        if domain == DOMAIN and issue_id.startswith("recordings_pin_protected")
+    ]
     await _unload(hass, entry)
