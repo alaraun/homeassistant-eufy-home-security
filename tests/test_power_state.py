@@ -75,6 +75,9 @@ _POWER_SOURCE_PARAM: Final = 2111
 _STORAGE_STATUS_PARAM: Final = 1135
 _SUBSYSTEM_FIRMWARE_PARAM: Final = 5006
 
+# A T8900 Entry Sensor: a model without a battery level.
+_ENTRY_SENSOR_SN: Final = "T8900P0000000001"
+
 # Built-in solar (the library's declared code table).
 _SOLAR_SOURCE: Final = "4"
 # A code outside the library's table: charging (not 0 or 2), not solar.
@@ -448,6 +451,37 @@ async def test_battery_rows_an_earlier_release_made_for_a_mains_model_are_forgot
     assert all(registry.async_get(entity_id) is None for entity_id in stale)
     assert registry.async_get(kept) is not None
     assert _entity_id_or_none(hass, SENSOR_DOMAIN, _FLOODLIGHT_SN, FIRMWARE_KEY) is not None
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_an_entry_sensors_battery_row_is_forgotten_and_its_battery_low_stays(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_cloud: FakeCloud,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """A T8900 Entry Sensor has no battery level: an earlier release's Battery row is
+    removed at setup, while its own low-battery flag stays a binary sensor."""
+    fake_cloud.devices.append(
+        camera_device(_ENTRY_SENSOR_SN, station_sn=fake_station.serial, channel=_SENSOR_CHANNEL)
+    )
+    fake_station.params[_SENSOR_CHANNEL] = {1101: "90", _SENSOR_LOW_BATTERY_PARAM: "1"}
+    seed_warm_cache()
+    entry = add_entry(hass)
+    registry = er.async_get(hass)
+    stale = registry.async_get_or_create(
+        SENSOR_DOMAIN, DOMAIN, entity_unique_id(_ENTRY_SENSOR_SN, BATTERY_KEY), config_entry=entry
+    ).entity_id
+
+    assert await setup_entry(hass, entry)
+    await hass.async_block_till_done()
+
+    assert registry.async_get(stale) is None
+    battery_low = entity_id_for(hass, BINARY_SENSOR_DOMAIN, _ENTRY_SENSOR_SN, BATTERY_LOW_KEY)
+    assert state_of(hass, battery_low) == STATE_ON
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

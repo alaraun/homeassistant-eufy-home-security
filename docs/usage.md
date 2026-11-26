@@ -490,11 +490,15 @@ camera. Each entity appears once its device reports the value; a value its devic
 stops reporting shows unknown. The code meanings are declared from eufy's app code,
 not checked against the app's display.
 
-A camera whose model has no battery (a mains-powered floodlight or indoor camera, a
-wired doorbell) gets no **Battery**, **Charging**, **Solar charging**, **Solar
-intensity**, **Battery temperature** or **Working days** entity, although the HomeBase
-reports a charging field for it; the eufy app shows no battery for these models either.
-Rows an earlier release created for such a device are removed at setup.
+A device whose model has no battery level in the eufy app gets no **Battery**,
+**Charging**, **Solar charging**, **Solar intensity**, **Battery temperature** or
+**Working days** entity. Such devices include a mains-powered camera or most wired
+doorbells (the HomeBase still reports a charging field for them), the Siren (T8970; the
+E20 sirens keep theirs), the Keypad (T8960), the Entry Sensor (T8900; the E20 keeps its),
+the Water and Freeze Sensor (T8920), the Smoke Alarm Listener (T8931) and the Doorbell
+Chime mini (T8028). A **Battery low** binary sensor, where the device reports one, stays.
+Rows an earlier release created for such a device are removed at setup; their history
+stays in the recorder, and automations on those entity ids stop working.
 
 | Device | Entity | Type | Shows |
 |---|---|---|---|
@@ -504,7 +508,7 @@ Rows an earlier release created for such a device are removed at setup.
 | Camera | **Battery temperature** | diagnostic sensor, °C | |
 | Camera | **Working days** | diagnostic sensor, days | Days since the last USB charge |
 | Camera | **Detected events**, **Recorded events** | diagnostic sensors, total increasing | Counted since the last USB charge; as automation triggers see [Automation triggers](#automation-triggers) |
-| Motion sensor | **Battery low** | diagnostic binary sensor (battery) | The sensor's own low-battery flag |
+| Motion or entry sensor | **Battery low** | diagnostic binary sensor (battery) | The sensor's own low-battery flag |
 | HomeBase | **Storage problem** | diagnostic binary sensor (problem) | On when the storage status is not one the app shows as normal. Attribute `storage_status` (raw code) |
 
 **Disk and eMMC** entities (used, free, size, used percentage, temperature, wear,

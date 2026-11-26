@@ -140,7 +140,8 @@ too: behind a HomeBase 4 only the T8115 gets these entities, behind an NVR none.
 
 Every device also gets:
 
-- status entities (battery, signal, firmware) where the device reports them;
+- status entities (signal, firmware) where the device reports them, and battery where its
+  model has a battery level in the eufy app;
 - its settings, as [above](#settings).
 
 Nothing about such a model is tested: an entity may show nothing, or a value with an
