@@ -5,6 +5,21 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.22](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.21...v0.4.22) (2026-11-26)
+
+
+### Features
+
+* **camera:** a HomeBase 2 detection shows its recording's trigger frame as the HD image and, with Save event videos on, saves its clip once the recording has finished, instead of waiting for the 15-minute pass (library 0.4.20, [issue 181](https://github.com/alaraun/homeassistant-eufy-home-security/issues/181)) ([9263c85](https://github.com/alaraun/homeassistant-eufy-home-security/commit/9263c8590f419a6c248e9df8d295d8f22783ffb0))
+* **card:** Play and Save of such a recording say it is protected by Local Advanced Encryption and how to turn it off, instead of "The HomeBase did not play it" ([issue 220](https://github.com/alaraun/homeassistant-eufy-home-security/issues/220)) ([bbbab55](https://github.com/alaraun/homeassistant-eufy-home-security/commit/bbbab551878273c693a13bcc88d57b997d8ee504))
+* **recordings:** a recording protected by the eufy app's Local Advanced Encryption is given up at once, without the "could not be saved" warning, and a repair names the camera and how to turn the encryption off; it goes once a later recording of the camera is saved (library 0.4.20, [issue 220](https://github.com/alaraun/homeassistant-eufy-home-security/issues/220)) ([bbbab55](https://github.com/alaraun/homeassistant-eufy-home-security/commit/bbbab551878273c693a13bcc88d57b997d8ee504))
+
+
+### Bug Fixes
+
+* **recordings:** recordings end-to-end encrypted under the owner's cloud key play and save (based on the eufy app's behaviour, not tested on hardware); one whose key could not be used is tried again like any failed copy, and Save and Play name the key (library 0.4.20) ([bbbab55](https://github.com/alaraun/homeassistant-eufy-home-security/commit/bbbab551878273c693a13bcc88d57b997d8ee504))
+* **sensor:** the Siren (T8970), Keypad (T8960), Entry Sensor (T8900), Water and Freeze Sensor (T8920), Smoke Alarm Listener (T8931) and Doorbell Chime mini (T8028) no longer get a Battery sensor, as they report no battery level; the rows are removed at setup, so automations on them stop working (library 0.4.20, [library issue 237](https://github.com/alaraun/python-eufy-home-security/issues/237)) ([bd3e996](https://github.com/alaraun/homeassistant-eufy-home-security/commit/bd3e996deddd39142f00f37d0f0aaef275fde69c))
+
 ## [0.4.21](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.20...v0.4.21) (2026-11-25)
 
 
