@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.26-2';
+const CARD_VERSION = '2026.11.26-3';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -165,7 +165,7 @@ const PLAY_ERRORS = {
   pin_protected: 'Protected by the eufy app\'s Local Advanced Encryption: play it in the eufy app, and turn it off there (Settings > Security > Media Content Encryption) for new recordings to play here',
 };
 // Save refused for the eufy app's Local Advanced Encryption: this toast (one line), and the remedy
-// (PLAY_ERRORS.pin_protected) under the recording's row
+// (PLAY_ERRORS.pin_protected) under the recording's row until a later Save of it ends otherwise
 const SAVE_PIN = 'Protected by Local Advanced Encryption';
 // A station play's websocket dropped: no end event comes, and the integration frees what arrived
 const PLAY_LOST = 'Connection lost';
@@ -1030,12 +1030,14 @@ class EufyCameraCard extends HTMLElement {
       if (!r || !r.media_content_id) throw new Error('The station sent no file');
       it.mcid = r.media_content_id;
       it.saved = true;
+      it.pin = false;
       if (r.url) this._histUrls.set(r.media_content_id, { url: r.url, at: Date.now() });
       if (!cam.here()) return;
       if (this._open === 'history') this._loadHistory();
     }).catch((e) => {
       const er = (e && e.error && typeof e.error === 'object' ? e.error : e) || {};
-      if (er.code === 'pin_protected') it.pin = true;
+      // The note under the row follows the row's latest Save
+      it.pin = er.code === 'pin_protected';
       if (cam.shown()) this._toast(it.pin ? SAVE_PIN : er.message || 'Not fetched from the station');
     })
       .finally(() => { if (!cam.here()) return; this._sfetch.delete(rid); this.render(); });

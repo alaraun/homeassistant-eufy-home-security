@@ -215,7 +215,7 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   - **Save** copies the recording from the HomeBase into the history folder (5–10 s, one at a time) and marks the
     row Saved; it then plays from there and stays in the history. A recording protected by Local Advanced
     Encryption is not saved: `Protected by Local Advanced Encryption` shows, and how to turn it off in the eufy app
-    shows under its row (until the list is refreshed). Play and Save keep working on a row while the
+    shows under its row (until the list is refreshed or a later Save of that row ends otherwise). Play and Save keep working on a row while the
     list stays open, also on a HomeBase 2. A standalone camera has no Station sub-tab.
   - Files come from the integration's history in HA's media folder (`Media › eufy_home_security › <camera name>`).
     A missing folder (history off, or nothing saved yet) reads as empty.
