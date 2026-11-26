@@ -88,9 +88,17 @@ reloads the integration.
 - **Lock** of a smart lock, a video smart lock included, where the library reads the
   lock's state.
 - Lock and unlock where the library sends the lock's command over the route the eufy app
-  uses for it, through the lock's HomeBase or its own station session: T8501, T8502,
-  T8503, T8506, T8520, T8530, and T8531, T8532, T85M0, T85M1, T85V0 behind a HomeBase.
-  Declared from the eufy app, not tested on hardware.
+  uses for it: through the lock's HomeBase or its own station session (T8501, T8502,
+  T8503, T8506, T8520, T8530, and T8531, T8532, T85M0, T85M1, T85V0 behind a HomeBase),
+  or over eufy's MQTT broker (a T8531, T8532, T85M0, T85M1 or T85V0 that is its own
+  station, some T8506, and a Wi-Fi lock that gets an entity). Declared from the eufy app,
+  not tested on hardware.
+- The MQTT broker connection is opened only for an account with such a lock: one per
+  account entry, following each **Refresh device list**, closed when the entry unloads.
+  It needs the library's `mqtt` extra (`eufy-home-security[mqtt]`); without it the log
+  says so once at setup, and those locks show their state but refuse lock and unlock.
+  After a command over the broker, the lock's own report there sets the state until its
+  station or a push reports a change of the lock's state.
 - A command counts only once the lock reports the asked state: the call waits for that
   report, up to about 50 s (the eufy app's 20 s for the lock's answer and 30 s for its
   state), and the lock shows **Locking** or **Unlocking** meanwhile. A lock that refuses
@@ -102,9 +110,8 @@ reloads the integration.
     through the station; T8504: no command route), with the library's reason;
   - an account that is a guest of the lock (the eufy app gives guests no lock control),
     or whose device list names no member record for the lock;
-  - a lock the eufy app reaches over eufy's MQTT connection (a T8531, T8532, T85M0,
-    T85M1 or T85V0 on its own, some T8506 and the Wi-Fi locks): the integration does not
-    run that connection;
+  - a lock that takes its commands over eufy's MQTT broker while the account has no
+    connection to it (the library's `mqtt` extra is missing; the log says so);
   - a second lock or unlock while a command of the same lock still waits.
 - Unloading or reloading the account entry stops a waiting command; the call then ends
   with an error, and whether the lock moved shows with its next report.
