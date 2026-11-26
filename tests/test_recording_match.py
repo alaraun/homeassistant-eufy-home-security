@@ -1091,3 +1091,44 @@ async def test_a_match_during_a_running_copy_waits_for_it(
     assert most[0] == 1
     assert len(_videos(hass)) == 2
     await _unload(hass, entry)
+
+
+async def test_a_later_detection_behind_a_held_frame_of_its_recording_goes_on(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D2's wait finds D1's frame request of the same clip still held past the bound: it
+    stops waiting for it and goes on, and the clip is copied once."""
+    monkeypatch.setattr(recording_match, "MATCHED_FRAME_WAIT_SECONDS", 0.2)
+    held = asyncio.Event()
+    entered = asyncio.Event()
+
+    async def held_frame(self: Station, event: SecurityEvent, **kwargs: Any) -> bytes:
+        entered.set()
+        await held.wait()
+        raise DeviceTimeoutError("held")
+
+    monkeypatch.setattr(Station, "async_event_trigger_frame", held_frame)
+    gates = _Gates(monkeypatch)
+    downloads = _count_downloads(monkeypatch)
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON)
+    matcher = _matcher(entry)
+    started = _start()
+    record_id = fake_station.add_detection_recording(SYNTHETIC.camera_sn, started, CLIP_SECONDS)
+
+    entry.runtime_data.router.handle(_push(started, session_id="d1"))
+    entry.runtime_data.router.handle(_push(started + timedelta(seconds=1), session_id="d2"))
+    await wait_until(lambda: gates.answered >= {"d1", "d2"}, timeout=8)
+    gates.release("d1")
+    await asyncio.wait_for(entered.wait(), 5)
+    gates.release("d2")
+    await wait_until(lambda: matcher.waiting == 0, timeout=3)
+    assert not held.is_set()
+
+    held.set()
+    await _settled(hass, entry)
+    assert downloads == [record_id]
+    await _unload(hass, entry)
