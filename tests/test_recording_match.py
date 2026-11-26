@@ -206,6 +206,9 @@ class _Gates:
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.answered: set[str] = set()
+        # Per session id, what the released wait gives instead of the library's answer:
+        # None (nothing matched) or an error it raises.
+        self.instead: dict[str, Exception | None] = {}
         self._gates: dict[str, asyncio.Event] = {}
         real = Station.async_wait_recording_for_detection
 
@@ -216,6 +219,10 @@ class _Gates:
             name = event.session_id or ""
             self.answered.add(name)
             await self._gate(name).wait()
+            if name in self.instead:
+                if (error := self.instead[name]) is not None:
+                    raise error
+                return None
             return record
 
         monkeypatch.setattr(Station, "async_wait_recording_for_detection", gated)
@@ -1285,4 +1292,170 @@ async def test_a_later_detection_asks_again_when_another_recordings_frame_is_sho
     assert failed == [record_id]
     assert snapshots.shows_frame_of(SYNTHETIC.camera_sn, record_id)
     assert snapshots.event_time_for(SYNTHETIC.camera_sn) == round(second.timestamp() * 1000)
+    await _unload(hass, entry)
+
+
+def _count_matched(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record the record id of every copy the matcher hands to the recording sync."""
+    calls: list[int] = []
+    real = recordings.RecordingManager.async_matched
+
+    def counting(self: recordings.RecordingManager, station_sn: str, row: HistoryRecord) -> None:
+        calls.append(row.record_id)
+        real(self, station_sn, row)
+
+    monkeypatch.setattr(recordings.RecordingManager, "async_matched", counting)
+    return calls
+
+
+async def _overlap_on_two_clips(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    options: dict[str, Any],
+) -> tuple[MockConfigEntry, _Gates, int, int]:
+    """D1 (plain) on clip A and D2 (naming a picture, shown) on the later clip B, both
+    waits answered and held; returns the entry, the gates and A's and B's record ids."""
+    _fake_push_pictures(monkeypatch)
+    gates = _Gates(monkeypatch)
+    now = datetime.now(UTC).replace(microsecond=0)
+    clip_a = fake_station.add_detection_recording(
+        SYNTHETIC.camera_sn, now - timedelta(seconds=60), CLIP_SECONDS
+    )
+    clip_b = fake_station.add_detection_recording(
+        SYNTHETIC.camera_sn, now - timedelta(seconds=40), CLIP_SECONDS
+    )
+    entry = await _set_up(hass, seed_warm_cache, options, hass_storage)
+    entry.runtime_data.router.handle(_push(now - timedelta(seconds=60), session_id="d1"))
+    entry.runtime_data.router.handle(
+        _push(
+            now - timedelta(seconds=40),
+            session_id="d2",
+            pic_url="https://picture.example/event.jpg",
+        )
+    )
+    if options.get(CONF_CAMERA_IMAGE) != CameraImageMode.THUMBNAIL.value:
+        snapshots = _snapshots(entry)
+        await wait_until(lambda: snapshots.source_for(SYNTHETIC.camera_sn) == "push_picture")
+    await wait_until(lambda: gates.answered >= {"d1", "d2"}, timeout=8)
+    return entry, gates, clip_a, clip_b
+
+
+async def test_a_deferred_copy_of_another_clip_follows_the_overlapping_wait(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D1's frame of clip A is refused (D2's picture is newer) while D2's wait runs, so
+    A's copy waits; D2 settles on clip B: both clips are copied once as soon as D2's wait
+    ends, without a recording pass."""
+    downloads = _count_downloads(monkeypatch)
+    entry, gates, clip_a, clip_b = await _overlap_on_two_clips(
+        hass, fake_station, seed_warm_cache, hass_storage, monkeypatch, VIDEOS_ON
+    )
+    manager = entry.runtime_data.recordings
+    assert manager is not None
+    matcher = _matcher(entry)
+
+    gates.release("d1")
+    await wait_until(lambda: matcher.waiting == 1 and not _snapshots(entry).busy)
+    await hass.async_block_till_done()
+    assert downloads == []
+    gates.release("d2")
+    await _settled(hass, entry)
+
+    assert sorted(downloads) == sorted([clip_a, clip_b])
+    assert len(_videos(hass)) == 2
+    stats = manager.stats(HOMEBASE_2_SN)
+    assert stats is not None
+    assert stats["passes"] == 0
+    await _unload(hass, entry)
+
+
+@pytest.mark.parametrize(
+    "instead", [None, DeviceTimeoutError("no reply")], ids=["none_matched", "raises"]
+)
+async def test_a_deferred_copy_follows_an_overlapping_wait_that_finds_nothing(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    instead: Exception | None,
+) -> None:
+    """The overlapping wait ends with no recording or an error: the deferred copy of
+    clip A is made when it ends, once."""
+    downloads = _count_downloads(monkeypatch)
+    entry, gates, clip_a, _clip_b = await _overlap_on_two_clips(
+        hass, fake_station, seed_warm_cache, hass_storage, monkeypatch, VIDEOS_ON
+    )
+    gates.instead["d2"] = instead
+    matcher = _matcher(entry)
+
+    gates.release("d1")
+    await wait_until(lambda: matcher.waiting == 1 and not _snapshots(entry).busy)
+    await hass.async_block_till_done()
+    assert downloads == []
+    gates.release("d2")
+    await _settled(hass, entry)
+
+    assert downloads == [clip_a]
+    await _unload(hass, entry)
+
+
+async def test_unload_during_an_overlap_copies_nothing(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A copy deferred behind a wait the unload cancels is never handed to the sync, and
+    no task is left."""
+    handed = _count_matched(monkeypatch)
+    entry, gates, _clip_a, _clip_b = await _overlap_on_two_clips(
+        hass, fake_station, seed_warm_cache, hass_storage, monkeypatch, VIDEOS_ON
+    )
+    matcher = _matcher(entry)
+    gates.release("d1")
+    await wait_until(lambda: matcher.waiting == 1 and not _snapshots(entry).busy)
+    (task,) = matcher._tasks
+
+    await _unload(hass, entry)
+
+    assert task.cancelled()
+    assert matcher.waiting == 0
+    assert handed == []
+
+
+async def test_thumbnail_mode_copies_each_clip_at_once_while_another_wait_runs(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No trigger frame in thumbnail mode, so no still to pair with: clip A is copied as
+    soon as D1's wait ends, while D2's wait still runs."""
+    downloads = _count_downloads(monkeypatch)
+    options = {CONF_CAMERA_IMAGE: CameraImageMode.THUMBNAIL.value, **VIDEOS_ON}
+    entry, gates, clip_a, clip_b = await _overlap_on_two_clips(
+        hass, fake_station, seed_warm_cache, hass_storage, monkeypatch, options
+    )
+
+    gates.release("d1")
+    await wait_until(lambda: downloads == [clip_a], timeout=5)
+    assert _matcher(entry).waiting == 1
+    gates.release("d2")
+    await _settled(hass, entry)
+
+    assert downloads == [clip_a, clip_b]
     await _unload(hass, entry)

@@ -26,8 +26,9 @@ it arrives. The router hands such a detection here when it is authenticated and
 - **Copy**, with event videos on, once per row, through the recording sync's store after
   the frame request is done or dropped (or ``MATCHED_FRAME_WAIT_SECONDS`` passed), so the
   video takes the still's name. When the camera does not show the row's frame then and
-  another wait of the camera still runs, the copy is left to that wait (or to the
-  15-minute pass), which may still show it; the 15-minute pass finds a copied row stored.
+  another wait of the camera still runs (which may still show it), the copy waits until
+  no wait of the camera runs, then goes in the order deferred; a wait cancelled by an
+  unload copies nothing. The 15-minute pass finds a copied row stored.
 
 Nothing found, a station that never answered and an event the library cannot match are
 DEBUG lines only. Serials are redacted; paths and record ids are never logged.
@@ -92,8 +93,10 @@ class RecordingMatcher:
         self._snapshots = snapshots
         self._recordings = recordings
         self._tasks: set[asyncio.Task[None]] = set()
-        # Per camera serial, how many detections' waits are running.
+        # Per camera serial, how many detections' waits are running, and the copies
+        # left until none runs: (station serial, recording, its state), in that order.
         self._cameras: dict[str, int] = {}
+        self._deferred: dict[str, list[tuple[str, HistoryRecord, _Matched]]] = {}
         # Occurrences (dedupe keys) a wait was started for.
         self._occurrences: OrderedDict[str, None] = OrderedDict()
         # Per station and recording ref, what was done for that recording.
@@ -142,8 +145,12 @@ class RecordingMatcher:
         self, station: Station, event: SecurityEvent, device_sn: str, slot: int | None
     ) -> None:
         self._cameras[device_sn] = self._cameras.get(device_sn, 0) + 1
+        cancelled = False
         try:
             await self._async_match(station, event, device_sn, slot)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         except Exception:
             # Logged here: an entry background task's error is never retrieved.
             _LOGGER.exception("Unexpected error handling the recording of a detection")
@@ -152,6 +159,11 @@ class RecordingMatcher:
                 self._cameras[device_sn] = left
             else:
                 del self._cameras[device_sn]
+                deferred = self._deferred.pop(device_sn, [])
+                if not cancelled:
+                    # The camera's last overlapping wait ended: the deferred copies now,
+                    # named by the still as it then stands. Never after an unload.
+                    self._copy_deferred(device_sn, deferred)
 
     async def _async_match(
         self, station: Station, event: SecurityEvent, device_sn: str, slot: int | None
@@ -193,12 +205,29 @@ class RecordingMatcher:
             # A later detection of the camera may still show this recording's frame:
             # copying now would name the video by the clip's start, not by that still.
             _LOGGER.debug(
-                "Recording of a detection of %s: copy left to another wait of the camera",
+                "Recording of a detection of %s: copy waits for the camera's other waits",
                 serial,
             )
+            self._deferred.setdefault(device_sn, []).append((station.serial, record, matched))
             return
         matched.copied = True
         self._recordings.async_matched(station.serial, record)
+
+    def _copy_deferred(
+        self, device_sn: str, deferred: list[tuple[str, HistoryRecord, _Matched]]
+    ) -> None:
+        """Hand each deferred copy not made meanwhile to the recording sync, in order."""
+        if self._recordings is None:
+            return
+        for station_sn, record, matched in deferred:
+            if matched.copied:
+                continue
+            _LOGGER.debug(
+                "Recording of a detection of %s: deferred copy, the camera's waits are done",
+                redact_serial(device_sn),
+            )
+            matched.copied = True
+            self._recordings.async_matched(station_sn, record)
 
     async def _async_frame(
         self,
