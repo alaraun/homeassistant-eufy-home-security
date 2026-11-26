@@ -91,7 +91,8 @@ _CAMERA_ENTITIES: Final = frozenset(
 # The button only a camera with a live stream gets.
 _LIVE_CAPTURE: Final = ("button", CAPTURE_LIVE_IMAGE_KEY)
 
-# The status diagnostics and firmware entity every paired device gets.
+# The status diagnostics and firmware entity a paired device gets (Battery only where
+# the model has a level).
 _STATUS_ENTITIES: Final = frozenset(
     {
         ("sensor", BATTERY_KEY),
@@ -153,6 +154,8 @@ async def test_a_device_other_than_a_camera_gets_status_entities_and_nothing_of_
 ) -> None:
     """A keypad, lock, sensor or other product: a device with its status, no camera.
 
+    A Battery sensor only where the library says the model has a level.
+
     Its settings entities are what the library lists for its model; none of them is
     a camera, image, detection, button, preset or zoom entity.
     """
@@ -165,7 +168,12 @@ async def test_a_device_other_than_a_camera_gets_status_entities_and_nothing_of_
     assert device is not None
     assert device.model == product_name(serial)
     entities = _entities_of(hass, serial)
-    assert _STATUS_ENTITIES <= entities
+    station = entry.runtime_data.coordinators[fake_station.serial].station
+    if station.has_battery(serial) is False:
+        assert ("sensor", BATTERY_KEY) not in entities
+        assert _STATUS_ENTITIES - {("sensor", BATTERY_KEY)} <= entities
+    else:
+        assert _STATUS_ENTITIES <= entities
     assert not {domain for domain, _ in entities} & _CAMERA_ONLY_DOMAINS
     assert not {key for _, key in entities} & (
         {key for _, key in _CAMERA_ENTITIES | {_LIVE_CAPTURE}} | _PTZ_KEYS | {DOORBELL_EVENT_KEY}
