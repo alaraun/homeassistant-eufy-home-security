@@ -291,6 +291,15 @@ def test_the_card_words_a_pin_protected_play_with_the_remedy() -> None:
     assert "Media Content Encryption" in text.group(1)
 
 
+def test_the_card_words_a_pin_protected_save_in_a_one_line_toast() -> None:
+    """Save's toast is one line: a short text for ``pin_protected``, the remedy goes under
+    the row."""
+    short = re.fullmatch(r"const SAVE_PIN = '([^']*)'", _block("SAVE_PIN"))
+    assert short, "SAVE_PIN is one plain string"
+    assert len(short.group(1)) <= 40
+    assert f"er.code === '{station_recordings.ERR_PIN_PROTECTED}'" in _SOURCE
+
+
 def test_the_preset_picture_the_card_sends_fits_the_command() -> None:
     """Save view sends ``PRESET_IMAGE_WS`` with fields its schema takes, at most the size
     it keeps, and counts the library's preset slots."""
