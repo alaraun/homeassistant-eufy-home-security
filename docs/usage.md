@@ -180,10 +180,13 @@ A HomeBase 2 detection arrives by [Cloud push](#cloud-push), which names no reco
 Home Assistant then looks for the camera's recording that started within 10 s of the
 detection (else the one running at its time) and, once that recording has finished,
 shows its first frame as the HD image (Thumbnail, then HD and HD only, with no
-thumbnail before it; Thumbnail only shows none): about the camera's clip length plus
-30 s after the detection, never later than 3 minutes. With no such recording by then
-the image stays. Two detections inside one recording get its frame once. This works by
-matching the recording by camera and time; not tested on a HomeBase 2.
+thumbnail before it; Thumbnail only shows none). The recording is found about the
+camera's clip length plus 30 s after the detection's time, and the search ends 3
+minutes after that time; fetching the frame adds a few seconds. With no such recording
+by then the image stays. Two detections inside one recording get its frame once, shown
+at the later of the two, so a button pressed between them is replaced. A later copy of
+the same detection's push does not search again. This works by matching the recording
+by camera and time; not tested on a HomeBase 2.
 
 A camera without a HomeBase has no recordings to read. Each detection wakes it (each
 wake costs battery), and the choice works like this:
@@ -294,9 +297,10 @@ from then on is copied into the event history as an MP4:
   HomeBase; play or save one from the camera card's **Station** list under History.
   Switching the option off and on again starts from the new moment.
 - After the recording has finished: within about a minute of the detection, and at
-  the latest within 15 minutes. A HomeBase 2 detection's recording is copied as soon as
-  it has been found and has finished (see [Camera images](#camera-images): about the
-  clip length plus 30 s after the detection); the 15-minute pass copies the rest.
+  the latest within 15 minutes. A HomeBase 2 detection's recording is copied once it
+  has been found and has finished (see [Camera images](#camera-images): about the clip
+  length plus 30 s after the detection), after its HD image (at most about a minute)
+  and after a copy pass already running; the 15-minute pass copies the rest.
 - Named like the event's image (same date, time and kind), so the two sit side by
   side; a recording whose image was not saved is named by its start, kind `event`.
 - The HomeBase plays the recording off its own storage: no camera is woken. Each copy

@@ -119,8 +119,9 @@ link took.
 - **A HomeBase 2 detection's HD image and video** come only once its recording has
   finished (about the clip length plus 30 s), found by camera and time: no recording of
   the camera that started within 10 s of the detection or was running at its time, by 3
-  minutes after it, gives neither. **Refresh event image** and the 15-minute copy pass
-  of **Save event videos** still pick the recording up. Not tested on a HomeBase 2.
+  minutes after the detection's time, gives neither. **Refresh event image** and the
+  15-minute copy pass of **Save event videos** still pick the recording up. Not tested
+  on a HomeBase 2.
 - **A camera that changes video codec during live view** (a battery doorbell that opens
   on HEVC and goes on in H.264) restarts the stream at the change on the open camera,
   without a second wake. The [camera card](card.md) shows a pause of a few seconds over
