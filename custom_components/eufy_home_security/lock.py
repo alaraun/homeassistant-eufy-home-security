@@ -1,7 +1,9 @@
 """Smart locks: one lock entity per device the library grades ``Capability.LOCK``.
 
 The state is the library's lock reading (``Station.lock_state``), followed on the lock's
-``LockStateChanged``; nothing is polled for it.
+``LockStateChanged``; nothing is polled for it. A lock the library commands over eufy's
+MQTT broker reports its state there after a command, as a ``LockStateChanged`` naming no
+station: that state shows until the station's next change of the lock's state.
 
 Lock and unlock go through the library (``EufySecurity.async_lock`` / ``async_unlock``)
 where its ``lock_control`` says the lock is writable; elsewhere they raise
@@ -103,11 +105,15 @@ class EufyLock(EufyPushAvailability, EufyDeviceEntity, LockEntity):
         super().__init__(coordinator, None if serial == station.serial else serial, LOCK_KEY)
         self._serial = serial
         self._command: _Command | None = None
+        # The lock's last report over MQTT, until the station's next change of its state.
+        self._broker_reading: LockReading | None = None
 
     @property
     def _reading(self) -> LockReading | None:
         """The library's last lock reading; None before one, or for a device the latest
         device list no longer pairs here (the reload follows)."""
+        if self._broker_reading is not None:
+            return self._broker_reading
         try:
             return self.coordinator.station.lock_state(self._serial)
         except UnsupportedError:
@@ -174,8 +180,13 @@ class EufyLock(EufyPushAvailability, EufyDeviceEntity, LockEntity):
 
     @callback
     def _async_on_lock_state(self, event: LockStateChanged) -> None:
-        """Show the change; ``Station.lock_state`` already holds it."""
-        del event
+        """Show the change: a lock's own report naming no station (over MQTT) as the
+        event says it, any other from ``Station.lock_state``, which already holds it."""
+        self._broker_reading = (
+            LockReading(state=event.state, source=event.source, raw=event.raw)
+            if event.station_sn is None
+            else None
+        )
         self.async_write_ha_state()
 
     @override

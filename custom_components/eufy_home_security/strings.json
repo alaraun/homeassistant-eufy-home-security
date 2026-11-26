@@ -533,7 +533,7 @@
       "message": "The eufy account is a guest of this lock, and eufy gives guests no lock or unlock, so nothing was sent. Use the eufy app with the owner's account."
     },
     "lock_mqtt_required": {
-      "message": "This lock takes its commands over eufy's MQTT connection, which is not running for this account, so nothing was sent. Use the eufy app."
+      "message": "This lock takes its commands over eufy's MQTT broker, and Home Assistant has no connection to it for this account (the log says why), so nothing was sent. Use the eufy app."
     },
     "lock_unsupported": {
       "message": "eufy's device list or sign-in gives this account no lock control of this lock yet, so nothing was sent. Use the eufy app."

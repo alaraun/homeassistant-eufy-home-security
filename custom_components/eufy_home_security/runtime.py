@@ -8,9 +8,10 @@ a real client. The config flow's second entry point here is
 :func:`async_login_with_saved_password`, the one forced login the flow performs:
 a helper that takes the client belongs in this module, because
 no other module may name the client type; so does :class:`PendingVerification`, the
-client a sign-in waiting for a two-step code keeps open; and :func:`async_run_push`, the
-cloud push start that setup runs in the background. The integration never writes the
-library's cache.
+client a sign-in waiting for a two-step code keeps open; :func:`async_run_push`, the
+cloud push start that setup runs in the background; and the MQTT connection of the locks
+the library commands over eufy's broker (:func:`start_lock_mqtt`), which the client
+serves through ``use_mqtt``. The integration never writes the library's cache.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from ipaddress import IPv4Network
 from typing import TYPE_CHECKING, Any
@@ -38,9 +39,12 @@ from eufy_home_security import (
     EufySecurity,
     EufySecurityError,
     LoginNeed,
+    MissingDependencyError,
     RateLimitedError,
     StationClaims,
+    UnsupportedError,
 )
+from eufy_home_security.mqtt.account import EufyMqttAccount
 
 from .const import (
     CONF_COUNTRY,
@@ -403,6 +407,84 @@ async def async_run_push(eufy: EufySecurity) -> None:
         delay = min(delay * 2, PUSH_START_RETRY_MAX_SECONDS)
 
 
+def mqtt_lock_serials(eufy: EufySecurity, serials: Iterable[str]) -> list[str]:
+    """The locks among ``serials`` the library commands over eufy's MQTT broker
+    (``lock_control(...).path`` ``mqtt``); a serial the device list no longer names is
+    left out."""
+    found: list[str] = []
+    for serial in serials:
+        try:
+            path = eufy.lock_control(serial).path
+        except UnsupportedError:
+            continue
+        if path == "mqtt":
+            found.append(serial)
+    return found
+
+
+def start_lock_mqtt(
+    hass: HomeAssistant, entry: ConfigEntry[Any], eufy: EufySecurity, locks: Iterable[str]
+) -> EufyMqttAccount | None:
+    """Serve the entry's MQTT locks: one ``EufyMqttAccount`` on the client's cloud, handed
+    to the client (``use_mqtt``) and started with the device list in the background (a
+    connect can take the library's whole wait). None, and nothing built, when no lock of
+    ``locks`` takes its commands over MQTT, or without the library's ``mqtt`` extra (one
+    warning; those locks then refuse lock and unlock). Stop it with
+    :func:`async_stop_lock_mqtt`.
+    """
+    served = mqtt_lock_serials(eufy, locks)
+    if not served:
+        return None
+    try:
+        account = EufyMqttAccount(eufy.cloud)
+    except MissingDependencyError as err:
+        _LOGGER.warning(
+            "%d lock(s) of this account take their commands over eufy's MQTT broker, which "
+            "needs eufy-home-security[%s]; they show their state but refuse lock and unlock",
+            len(served),
+            err.extra,
+        )
+        return None
+    eufy.use_mqtt(account)
+    entry.async_create_background_task(
+        hass,
+        _async_start_lock_mqtt(account, eufy.listed_devices.values()),
+        name=f"{DOMAIN} lock MQTT start",
+    )
+    return account
+
+
+async def _async_start_lock_mqtt(account: EufyMqttAccount, devices: Iterable[Any]) -> None:
+    """Start the account's connections; a failure is logged, and the next device-list
+    refresh starts what is missing."""
+    try:
+        await account.async_start(devices)
+    except EufySecurityError as err:
+        _LOGGER.warning("The MQTT connection for locks did not start: %s", type(err).__name__)
+
+
+async def async_update_lock_mqtt(eufy: EufySecurity, account: EufyMqttAccount | None) -> None:
+    """Hand a refreshed device list to the MQTT account, when the entry runs one; a
+    failure is logged."""
+    if account is None:
+        return
+    try:
+        await account.async_update_devices(eufy.listed_devices.values())
+    except EufySecurityError as err:
+        _LOGGER.warning(
+            "The MQTT connection for locks did not follow the device list: %s", type(err).__name__
+        )
+
+
+async def async_stop_lock_mqtt(account: EufyMqttAccount) -> None:
+    """Stop the account's connections; the client's close takes it back
+    (``use_mqtt(None)``)."""
+    try:
+        await account.async_stop()
+    except EufySecurityError as err:
+        _LOGGER.debug("The MQTT connection for locks stopped with %s", type(err).__name__)
+
+
 def streaming(entry: EufyConfigEntry) -> StreamManager | None:
     """The entry's live-stream manager, or ``None`` before setup has built it.
 
@@ -426,7 +508,8 @@ class EufyRuntimeData:
     broadcast of every camera the library grades capable of one, each opened only when
     a viewer connects. ``history`` writes every still and clip file; ``recordings``
     copies each HomeBase recording into it, None while the event-videos option is off;
-    ``station_recordings`` lists and fetches them on request. ``recording_matches``
+    ``station_recordings`` lists and fetches them on request. ``lock_mqtt`` is the MQTT
+    account serving the entry's MQTT locks, None when it runs none. ``recording_matches``
     waits for the recording of each detection whose push names none.
     """
 
@@ -440,6 +523,7 @@ class EufyRuntimeData:
     history: EventHistory
     recordings: RecordingManager | None = None
     station_recordings: StationRecordings | None = None
+    lock_mqtt: EufyMqttAccount | None = None
     recording_matches: RecordingMatcher | None = None
 
 

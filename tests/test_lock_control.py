@@ -36,6 +36,7 @@ from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
+from custom_components.eufy_home_security import runtime
 from custom_components.eufy_home_security.const import (
     DOMAIN,
     EXC_LOCK_COMMAND_CANCELLED,
@@ -452,3 +453,20 @@ async def test_a_lock_without_a_station_session_cannot_be_sent_to(
 
     assert raised.value.translation_key == EXC_LOCK_UNSUPPORTED
     assert fake_lock.received == []
+
+
+async def test_an_account_without_an_mqtt_lock_builds_no_mqtt_account(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_lock: FakeLock,
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every lock of the entry takes its commands over a station: no MQTT connection."""
+    built: list[object] = []
+    monkeypatch.setattr(runtime, "EufyMqttAccount", built.append)
+    _seed(fake_station, fake_lock, LOCKED)
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    assert entry.runtime_data.eufy.lock_control(LOCK_SN).path == "station"
+    assert built == []

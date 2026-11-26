@@ -33,6 +33,7 @@ from eufy_home_security import (
     entity_unique_id,
     redact_serial,
 )
+from eufy_home_security.mqtt.account import EufyMqttAccount
 
 from . import (
     card,
@@ -264,13 +265,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
     )
     # The cloud push start, once setup has started it (below).
     push_start: list[asyncio.Task[None]] = []
+    # The MQTT account of the entry's MQTT locks, once setup has started one (below).
+    lock_mqtt: list[EufyMqttAccount] = []
 
     async def _async_close() -> None:
-        """End the push start first, so no listener starts after the close; then close."""
+        """End the push start first, so no listener starts after the close; stop the
+        locks' MQTT account; then close."""
         for task in push_start:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        while lock_mqtt:
+            await runtime.async_stop_lock_mqtt(lock_mqtt.pop())
         await eufy.async_close()
 
     # Unload callbacks also run when setup fails part way.
@@ -595,6 +601,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
 
     plays = recording_plays.RecordingPlays(hass, entry)
     entry.async_on_unload(plays.async_stop)
+    # An MQTT connection only for an account with a lock the library commands over it.
+    mqtt_account = runtime.start_lock_mqtt(
+        hass,
+        entry,
+        eufy,
+        (
+            device_sn
+            for coordinator in coordinators.values()
+            for device_sn in detections.paired_device_kinds(coordinator.station)
+            if detections.has_lock(device_sn)
+        ),
+    )
+    if mqtt_account is not None:
+        lock_mqtt.append(mqtt_account)
     entry.runtime_data = runtime.EufyRuntimeData(
         eufy=eufy,
         coordinators=coordinators,
@@ -606,6 +626,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufyConfigEntry) -> bool
         history=event_history,
         recordings=recording_manager,
         station_recordings=station_recordings.StationRecordings(hass, stored_recordings, plays),
+        lock_mqtt=mqtt_account,
         recording_matches=matches,
     )
     _async_move_lamp_switch_rows(hass, entry, coordinators.values())
