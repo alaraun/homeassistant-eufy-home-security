@@ -523,8 +523,41 @@
     "siren_duration_invalid": {
       "message": "The HomeBase siren sounds for at most {max} seconds. Choose a duration of {max} seconds or less."
     },
-    "lock_not_supported": {
-      "message": "Locking and unlocking from Home Assistant is not supported yet. Use the eufy app."
+    "lock_not_writable": {
+      "message": "Home Assistant cannot lock or unlock this lock: {reason}. Nothing was sent; use the eufy app."
+    },
+    "lock_command_waiting": {
+      "message": "The lock's last command is still waiting for the lock to report its state, so nothing was sent. Try again when it has."
+    },
+    "lock_guest": {
+      "message": "The eufy account is a guest of this lock, and eufy gives guests no lock or unlock, so nothing was sent. Use the eufy app with the owner's account."
+    },
+    "lock_mqtt_required": {
+      "message": "This lock takes its commands over eufy's MQTT connection, which is not running for this account, so nothing was sent. Use the eufy app."
+    },
+    "lock_unsupported": {
+      "message": "eufy's device list or sign-in gives this account no lock control of this lock yet, so nothing was sent. Use the eufy app."
+    },
+    "lock_device_busy": {
+      "message": "Another command for this lock is still waiting for the lock, so nothing was sent. Try again when the lock has reported its state."
+    },
+    "lock_command_rejected": {
+      "message": "The lock or its station refused the command (code {code}). The lock shows the state it last reported."
+    },
+    "lock_not_moved": {
+      "message": "The lock took the command but then reported {state}: the bolt may be stuck. Check the lock."
+    },
+    "lock_timeout": {
+      "message": "The lock did not report the asked state in time. It shows the state it last reported; check the lock."
+    },
+    "lock_unreachable": {
+      "message": "The lock or its station could not be reached, so the command was not confirmed. The lock shows the state it last reported."
+    },
+    "lock_command_failed": {
+      "message": "The lock command failed and was not confirmed. The lock shows the state it last reported."
+    },
+    "lock_command_cancelled": {
+      "message": "The lock command was stopped because the eufy account entry was unloaded, before the lock reported its state. Check the lock."
     },
     "garage_door_position_unknown": {
       "message": "The garage door's position is unknown. Use the eufy app to move it."

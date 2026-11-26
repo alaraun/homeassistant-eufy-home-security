@@ -54,11 +54,15 @@ from eufy_home_security import (
     CloudProblem,
     CommandError,
     CommandNotAppliedError,
+    CommandRejectedError,
     CommandUnsupportedError,
+    CommunicationError,
     ConnectionChanged,
     CredentialsRefreshed,
     DetectionDelivery,
     DetectionDeliveryReport,
+    DeviceBusyError,
+    DeviceTimeoutError,
     EufySecurityError,
     GuardMode,
     KeyRejectedError,
@@ -82,6 +86,11 @@ from eufy_home_security import (
 )
 from eufy_home_security.cloud.const import LOGIN_BUDGET, LOGIN_BUDGET_WINDOW_SECONDS, scope_country
 from eufy_home_security.devices import Support, product_name
+from eufy_home_security.exceptions import (
+    GuestAccessError,
+    LockNotMovedError,
+    MqttAccountRequiredError,
+)
 
 from . import detections
 from .const import (
@@ -112,7 +121,18 @@ from .const import (
     EXC_GUARD_MODE_REJECTED,
     EXC_LIGHT_CONTROL_OFF,
     EXC_LIVE_STREAM_LIMIT,
-    EXC_LOCK_NOT_SUPPORTED,
+    EXC_LOCK_COMMAND_CANCELLED,
+    EXC_LOCK_COMMAND_FAILED,
+    EXC_LOCK_COMMAND_REJECTED,
+    EXC_LOCK_COMMAND_WAITING,
+    EXC_LOCK_DEVICE_BUSY,
+    EXC_LOCK_GUEST,
+    EXC_LOCK_MQTT_REQUIRED,
+    EXC_LOCK_NOT_MOVED,
+    EXC_LOCK_NOT_WRITABLE,
+    EXC_LOCK_TIMEOUT,
+    EXC_LOCK_UNREACHABLE,
+    EXC_LOCK_UNSUPPORTED,
     EXC_ON_DEMAND_UNREACHABLE,
     EXC_PAN_TILT_NOT_APPLIED,
     EXC_PAN_TILT_UNSUPPORTED,
@@ -562,10 +582,68 @@ def siren_failed(
     )
 
 
-def lock_not_supported() -> ServiceValidationError:
-    """A lock or unlock asked of a lock: the library sends no lock command yet, so nothing
+def lock_not_writable(reason: str | None) -> ServiceValidationError:
+    """A lock or unlock of a lock the library cannot send to; nothing was sent. The
+    placeholder is the library's ``LockControl.reason``, a text it words for a UI."""
+    return ServiceValidationError(
+        translation_domain=DOMAIN,
+        translation_key=EXC_LOCK_NOT_WRITABLE,
+        translation_placeholders={"reason": reason or "unknown"},
+    )
+
+
+def lock_command_waiting() -> ServiceValidationError:
+    """A lock or unlock while a command of that lock still waits for its report; nothing
     was sent."""
-    return ServiceValidationError(translation_domain=DOMAIN, translation_key=EXC_LOCK_NOT_SUPPORTED)
+    return ServiceValidationError(
+        translation_domain=DOMAIN, translation_key=EXC_LOCK_COMMAND_WAITING
+    )
+
+
+def lock_command_cancelled() -> HomeAssistantError:
+    """A lock command the entry's unload ended before the lock reported."""
+    return HomeAssistantError(translation_domain=DOMAIN, translation_key=EXC_LOCK_COMMAND_CANCELLED)
+
+
+def lock_failed(err: EufySecurityError) -> HomeAssistantError:
+    """A lock or unlock that ended with the library's ``err``, one key per error class.
+
+    Refused before sending (a ``ServiceValidationError``): ``GuestAccessError``,
+    ``MqttAccountRequiredError``, any other ``UnsupportedError``, ``DeviceBusyError``.
+    After sending: ``DeviceTimeoutError``, any other ``CommunicationError``,
+    ``LockNotMovedError`` (placeholder ``state``, the library's state name),
+    ``CommandRejectedError`` (placeholder ``code``); anything else a generic failure.
+    Never the library's message text, never a serial.
+    """
+    refused: str | None = None
+    if isinstance(err, GuestAccessError):
+        refused = EXC_LOCK_GUEST
+    elif isinstance(err, MqttAccountRequiredError):
+        refused = EXC_LOCK_MQTT_REQUIRED
+    elif isinstance(err, UnsupportedError):
+        refused = EXC_LOCK_UNSUPPORTED
+    elif isinstance(err, DeviceBusyError):
+        refused = EXC_LOCK_DEVICE_BUSY
+    if refused is not None:
+        return ServiceValidationError(translation_domain=DOMAIN, translation_key=refused)
+    placeholders: dict[str, str] = {}
+    if isinstance(err, DeviceTimeoutError):
+        key = EXC_LOCK_TIMEOUT
+    elif isinstance(err, CommunicationError):
+        key = EXC_LOCK_UNREACHABLE
+    elif isinstance(err, LockNotMovedError):
+        key = EXC_LOCK_NOT_MOVED
+        placeholders["state"] = str(err.state)
+    elif isinstance(err, CommandRejectedError):
+        key = EXC_LOCK_COMMAND_REJECTED
+        placeholders["code"] = str(err.code)
+    else:
+        key = EXC_LOCK_COMMAND_FAILED
+    return HomeAssistantError(
+        translation_domain=DOMAIN,
+        translation_key=key,
+        translation_placeholders=placeholders or None,
+    )
 
 
 def garage_door_position_unknown() -> ServiceValidationError:

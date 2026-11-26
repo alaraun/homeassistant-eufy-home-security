@@ -1,7 +1,9 @@
-"""Smart locks: a read-only lock entity per device the library grades as a lock.
+"""Smart locks: a lock entity per device the library grades as a lock.
 
 The state is the library's lock reading, mapped as the library's guide suggests, and
-follows ``LockStateChanged``; lock and unlock are refused with nothing sent.
+follows ``LockStateChanged``. The lock here takes a command form the library does not
+send, so lock and unlock are refused with the library's reason and nothing is sent
+(commands of a writable lock: ``test_lock_control.py``).
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ from custom_components.eufy_home_security.const import (
     ATTR_LOCK_STATE,
     ATTR_RAW_VALUE,
     DOMAIN,
-    EXC_LOCK_NOT_SUPPORTED,
+    EXC_LOCK_NOT_WRITABLE,
     LOCK_KEY,
 )
 
@@ -172,10 +174,14 @@ async def test_lock_and_unlock_are_refused_and_send_nothing(
     seed_warm_cache: Callable[..., None],
     service: str,
 ) -> None:
-    """Lock and unlock raise the translated refusal; nothing is sent and the state stays."""
+    """Lock and unlock raise the translated refusal with the library's reason; nothing is
+    sent and the state stays."""
     _seed_lock(fake_station, "4")
-    await set_up_warm(hass, seed_warm_cache)
+    entry = await set_up_warm(hass, seed_warm_cache)
     entity_id = _lock_id(hass)
+    control = entry.runtime_data.eufy.lock_control(LOCK_SN)
+    assert not control.writable
+    assert control.reason
     sent = len(fake_station.received)
 
     with pytest.raises(ServiceValidationError) as raised:
@@ -184,6 +190,7 @@ async def test_lock_and_unlock_are_refused_and_send_nothing(
         )
 
     assert raised.value.translation_domain == DOMAIN
-    assert raised.value.translation_key == EXC_LOCK_NOT_SUPPORTED
+    assert raised.value.translation_key == EXC_LOCK_NOT_WRITABLE
+    assert raised.value.translation_placeholders == {"reason": control.reason}
     assert len(fake_station.received) == sent
     assert state_of(hass, entity_id) == HALockState.LOCKED

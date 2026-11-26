@@ -358,8 +358,22 @@ EXC_SIREN_ACCOUNT_REJECTED: Final = "siren_account_rejected"
 EXC_SIREN_UNSUPPORTED: Final = "siren_unsupported"
 # A HomeBase siren duration above the longest the library sends; nothing was sent.
 EXC_SIREN_DURATION_INVALID: Final = "siren_duration_invalid"
-# A lock or unlock asked of a lock entity: the library sends no lock command yet.
-EXC_LOCK_NOT_SUPPORTED: Final = "lock_not_supported"
+# Lock and unlock refused before anything is sent: the library cannot send to this lock
+# (with the library's reason), or a command of the lock still waits.
+EXC_LOCK_NOT_WRITABLE: Final = "lock_not_writable"
+EXC_LOCK_COMMAND_WAITING: Final = "lock_command_waiting"
+# A lock command's library error, one key per error class.
+EXC_LOCK_GUEST: Final = "lock_guest"
+EXC_LOCK_MQTT_REQUIRED: Final = "lock_mqtt_required"
+EXC_LOCK_UNSUPPORTED: Final = "lock_unsupported"
+EXC_LOCK_DEVICE_BUSY: Final = "lock_device_busy"
+EXC_LOCK_COMMAND_REJECTED: Final = "lock_command_rejected"
+EXC_LOCK_NOT_MOVED: Final = "lock_not_moved"
+EXC_LOCK_TIMEOUT: Final = "lock_timeout"
+EXC_LOCK_UNREACHABLE: Final = "lock_unreachable"
+EXC_LOCK_COMMAND_FAILED: Final = "lock_command_failed"
+# A lock command ended by the entry's unload before the lock reported.
+EXC_LOCK_COMMAND_CANCELLED: Final = "lock_command_cancelled"
 # An open or close of a garage door whose position is unknown; nothing was sent.
 EXC_GARAGE_DOOR_POSITION_UNKNOWN: Final = "garage_door_position_unknown"
 # An open or close of a garage door while another command of that door, or of the other
