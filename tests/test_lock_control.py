@@ -15,6 +15,7 @@ import pytest
 from conftest import entity_id_for, record_states, set_up_warm, state_of, wait_until
 from eufy_home_security import (
     CommandRejectedError,
+    CommandUnsupportedError,
     CommunicationError,
     DeviceBusyError,
     DeviceTimeoutError,
@@ -359,6 +360,8 @@ _ERRORS: Final = (
     (UnsupportedError("no member record"), EXC_LOCK_UNSUPPORTED, None, True),
     (DeviceBusyError("busy"), EXC_LOCK_DEVICE_BUSY, None, True),
     (CommandRejectedError(1961, -151), EXC_LOCK_COMMAND_REJECTED, {"code": "-151"}, False),
+    # Also an UnsupportedError, but the station's answer to a command that was sent.
+    (CommandUnsupportedError(1940, -108), EXC_LOCK_COMMAND_REJECTED, {"code": "-108"}, False),
     (
         LockNotMovedError(1940, "stuck", state=LockState.JAMMED),
         EXC_LOCK_NOT_MOVED,

@@ -608,13 +608,30 @@ def lock_command_cancelled() -> HomeAssistantError:
 def lock_failed(err: EufySecurityError) -> HomeAssistantError:
     """A lock or unlock that ended with the library's ``err``, one key per error class.
 
-    Refused before sending (a ``ServiceValidationError``): ``GuestAccessError``,
-    ``MqttAccountRequiredError``, any other ``UnsupportedError``, ``DeviceBusyError``.
-    After sending: ``DeviceTimeoutError``, any other ``CommunicationError``,
-    ``LockNotMovedError`` (placeholder ``state``, the library's state name),
-    ``CommandRejectedError`` (placeholder ``code``); anything else a generic failure.
-    Never the library's message text, never a serial.
+    Checked in this order, because the classes nest: a ``CommandError`` is the station's
+    or the lock's answer to a command that was sent: ``LockNotMovedError`` (placeholder
+    ``state``, the library's state name), any ``CommandRejectedError`` (placeholder
+    ``code``; ``CommandUnsupportedError`` is also an ``UnsupportedError`` but was sent),
+    any other a generic failure. Refused before sending (a ``ServiceValidationError``):
+    ``GuestAccessError``, ``MqttAccountRequiredError``, any other ``UnsupportedError``,
+    ``DeviceBusyError``. Then ``DeviceTimeoutError``, any other ``CommunicationError``;
+    anything else a generic failure. Never the library's message text, never a serial.
     """
+    placeholders: dict[str, str] = {}
+    if isinstance(err, CommandError):
+        if isinstance(err, LockNotMovedError):
+            key = EXC_LOCK_NOT_MOVED
+            placeholders["state"] = str(err.state)
+        elif isinstance(err, CommandRejectedError):
+            key = EXC_LOCK_COMMAND_REJECTED
+            placeholders["code"] = str(err.code)
+        else:
+            key = EXC_LOCK_COMMAND_FAILED
+        return HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key=key,
+            translation_placeholders=placeholders or None,
+        )
     refused: str | None = None
     if isinstance(err, GuestAccessError):
         refused = EXC_LOCK_GUEST
@@ -626,24 +643,13 @@ def lock_failed(err: EufySecurityError) -> HomeAssistantError:
         refused = EXC_LOCK_DEVICE_BUSY
     if refused is not None:
         return ServiceValidationError(translation_domain=DOMAIN, translation_key=refused)
-    placeholders: dict[str, str] = {}
     if isinstance(err, DeviceTimeoutError):
         key = EXC_LOCK_TIMEOUT
     elif isinstance(err, CommunicationError):
         key = EXC_LOCK_UNREACHABLE
-    elif isinstance(err, LockNotMovedError):
-        key = EXC_LOCK_NOT_MOVED
-        placeholders["state"] = str(err.state)
-    elif isinstance(err, CommandRejectedError):
-        key = EXC_LOCK_COMMAND_REJECTED
-        placeholders["code"] = str(err.code)
     else:
         key = EXC_LOCK_COMMAND_FAILED
-    return HomeAssistantError(
-        translation_domain=DOMAIN,
-        translation_key=key,
-        translation_placeholders=placeholders or None,
-    )
+    return HomeAssistantError(translation_domain=DOMAIN, translation_key=key)
 
 
 def garage_door_position_unknown() -> ServiceValidationError:
