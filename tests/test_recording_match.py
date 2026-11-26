@@ -54,6 +54,7 @@ from custom_components.eufy_home_security import history, recording_match, recor
 from custom_components.eufy_home_security.const import (
     CONF_CAMERA_IMAGE,
     CONF_EVENT_VIDEOS,
+    DOMAIN,
     FFMPEG_DECODE_TIMEOUT_SECONDS,
     MATCHED_FRAME_WAIT_SECONDS,
     RECORDING_SYNC_FIRST_DELAY_SECONDS,
@@ -1459,3 +1460,39 @@ async def test_thumbnail_mode_copies_each_clip_at_once_while_another_wait_runs(
 
     assert downloads == [clip_a, clip_b]
     await _unload(hass, entry)
+
+
+class _RecordingSync:
+    """Stand-in for the recording sync: records each copy it is handed."""
+
+    def __init__(self) -> None:
+        self.handed: list[tuple[str, int]] = []
+
+    def async_matched(self, station_sn: str, row: HistoryRecord) -> None:
+        self.handed.append((station_sn, row.record_id))
+
+
+async def test_deferred_copies_are_handed_over_in_order_skipping_copied_ones(
+    hass: HomeAssistant,
+) -> None:
+    """The flush hands each deferred recording over once, in the order deferred, and
+    skips one a later wait has copied meanwhile."""
+    sync = _RecordingSync()
+    matcher = RecordingMatcher(
+        hass,
+        MockConfigEntry(domain=DOMAIN),
+        None,
+        sync,  # type: ignore[arg-type]
+    )
+    copied = recording_match._Matched(copied=True)
+    deferred = [
+        (SYNTHETIC.station_sn, HistoryRecord(record_id=3), recording_match._Matched()),
+        (SYNTHETIC.station_sn, HistoryRecord(record_id=1), copied),
+        (SYNTHETIC.station_sn, HistoryRecord(record_id=2), recording_match._Matched()),
+    ]
+
+    matcher._copy_deferred(SYNTHETIC.camera_sn, deferred)
+    matcher._copy_deferred(SYNTHETIC.camera_sn, deferred)
+
+    assert sync.handed == [(SYNTHETIC.station_sn, 3), (SYNTHETIC.station_sn, 2)]
+    assert all(matched.copied for _station, _row, matched in deferred)
