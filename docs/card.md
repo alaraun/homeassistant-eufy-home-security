@@ -209,7 +209,9 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
     - When the HomeBase stops sending early (an error, or a recording that changes its video format part-way:
       `The recording changes its video format here; Save it to watch the rest`), what arrived keeps playing and
       the message shows when the video stops. A lost connection to Home Assistant shows `Connection lost` the
-      same way. With every session in use Play shows `All sessions to the HomeBase are in use`.
+      same way. With every session in use Play shows `All sessions to the HomeBase are in use`. A recording
+      protected by the eufy app's Local Advanced Encryption is refused at once with how to turn it off (Save shows
+      the same remedy).
     - A recording already saved plays its copy from the history instead.
   - **Save** copies the recording from the HomeBase into the history folder (5–10 s, one at a time) and marks the
     row Saved; it then plays from there and stays in the history. Play and Save keep working on a row while the
