@@ -12,11 +12,13 @@ Lock and unlock go through the library (``EufySecurity.async_lock`` / ``async_un
 where its ``lock_control`` says the lock is writable; elsewhere they raise
 ``errors.lock_not_writable`` with the library's reason and send nothing. A command runs as
 a background task of the entry and the service call waits for it: it ends once the lock
-reports the asked state, or with the library's error, within the library's default wait
-(about 50 s). Meanwhile the lock shows locking or unlocking, and a second lock or unlock
-of the same lock is refused before anything is sent. The shown state is always the lock's
-own report, never the call's return. The entry's unload cancels a waiting command, as it
-does every background task of the entry.
+reports the asked state, or with the library's error, within
+``LOCK_COMMAND_TIMEOUT_SECONDS`` (75 s, the library's bound for the whole call, connect and
+send included), so an automation step waits up to that long. Meanwhile the lock shows
+locking or unlocking, and a second lock or unlock of the same lock is refused before
+anything is sent. A caller that stops waiting leaves the command running. The shown state
+is always the lock's own report, never the call's return. The entry's unload cancels a
+waiting command, as it does every background task of the entry.
 
 States map as the library's guide suggests: passage mode shows unlocked, privacy mode
 locked, a bolt stopped between its positions or a reported fault jammed; initial,
@@ -28,9 +30,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Coroutine
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, override
+from typing import TYPE_CHECKING, Any, Final, Protocol, override
 
 from homeassistant.components.lock import LockEntity
 from homeassistant.core import HomeAssistant, callback
@@ -47,7 +49,7 @@ from eufy_home_security import (
 )
 
 from . import detections, errors
-from .const import ATTR_LOCK_STATE, ATTR_RAW_VALUE, LOCK_KEY
+from .const import ATTR_LOCK_STATE, ATTR_RAW_VALUE, LOCK_COMMAND_TIMEOUT_SECONDS, LOCK_KEY
 from .coordinator import StationCoordinator
 from .entity import EufyDeviceEntity, EufyPushAvailability
 
@@ -72,7 +74,13 @@ _JAMMED: Final = frozenset({LockState.INTERMEDIATE, LockState.JAMMED})
 _LOCK: Final = "lock"
 _UNLOCK: Final = "unlock"
 
-type _Send = Callable[[str], Coroutine[Any, Any, LockState]]
+
+class _Send(Protocol):
+    """``EufySecurity.async_lock`` or ``async_unlock``."""
+
+    def __call__(
+        self, device_sn: str, *, timeout: float | None = None
+    ) -> Coroutine[Any, Any, LockState]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,7 +276,7 @@ class EufyLock(EufyPushAvailability, EufyDeviceEntity, LockEntity):
         """Send the command and wait for the lock; the library's error is returned, so a
         caller that stopped waiting leaves no unretrieved exception."""
         try:
-            await send(self._serial)
+            await send(self._serial, timeout=LOCK_COMMAND_TIMEOUT_SECONDS)
         except EufySecurityError as err:
             _LOGGER.debug(
                 "%s: the %s command failed: %s", self.entity_id, action, type(err).__name__

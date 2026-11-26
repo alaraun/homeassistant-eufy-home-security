@@ -36,7 +36,12 @@ from eufy_home_security.exceptions import (
     LockNotMovedError,
     MqttAccountRequiredError,
 )
-from eufy_home_security.station import lock_control as lock_control_module
+from eufy_home_security.lock_commands.control import (
+    LOCK_ANSWER_TIMEOUT,
+    LOCK_CONFIRM_TIMEOUT,
+    LOCK_PUBLISH_TIMEOUT,
+)
+from eufy_home_security.mqtt.client import CONNECT_WAIT_SECONDS
 from eufy_home_security.testing import FakeCloud, FakeLock, FakeStation, camera_device
 from homeassistant.components.lock import DOMAIN as LOCK_DOMAIN
 from homeassistant.components.lock import LockState as HALockState
@@ -47,6 +52,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import issue_registry as ir
 
 from custom_components.eufy_home_security import errors, runtime
+from custom_components.eufy_home_security import lock as lock_module
 from custom_components.eufy_home_security.const import (
     DOMAIN,
     EXC_ACCOUNT_REJECTED,
@@ -66,6 +72,7 @@ from custom_components.eufy_home_security.const import (
     EXC_LOCK_TIMEOUT,
     EXC_LOCK_UNREACHABLE,
     EXC_LOCK_UNSUPPORTED,
+    LOCK_COMMAND_TIMEOUT_SECONDS,
     LOCK_KEY,
 )
 
@@ -108,9 +115,8 @@ def fake_cloud(fake_station: FakeStation, fake_lock: FakeLock, member: dict[str,
 
 @pytest.fixture
 def short_lock_waits(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Half-second answer and state waits; the library waits 20 s and 30 s."""
-    monkeypatch.setattr(lock_control_module, "LOCK_ANSWER_TIMEOUT", 0.5)
-    monkeypatch.setattr(lock_control_module, "LOCK_CONFIRM_TIMEOUT", 0.5)
+    """A half-second bound on each command; the integration gives it 75 s."""
+    monkeypatch.setattr(lock_module, "LOCK_COMMAND_TIMEOUT_SECONDS", 0.5)
 
 
 def _seed(station: FakeStation, lock: FakeLock, raw: str) -> None:
@@ -570,3 +576,35 @@ async def test_an_account_refusal_names_the_station_and_the_lock(
         "station": errors.station_display_name(coordinator),
         "target": f"{errors.device_display_name(coordinator, LOCK_SN)} Lock",
     }
+
+
+@pytest.mark.parametrize("service", ["lock", "unlock"])
+async def test_each_command_is_bounded_by_the_integrations_timeout(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_lock: FakeLock,
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    service: str,
+) -> None:
+    """The library gets an explicit bound for the whole call, connect and send included."""
+    _seed(fake_station, fake_lock, LOCKED if service == "unlock" else UNLOCKED)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    bounds: list[float | None] = []
+
+    async def records(device_sn: str, *, timeout: float | None = None) -> LockState:
+        del device_sn
+        bounds.append(timeout)
+        return LockState.LOCKED
+
+    monkeypatch.setattr(entry.runtime_data.eufy, f"async_{service}", records)
+    await _call(hass, service)
+
+    assert bounds == [LOCK_COMMAND_TIMEOUT_SECONDS]
+
+
+def test_the_command_bound_covers_the_librarys_waits_on_both_paths() -> None:
+    """Over MQTT: the connect wait, the broker's take, the lock's answer and its state; the
+    station path's answer and state waits are within that."""
+    mqtt = CONNECT_WAIT_SECONDS + LOCK_PUBLISH_TIMEOUT + LOCK_ANSWER_TIMEOUT + LOCK_CONFIRM_TIMEOUT
+    assert LOCK_COMMAND_TIMEOUT_SECONDS >= mqtt > LOCK_ANSWER_TIMEOUT + LOCK_CONFIRM_TIMEOUT
