@@ -643,3 +643,102 @@ async def test_a_homebase_3_detection_naming_no_recording_is_not_matched(
     await hass.async_block_till_done()
     assert fake_station.history_queries == []
     await _unload(hass, entry)
+
+
+async def test_a_matched_frames_waiter_is_released_when_replaced_or_at_unload(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """While the camera's worker is busy, a waiting matched frame that a newer detection
+    replaces, and one still waiting at unload, both release their waiter: the copy after
+    the frame never hangs."""
+    held = asyncio.Event()
+    entered = asyncio.Event()
+
+    async def held_frame(self: Station, event: SecurityEvent, **kwargs: Any) -> bytes:
+        entered.set()
+        await held.wait()
+        raise DeviceTimeoutError("held")
+
+    monkeypatch.setattr(Station, "async_event_trigger_frame", held_frame)
+    entry = await _set_up(hass, seed_warm_cache, {})
+    snapshots = _snapshots(entry)
+    station = entry.runtime_data.coordinators[HOMEBASE_2_SN].station
+    now = _start(0)
+
+    def named(seconds: int, session_id: str) -> SecurityEvent:
+        return _push(
+            now + timedelta(seconds=seconds),
+            session_id=session_id,
+            record_id=90000 + seconds,
+            video_path=f"/media/mmcblk0p1/Camera00/2026010112000{seconds}.dat",
+        )
+
+    def slot() -> int:
+        taken = snapshots.async_hold_slot(SYNTHETIC.camera_sn)
+        assert taken is not None
+        return taken
+
+    first = snapshots.async_request_matched_frame(station, named(0, "a"), slot())
+    await asyncio.wait_for(entered.wait(), 5)
+    replaced = snapshots.async_request_matched_frame(station, named(1, "b"), slot())
+    assert not replaced.done()
+    snapshots.async_request_event(station, named(2, "c"))
+    assert replaced.done()
+    waiting = snapshots.async_request_matched_frame(station, named(3, "d"), slot())
+    assert not waiting.done()
+
+    await _unload(hass, entry)
+    held.set()
+    assert first.done()
+    assert waiting.done()
+
+
+async def test_a_pass_asked_during_a_matched_copy_runs_after_it(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 15-minute tick while a matched clip downloads is not lost: one pass follows
+    the copy, and it copies nothing again."""
+    released = asyncio.Event()
+    started_download = asyncio.Event()
+    calls: list[int] = []
+    real = Station.async_download_recording
+
+    async def slow(
+        self: Station, record: HistoryRecord, write: ClipWriter, *, wait: bool = True
+    ) -> MediaClip:
+        calls.append(record.record_id)
+        started_download.set()
+        await released.wait()
+        return await real(self, record, write, wait=wait)
+
+    monkeypatch.setattr(Station, "async_download_recording", slow)
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON)
+    manager = entry.runtime_data.recordings
+    assert manager is not None
+    started = _start()
+    record_id = fake_station.add_detection_recording(SYNTHETIC.camera_sn, started, CLIP_SECONDS)
+
+    entry.runtime_data.router.handle(_push(started))
+    await asyncio.wait_for(started_download.wait(), 8)
+    before = manager.stats(HOMEBASE_2_SN)
+    assert before is not None
+    async_fire_time_changed(
+        hass, dt_util.utcnow() + timedelta(seconds=RECORDING_SYNC_INTERVAL_SECONDS + 1)
+    )
+    await hass.async_block_till_done()
+    released.set()
+    await _settled(hass, entry)
+
+    after = manager.stats(HOMEBASE_2_SN)
+    assert after is not None
+    assert after["passes"] == before["passes"] + 1
+    assert calls == [record_id]
+    await _unload(hass, entry)
