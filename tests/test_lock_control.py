@@ -608,3 +608,30 @@ def test_the_command_bound_covers_the_librarys_waits_on_both_paths() -> None:
     station path's answer and state waits are within that."""
     mqtt = CONNECT_WAIT_SECONDS + LOCK_PUBLISH_TIMEOUT + LOCK_ANSWER_TIMEOUT + LOCK_CONFIRM_TIMEOUT
     assert LOCK_COMMAND_TIMEOUT_SECONDS >= mqtt > LOCK_ANSWER_TIMEOUT + LOCK_CONFIRM_TIMEOUT
+
+
+async def test_a_caller_that_stops_waiting_leaves_the_command_running(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_lock: FakeLock,
+    seed_warm_cache: Callable[..., None],
+) -> None:
+    """The service call is cancelled (an automation stopped) while the lock has not
+    reported: the command still waits, the lock still shows locking and a second command
+    is refused; the lock's report then ends it."""
+    _seed(fake_station, fake_lock, UNLOCKED)
+    await set_up_warm(hass, seed_warm_cache)
+    caller = await _held_command(hass, fake_lock, "lock", HALockState.LOCKING)
+
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    await asyncio.sleep(0.05)
+
+    assert state_of(hass, _lock_id(hass)) == HALockState.LOCKING
+    assert [t for t in asyncio.all_tasks() if t.get_name() == f"{LOCK_KEY} lock"]
+    with pytest.raises(ServiceValidationError):
+        await _call(hass, "unlock")
+    fake_station.send_param_dump()
+    await wait_until(lambda: state_of(hass, _lock_id(hass)) == HALockState.LOCKED)
+    assert len(fake_lock.received) == 1

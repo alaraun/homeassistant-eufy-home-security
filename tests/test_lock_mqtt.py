@@ -69,6 +69,7 @@ class FakeMqttAccount:
         self.cloud = cloud
         self.calls: list[tuple[str, tuple[str, ...]]] = []
         self.listeners: list[Callable[[Any], None]] = []
+        self.updated_with: list[list[CloudDevice]] = []
         self.built.append(self)
 
     def add_listener(self, listener: Callable[[Any], None]) -> Callable[[], None]:
@@ -81,7 +82,9 @@ class FakeMqttAccount:
             raise CommunicationError("start failed")
 
     async def async_update_devices(self, devices: Iterable[CloudDevice]) -> None:
-        self.calls.append(("update", tuple(sorted(d.device_sn for d in devices))))
+        listed = list(devices)
+        self.updated_with.append(listed)
+        self.calls.append(("update", tuple(sorted(d.device_sn for d in listed))))
         if "update" in self.failing:
             raise CommunicationError("update failed")
 
@@ -421,3 +424,48 @@ def test_the_mqtt_stop_bound_leaves_the_clients_close_room_in_the_unload_wait() 
     """The stop's bound plus a few seconds for the client's close fit Home Assistant's
     unload wait."""
     assert 0 < LOCK_MQTT_STOP_TIMEOUT_SECONDS <= HA_UNLOAD_TASK_WAIT_SECONDS / 2
+
+
+async def test_a_refresh_hands_the_account_the_new_device_list(
+    hass: HomeAssistant,
+    seed_warm_cache: Callable[..., None],
+    fake_cloud: FakeCloud,
+    accounts: list[FakeMqttAccount],
+) -> None:
+    """The account gets the list the refresh fetched, not the one before it."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    fake_cloud.devices[0]["device_name"] = "Back door"
+
+    button = entity_id_for(hass, BUTTON_DOMAIN, entry.entry_id, REFRESH_DEVICE_LIST_KEY)
+    await hass.services.async_call(BUTTON_DOMAIN, "press", {ATTR_ENTITY_ID: button}, blocking=True)
+
+    assert [d.name for d in accounts[0].updated_with[0]] == ["Back door"]
+
+
+async def test_an_unload_cancels_a_start_still_running(
+    hass: HomeAssistant,
+    seed_warm_cache: Callable[..., None],
+    accounts: list[FakeMqttAccount],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The account's start is a task of the entry: an unload while it connects ends it."""
+    started = asyncio.Event()
+    ended: list[str] = []
+
+    async def held_start(self: FakeMqttAccount, devices: Iterable[CloudDevice], **_: Any) -> None:
+        del devices
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            ended.append("cancelled")
+            raise
+
+    monkeypatch.setattr(FakeMqttAccount, "async_start", held_start)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    assert started.is_set()
+
+    async with asyncio.timeout(5):
+        assert await hass.config_entries.async_unload(entry.entry_id)
+
+    assert ended == ["cancelled"]
