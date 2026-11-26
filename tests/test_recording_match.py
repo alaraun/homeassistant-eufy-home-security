@@ -115,10 +115,23 @@ def _push(
 
 
 async def _set_up(
-    hass: HomeAssistant, seed_warm_cache: Callable[..., None], options: dict[str, Any]
+    hass: HomeAssistant,
+    seed_warm_cache: Callable[..., None],
+    options: dict[str, Any],
+    hass_storage: dict[str, Any] | None = None,
 ) -> MockConfigEntry:
+    """Set up an entry; with ``hass_storage`` event videos were switched on an hour ago."""
     seed_warm_cache()
     entry = add_entry(hass, options=options)
+    if hass_storage is not None:
+        key = recordings.store_key(entry.entry_id)
+        since = (dt_util.utcnow() - timedelta(hours=1)).isoformat()
+        hass_storage[key] = {
+            "version": 1,
+            "minor_version": 2,
+            "key": key,
+            "data": {"records": {}, "since": since},
+        }
     assert await setup_entry(hass, entry)
     return entry
 
@@ -215,8 +228,7 @@ async def test_a_homebase_2_detection_shows_its_trigger_frame_and_copies_its_cli
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Not listed, running, settled: then the trigger frame of that row is shown at the
-    detection's time and its clip is copied beside the still, once; the 15-minute pass
-    after it copies nothing again."""
+    detection's time and its clip is copied beside the still, once."""
     frames = _count_frames(monkeypatch)
     thumbnails = _count_thumbnails(monkeypatch)
     downloads = _count_downloads(monkeypatch)
@@ -239,20 +251,11 @@ async def test_a_homebase_2_detection_shows_its_trigger_frame_and_copies_its_cli
     (still,) = _stills(hass)
     (video,) = _videos(hass)
     assert video.stem == still.stem
-
-    async_fire_time_changed(
-        hass, dt_util.utcnow() + timedelta(seconds=RECORDING_SYNC_INTERVAL_SECONDS + 1)
-    )
-    await hass.async_block_till_done()
-    await _settled(hass, entry)
     manager = entry.runtime_data.recordings
     assert manager is not None
     stats = manager.stats(HOMEBASE_2_SN)
     assert stats is not None
-    assert stats["passes"] >= 1
     assert stats["stored"] == 1
-    assert downloads == [record_id]
-    assert len(_videos(hass)) == 1
     await _unload(hass, entry)
 
 
@@ -274,6 +277,12 @@ async def test_two_detections_inside_one_clip_get_one_trigger_frame_and_one_copy
     entry.runtime_data.router.handle(_push(started))
     entry.runtime_data.router.handle(_push(started + timedelta(seconds=1), session_id="session-2"))
     assert _matcher(entry).waiting == 2
+    await _settled(hass, entry)
+    assert frames == [record_id]
+    # A third, whose push comes after the frame is shown and is newer than it.
+    entry.runtime_data.router.handle(
+        _push(started + timedelta(milliseconds=1500), session_id="session-3")
+    )
     await _settled(hass, entry)
 
     assert frames == [record_id]
@@ -455,17 +464,7 @@ async def test_a_recording_a_pass_stored_already_is_not_copied_again(
     downloads = _count_downloads(monkeypatch)
     started = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=2)
     record_id = fake_station.add_detection_recording(SYNTHETIC.camera_sn, started, CLIP_SECONDS)
-    seed_warm_cache()
-    entry = add_entry(hass, options=VIDEOS_ON)
-    key = recordings.store_key(entry.entry_id)
-    since = (dt_util.utcnow() - timedelta(hours=1)).isoformat()
-    hass_storage[key] = {
-        "version": 1,
-        "minor_version": 2,
-        "key": key,
-        "data": {"records": {}, "since": since},
-    }
-    assert await setup_entry(hass, entry)
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage)
     async_fire_time_changed(
         hass, dt_util.utcnow() + timedelta(seconds=RECORDING_SYNC_FIRST_DELAY_SECONDS + 1)
     )
@@ -741,4 +740,70 @@ async def test_a_pass_asked_during_a_matched_copy_runs_after_it(
     assert after is not None
     assert after["passes"] == before["passes"] + 1
     assert calls == [record_id]
+    await _unload(hass, entry)
+
+
+async def test_the_15_minute_pass_after_a_matched_copy_copies_nothing_again(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A clip copied for its detection is stored for the sync too: its catch-up pass,
+    which reads the row as settled, lists it and downloads nothing."""
+    downloads = _count_downloads(monkeypatch)
+    started = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=2)
+    record_id = fake_station.add_detection_recording(SYNTHETIC.camera_sn, started, CLIP_SECONDS)
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage)
+    manager = entry.runtime_data.recordings
+    assert manager is not None
+
+    entry.runtime_data.router.handle(_push(started))
+    await _settled(hass, entry)
+    assert downloads == [record_id]
+    async_fire_time_changed(
+        hass, dt_util.utcnow() + timedelta(seconds=RECORDING_SYNC_INTERVAL_SECONDS + 1)
+    )
+    await hass.async_block_till_done()
+    await wait_until(lambda: (manager.stats(HOMEBASE_2_SN) or {}).get("passes", 0) >= 1)
+    await _settled(hass, entry)
+
+    assert downloads == [record_id]
+    assert len(_videos(hass)) == 1
+    await _unload(hass, entry)
+
+
+async def test_an_older_detection_whose_frame_is_not_shown_still_gets_its_copy(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    built_clients: list[EufySecurity],
+    seed_warm_cache: Callable[..., None],
+    hass_storage: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A newer detection's frame is shown first; the older one's matched frame is
+    refused as older, and its own recording is still copied."""
+    frames = _count_frames(monkeypatch)
+    downloads = _count_downloads(monkeypatch)
+    now = datetime.now(UTC).replace(microsecond=0)
+    older = fake_station.add_detection_recording(
+        SYNTHETIC.camera_sn, now - timedelta(seconds=60), CLIP_SECONDS
+    )
+    newer = fake_station.add_detection_recording(
+        SYNTHETIC.camera_sn, now - timedelta(seconds=40), CLIP_SECONDS
+    )
+    entry = await _set_up(hass, seed_warm_cache, VIDEOS_ON, hass_storage)
+
+    entry.runtime_data.router.handle(_push(now - timedelta(seconds=40), session_id="newer"))
+    await _settled(hass, entry)
+    entry.runtime_data.router.handle(_push(now - timedelta(seconds=60), session_id="older"))
+    await _settled(hass, entry)
+
+    assert frames == [newer]
+    assert sorted(downloads) == sorted([newer, older])
+    assert _snapshots(entry).event_time_for(SYNTHETIC.camera_sn) == round(
+        (now - timedelta(seconds=40)).timestamp() * 1000
+    )
     await _unload(hass, entry)
