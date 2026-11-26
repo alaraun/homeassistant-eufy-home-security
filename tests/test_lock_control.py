@@ -42,6 +42,7 @@ from eufy_home_security.lock_commands.control import (
     LOCK_PUBLISH_TIMEOUT,
 )
 from eufy_home_security.mqtt.client import CONNECT_WAIT_SECONDS
+from eufy_home_security.station import lock_control as lock_control_module
 from eufy_home_security.testing import FakeCloud, FakeLock, FakeStation, camera_device
 from homeassistant.components.lock import DOMAIN as LOCK_DOMAIN
 from homeassistant.components.lock import LockState as HALockState
@@ -115,8 +116,9 @@ def fake_cloud(fake_station: FakeStation, fake_lock: FakeLock, member: dict[str,
 
 @pytest.fixture
 def short_lock_waits(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A half-second bound on each command; the integration gives it 75 s."""
-    monkeypatch.setattr(lock_module, "LOCK_COMMAND_TIMEOUT_SECONDS", 0.5)
+    """Half-second answer and state waits; the library waits 20 s and 30 s."""
+    monkeypatch.setattr(lock_control_module, "LOCK_ANSWER_TIMEOUT", 0.5)
+    monkeypatch.setattr(lock_control_module, "LOCK_CONFIRM_TIMEOUT", 0.5)
 
 
 def _seed(station: FakeStation, lock: FakeLock, raw: str) -> None:
@@ -579,7 +581,7 @@ async def test_an_account_refusal_names_the_station_and_the_lock(
 
 
 @pytest.mark.parametrize("service", ["lock", "unlock"])
-async def test_each_command_is_bounded_by_the_integrations_timeout(
+async def test_each_command_keeps_the_librarys_own_waits(
     hass: HomeAssistant,
     fake_station: FakeStation,
     fake_lock: FakeLock,
@@ -587,20 +589,59 @@ async def test_each_command_is_bounded_by_the_integrations_timeout(
     monkeypatch: pytest.MonkeyPatch,
     service: str,
 ) -> None:
-    """The library gets an explicit bound for the whole call, connect and send included."""
+    """No timeout is handed to the library: its answer and state waits stay the eufy app's
+    20 s and 30 s, so a lock that does not answer fails after the answer wait."""
     _seed(fake_station, fake_lock, LOCKED if service == "unlock" else UNLOCKED)
     entry = await set_up_warm(hass, seed_warm_cache)
-    bounds: list[float | None] = []
+    calls: list[dict[str, Any]] = []
 
-    async def records(device_sn: str, *, timeout: float | None = None) -> LockState:
+    async def records(device_sn: str, **kwargs: Any) -> LockState:
         del device_sn
-        bounds.append(timeout)
+        calls.append(kwargs)
         return LockState.LOCKED
 
     monkeypatch.setattr(entry.runtime_data.eufy, f"async_{service}", records)
     await _call(hass, service)
 
-    assert bounds == [LOCK_COMMAND_TIMEOUT_SECONDS]
+    assert calls == [{}]
+
+
+async def test_the_outer_bound_ends_a_stuck_command_as_a_timeout(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_lock: FakeLock,
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A call the library does not end (a connect that hangs) is ended by the integration's
+    bound: the timeout message, the last report shown again, the lock free for the next
+    command."""
+    _seed(fake_station, fake_lock, UNLOCKED)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    monkeypatch.setattr(lock_module, "LOCK_COMMAND_TIMEOUT_SECONDS", 0.2)
+    sent: list[str] = []
+    ended: list[str] = []
+
+    async def hangs(device_sn: str) -> LockState:
+        sent.append(device_sn)
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            ended.append(device_sn)
+            raise
+        return LockState.LOCKED
+
+    monkeypatch.setattr(entry.runtime_data.eufy, "async_lock", hangs)
+    for _ in range(2):
+        with pytest.raises(HomeAssistantError) as raised:
+            async with asyncio.timeout(5):
+                await _call(hass, "lock")
+        assert raised.value.translation_key == EXC_LOCK_TIMEOUT
+        assert not isinstance(raised.value, ServiceValidationError)
+        assert state_of(hass, _lock_id(hass)) == HALockState.UNLOCKED
+
+    assert sent == [LOCK_SN, LOCK_SN]
+    assert ended == [LOCK_SN, LOCK_SN]
 
 
 def test_the_command_bound_covers_the_librarys_waits_on_both_paths() -> None:

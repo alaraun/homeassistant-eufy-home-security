@@ -12,9 +12,11 @@ Lock and unlock go through the library (``EufySecurity.async_lock`` / ``async_un
 where its ``lock_control`` says the lock is writable; elsewhere they raise
 ``errors.lock_not_writable`` with the library's reason and send nothing. A command runs as
 a background task of the entry and the service call waits for it: it ends once the lock
-reports the asked state, or with the library's error, within
-``LOCK_COMMAND_TIMEOUT_SECONDS`` (75 s, the library's bound for the whole call, connect and
-send included), so an automation step waits up to that long. Meanwhile the lock shows
+reports the asked state, or with the library's error. The library keeps the eufy app's
+waits (20 s for the lock's answer, 30 s for its state), so a lock that does not answer
+fails after the answer wait; ``LOCK_COMMAND_TIMEOUT_SECONDS`` (75 s) bounds the whole call
+from outside, connect and send included, so an automation step waits up to 75 s and a call
+it ends reads as the lock's timeout. Meanwhile the lock shows
 locking or unlocking, and a second lock or unlock of the same lock is refused before
 anything is sent. A caller that stops waiting leaves the command running. The shown state
 is always the lock's own report, never the call's return. The entry's unload cancels a
@@ -30,9 +32,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, Protocol, override
+from typing import TYPE_CHECKING, Any, Final, override
 
 from homeassistant.components.lock import LockEntity
 from homeassistant.core import HomeAssistant, callback
@@ -75,20 +77,18 @@ _LOCK: Final = "lock"
 _UNLOCK: Final = "unlock"
 
 
-class _Send(Protocol):
-    """``EufySecurity.async_lock`` or ``async_unlock``."""
-
-    def __call__(
-        self, device_sn: str, *, timeout: float | None = None
-    ) -> Coroutine[Any, Any, LockState]: ...
+type _Send = Callable[[str], Coroutine[Any, Any, LockState]]
+# A command's end: the library's error, the outer bound's TimeoutError, or None once the
+# lock reported the asked state.
+type _Outcome = EufySecurityError | TimeoutError | None
 
 
 @dataclass(frozen=True, slots=True)
 class _Command:
-    """A lock or unlock of one lock: its task (the library's error as its result, None
-    once the lock reported the asked state) and its action."""
+    """A lock or unlock of one lock: its task (its ``_Outcome`` as the result) and its
+    action."""
 
-    task: asyncio.Task[EufySecurityError | None]
+    task: asyncio.Task[_Outcome]
     action: str
 
 
@@ -252,8 +252,11 @@ class EufyLock(EufyPushAvailability, EufyDeviceEntity, LockEntity):
         await asyncio.wait((task,))
         if task.cancelled():
             raise errors.lock_command_cancelled()
-        if (failure := task.result()) is not None:
+        failure = task.result()
+        if isinstance(failure, EufySecurityError):
             raise self._failed(failure) from failure
+        if failure is not None:
+            raise errors.lock_command_timed_out() from failure
 
     def _failed(self, err: EufySecurityError) -> HomeAssistantError:
         """The translated error for ``err``; a message naming the station names this lock
@@ -272,20 +275,31 @@ class EufyLock(EufyPushAvailability, EufyDeviceEntity, LockEntity):
             ),
         )
 
-    async def _async_run(self, send: _Send, action: str) -> EufySecurityError | None:
-        """Send the command and wait for the lock; the library's error is returned, so a
-        caller that stopped waiting leaves no unretrieved exception."""
+    async def _async_run(self, send: _Send, action: str) -> _Outcome:
+        """Send the command and wait for the lock, within ``LOCK_COMMAND_TIMEOUT_SECONDS``
+        on top of the library's own phase waits; the library's error, or the bound's
+        TimeoutError, is returned, so a caller that stopped waiting leaves no unretrieved
+        exception."""
         try:
-            await send(self._serial, timeout=LOCK_COMMAND_TIMEOUT_SECONDS)
+            async with asyncio.timeout(LOCK_COMMAND_TIMEOUT_SECONDS):
+                await send(self._serial)
         except EufySecurityError as err:
             _LOGGER.debug(
                 "%s: the %s command failed: %s", self.entity_id, action, type(err).__name__
             )
             return err
+        except TimeoutError as err:
+            _LOGGER.debug(
+                "%s: the %s command did not end within %.0f s",
+                self.entity_id,
+                action,
+                LOCK_COMMAND_TIMEOUT_SECONDS,
+            )
+            return err
         return None
 
     @callback
-    def _on_command_done(self, task: asyncio.Task[EufySecurityError | None]) -> None:
+    def _on_command_done(self, task: asyncio.Task[_Outcome]) -> None:
         """End the locking or unlocking shown while the command waited."""
         del task
         self.async_write_ha_state()

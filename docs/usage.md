@@ -101,11 +101,11 @@ reloads the integration.
   station or a push reports the lock again, also when that report repeats the earlier
   state: the newest report shows.
 - A command counts only once the lock reports the asked state: the call waits for that
-  report, up to 75 s in all (connecting and sending included; the eufy app waits 20 s for
-  the lock's answer and 30 s for its state, over the MQTT broker also up to 10 s to connect
-  and 15 s for the broker to take the command), and the lock shows **Locking** or
-  **Unlocking** meanwhile. An automation's lock or unlock step waits that long; a step
-  stopped meanwhile leaves the command running. A lock that refuses
+  report, up to 75 s in all (connecting and sending included), and the lock shows
+  **Locking** or **Unlocking** meanwhile. As in the eufy app, a lock that does not answer
+  fails after 20 s, and one that answers but does not report the asked state after another
+  30 s. An automation's lock or unlock step waits up to 75 s; a step stopped meanwhile
+  leaves the command running. A lock that refuses
   the command, reports a jammed bolt or reports nothing in time ends the call with an
   error, and the lock shows the state it last reported again. The shown state is always
   the lock's own report.

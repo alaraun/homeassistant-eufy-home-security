@@ -605,6 +605,12 @@ def lock_command_waiting() -> ServiceValidationError:
     )
 
 
+def lock_command_timed_out() -> HomeAssistantError:
+    """A lock command the integration's bound ended before the library did: the same
+    message as the library's own timeout."""
+    return HomeAssistantError(translation_domain=DOMAIN, translation_key=EXC_LOCK_TIMEOUT)
+
+
 def lock_command_cancelled() -> HomeAssistantError:
     """A lock command the entry's unload ended before the lock reported."""
     return HomeAssistantError(translation_domain=DOMAIN, translation_key=EXC_LOCK_COMMAND_CANCELLED)
