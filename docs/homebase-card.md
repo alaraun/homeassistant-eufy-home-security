@@ -89,8 +89,8 @@ name: House                                  # optional: the header name (defaul
     left the eligible list) keeps Set off, with the reason on that line and in Set's label.
   - **Status:** disk and internal storage use, model and firmware (and `Update x.y` when an update is offered; it
     opens the update entity), the last alarm (`Last alarm 12.10 21:05`: the alarm's own time, else when the
-    integration saw it; in the HA profile's time format), every paired device with its model and battery or
-    `Offline`.
+    integration saw it; in the HA profile's time format), every paired device with its model and battery (where
+    the model has a battery level) or `Offline`.
 - **Support per model:** the integration grades each part per HomeBase model. A part graded unknown is left out
   (its section, toggle or menu items); a declared part shows `Not tested on this model` in its section; a verified
   one shows plainly. A part the integration cannot write is shown read only.
