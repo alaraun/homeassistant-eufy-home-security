@@ -86,8 +86,28 @@ reloads the integration.
 ## Locks
 
 - **Lock** of a smart lock, a video smart lock included, where the library reads the
-  lock's state. It shows that state only: lock and unlock raise "Locking and unlocking
-  from Home Assistant is not supported yet. Use the eufy app." and send nothing.
+  lock's state.
+- Lock and unlock where the library sends the lock's command over the route the eufy app
+  uses for it, through the lock's HomeBase or its own station session: T8501, T8502,
+  T8503, T8506, T8520, T8530, and T8531, T8532, T85M0, T85M1, T85V0 behind a HomeBase.
+  Declared from the eufy app, not tested on hardware.
+- A command counts only once the lock reports the asked state: the call waits for that
+  report, up to about 50 s (the eufy app's 20 s for the lock's answer and 30 s for its
+  state), and the lock shows **Locking** or **Unlocking** meanwhile. A lock that refuses
+  the command, reports a jammed bolt or reports nothing in time ends the call with an
+  error, and the lock shows the state it last reported again. The shown state is always
+  the lock's own report.
+- Refused before anything is sent, with a message that says why:
+  - a lock whose command the library does not send (T8500, T8510: Bluetooth frames
+    through the station; T8504: no command route), with the library's reason;
+  - an account that is a guest of the lock (the eufy app gives guests no lock control),
+    or whose device list names no member record for the lock;
+  - a lock the eufy app reaches over eufy's MQTT connection (a T8531, T8532, T85M0,
+    T85M1 or T85V0 on its own, some T8506 and the Wi-Fi locks): the integration does not
+    run that connection;
+  - a second lock or unlock while a command of the same lock still waits.
+- Unloading or reloading the account entry stops a waiting command; the call then ends
+  with an error, and whether the lock moved shows with its next report.
 - Locked, unlocked, locking, unlocking and jammed as the lock reports them; passage mode
   shows unlocked, privacy mode locked, a bolt stopped between its positions jammed.
   Uncalibrated, calibrating and nothing reported yet show unknown. The attributes
