@@ -358,6 +358,10 @@ EXC_SIREN_ACCOUNT_REJECTED: Final = "siren_account_rejected"
 EXC_SIREN_UNSUPPORTED: Final = "siren_unsupported"
 # A HomeBase siren duration above the longest the library sends; nothing was sent.
 EXC_SIREN_DURATION_INVALID: Final = "siren_duration_invalid"
+# Seconds an unload waits for the locks' MQTT account to stop before the client closes; the
+# library finishes a stop given up on in the background. Inside Home Assistant's 10 s wait
+# for an entry's unload tasks, with the client's close after it.
+LOCK_MQTT_STOP_TIMEOUT_SECONDS: Final = 5.0
 # Lock and unlock refused before anything is sent: the library cannot send to this lock
 # (with the library's reason), or a command of the lock still waits.
 EXC_LOCK_NOT_WRITABLE: Final = "lock_not_writable"

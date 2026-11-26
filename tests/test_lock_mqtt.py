@@ -9,6 +9,7 @@ the library's own client needs ``aiomqtt``, which the test environment does not 
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import logging
 from collections.abc import AsyncIterator, Callable, Iterable
@@ -40,6 +41,7 @@ from custom_components.eufy_home_security import runtime
 from custom_components.eufy_home_security.const import (
     EXC_LOCK_MQTT_REQUIRED,
     LOCK_KEY,
+    LOCK_MQTT_STOP_TIMEOUT_SECONDS,
     REFRESH_DEVICE_LIST_KEY,
 )
 
@@ -369,3 +371,53 @@ async def test_a_push_the_station_drops_keeps_the_newer_mqtt_report(
     await hass.async_block_till_done()
 
     assert state_of(hass, _lock_id(hass)) == HALockState.LOCKED
+
+
+async def test_a_stuck_mqtt_stop_does_not_hold_the_clients_close_on_reload(
+    hass: HomeAssistant,
+    seed_warm_cache: Callable[..., None],
+    accounts: list[FakeMqttAccount],
+    built_clients: list[EufySecurity],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An MQTT stop that does not end (a connect step the library still settles) is given
+    up after its bound: the old client closes, and saves the account store, before the
+    reload builds the new one, so two live clients never share the store."""
+    release = asyncio.Event()
+
+    async def stuck_stop(self: FakeMqttAccount) -> None:
+        self.calls.append(("stop", ()))
+        await release.wait()
+
+    monkeypatch.setattr(FakeMqttAccount, "async_stop", stuck_stop)
+    monkeypatch.setattr(runtime, "LOCK_MQTT_STOP_TIMEOUT_SECONDS", 0.2)
+    closed_with: list[tuple[EufySecurity, int]] = []
+    original_close = EufySecurity.async_close
+
+    async def close(self: EufySecurity) -> None:
+        closed_with.append((self, len(built_clients)))
+        await original_close(self)
+
+    monkeypatch.setattr(EufySecurity, "async_close", close)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    old = entry.runtime_data.eufy
+
+    try:
+        async with asyncio.timeout(5):
+            assert await hass.config_entries.async_reload(entry.entry_id)
+    finally:
+        release.set()
+
+    assert accounts[0].calls[-1] == ("stop", ())
+    assert closed_with[0] == (old, 1)
+    assert entry.runtime_data.eufy is not old
+
+
+# Home Assistant waits this long for an entry's unload tasks (config_entries).
+HA_UNLOAD_TASK_WAIT_SECONDS: Final = 10
+
+
+def test_the_mqtt_stop_bound_leaves_the_clients_close_room_in_the_unload_wait() -> None:
+    """The stop's bound plus a few seconds for the client's close fit Home Assistant's
+    unload wait."""
+    assert 0 < LOCK_MQTT_STOP_TIMEOUT_SECONDS <= HA_UNLOAD_TASK_WAIT_SECONDS / 2

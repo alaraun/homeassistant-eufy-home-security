@@ -51,6 +51,7 @@ from .const import (
     CONF_EXTRA_COUNTRIES,
     CONF_STATION_SESSIONS,
     DOMAIN,
+    LOCK_MQTT_STOP_TIMEOUT_SECONDS,
     PUSH_START_RETRY_MAX_SECONDS,
     PUSH_START_RETRY_MIN_SECONDS,
 )
@@ -477,10 +478,18 @@ async def async_update_lock_mqtt(eufy: EufySecurity, account: EufyMqttAccount | 
 
 
 async def async_stop_lock_mqtt(account: EufyMqttAccount) -> None:
-    """Stop the account's connections; the client's close takes it back
-    (``use_mqtt(None)``)."""
+    """Stop the account's connections, waiting at most ``LOCK_MQTT_STOP_TIMEOUT_SECONDS``:
+    a stop given up on goes on in the library's background, so the client's close (which
+    takes the account back with ``use_mqtt(None)`` and saves the account store) still ends
+    inside Home Assistant's unload wait, before a reload builds the next client."""
     try:
-        await account.async_stop()
+        async with asyncio.timeout(LOCK_MQTT_STOP_TIMEOUT_SECONDS):
+            await account.async_stop()
+    except TimeoutError:
+        _LOGGER.debug(
+            "The MQTT connection for locks still stops after %.0f s; it ends in the background",
+            LOCK_MQTT_STOP_TIMEOUT_SECONDS,
+        )
     except EufySecurityError as err:
         _LOGGER.debug("The MQTT connection for locks stopped with %s", type(err).__name__)
 
