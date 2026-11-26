@@ -418,6 +418,9 @@ ISSUE_VARIANT_RESET: Final = "variant_reset"
 # A station on Home Assistant's own network connects only through eufy's servers: its
 # replies to the LAN search do not arrive (a firewall drops them).
 ISSUE_LAN_REPLY_BLOCKED: Final = "lan_reply_blocked"
+# A camera's recordings are end-to-end encrypted with the eufy app's Local Advanced
+# Encryption (the user's PIN-protected key): the event-videos sync gives them up.
+ISSUE_RECORDINGS_PIN_PROTECTED: Final = "recordings_pin_protected"
 
 # Camera snapshots. The camera entity's unique-id key; it has no name of its
 # own, the camera is its device.

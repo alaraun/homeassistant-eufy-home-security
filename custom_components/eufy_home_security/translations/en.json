@@ -260,6 +260,10 @@
       "title": "eufy stations on this network connect through eufy's servers for {account}",
       "description": "Home Assistant's local search gets no reply from these stations on its own network, so each connection is set up through eufy's servers (video stays local) and a reconnect needs the internet and eufy's servers:\n\n{stations}\n\nIf the Home Assistant host has a firewall, allow all UDP from these addresses, then reload the integration. This clears at the next connection over the local network; ignore it to keep connecting through eufy's servers."
     },
+    "recordings_pin_protected": {
+      "title": "Some recordings of {camera} cannot be saved",
+      "description": "Some recordings of {camera} are protected by the eufy app's Local Advanced Encryption, so Home Assistant cannot save or play them. They stay on the HomeBase and play in the eufy app. To have new recordings saved here, turn off Local Advanced Encryption in the eufy app under Settings > Security > Media Content Encryption. Recordings made while it was on stay encrypted."
+    },
     "mode_holds_detections": {
       "title": "{station}: no detections from some cameras in {mode} mode",
       "description": "In {mode} mode the station sends no detections for {devices}: their Notification action is off in this mode, so Home Assistant gets no motion or person events from them until a mode that sends them is in force ({sending_modes}). To receive them in {mode}, open the eufy app → Security mode → {mode} → each camera, and turn on Notification (this also notifies your phone). Ignore this if you keep {mode} silent on purpose. To stop these repairs for every mode, switch off the option Repair when a security mode holds detections back (the integration → Configure)."
