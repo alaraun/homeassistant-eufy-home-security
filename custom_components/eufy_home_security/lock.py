@@ -1,27 +1,24 @@
 """Smart locks: one lock entity per device the library grades ``Capability.LOCK``.
 
-The state is the library's lock reading (``Station.lock_state``), followed on the lock's
-``LockStateChanged``; nothing is polled for it. A lock the library commands over eufy's
-MQTT broker reports its state there after a command, as a ``LockStateChanged`` naming no
-station: that state shows until the station takes a newer report of the lock. A push or
-a lock report the station takes counts even when it repeats the station's earlier state:
-the library hands a new reading object for each report it takes, and a push about the
-lock is checked once the station has had it. A station dump or parameter report that
-repeats its last raw value is not taken by the library, so it leaves the MQTT state shown.
+The state is the library's one merged reading of the lock (``EufySecurity.lock_state``:
+its station's reports, the device list's copy, pushes and the lock's own reports over its
+station or eufy's MQTT broker, the newest winning), written on each ``LockStateChanged``,
+a report that repeats the state included; nothing is polled for it. Once the lock took a
+command of this client the reading is locking or unlocking until the lock's next report;
+when the call fails or is cancelled after that, the library keeps it so for at most its
+30 s state wait after the take.
 
 Lock and unlock go through the library (``EufySecurity.async_lock`` / ``async_unlock``)
 where its ``lock_control`` says the lock is writable; elsewhere they raise
 ``errors.lock_not_writable`` with the library's reason and send nothing. A command runs as
 a background task of the entry and the service call waits for it: it ends once the lock
-reports the asked state, or with the library's error. The library keeps the eufy app's
-waits (20 s for the lock's answer, 30 s for its state), so a lock that does not answer
-fails after the answer wait; ``LOCK_COMMAND_TIMEOUT_SECONDS`` (75 s) bounds the whole call
-from outside, connect and send included, so an automation step waits up to 75 s and a call
-it ends reads as the lock's timeout. Meanwhile the lock shows
-locking or unlocking, and a second lock or unlock of the same lock is refused before
-anything is sent. A caller that stops waiting leaves the command running. The shown state
-is always the lock's own report, never the call's return. The entry's unload cancels a
-waiting command, as it does every background task of the entry.
+reports the asked state, or with the library's error. The library caps the whole call,
+connect and send included, at ``LOCK_COMMAND_TIMEOUT_SECONDS`` (75 s) and keeps the eufy
+app's waits within it (20 s for the lock's answer, 30 s for its state), so an automation
+step waits up to 75 s. A second lock or unlock of the same lock while a command runs is
+refused before anything is sent. A caller that stops waiting leaves the command running.
+The shown state is always the lock's reading, never the call's return. The entry's unload
+cancels a waiting command, as it does every background task of the entry.
 
 States map as the library's guide suggests: passage mode shows unlocked, privacy mode
 locked, a bolt stopped between its positions or a reported fault jammed; initial,
@@ -34,7 +31,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, override
 
 from homeassistant.components.lock import LockEntity
@@ -78,19 +74,9 @@ _LOCK: Final = "lock"
 _UNLOCK: Final = "unlock"
 
 
-type _Send = Callable[[str], Coroutine[Any, Any, LockState]]
-# A command's end: the library's error, the outer bound's TimeoutError, or None once the
-# lock reported the asked state.
-type _Outcome = EufySecurityError | TimeoutError | None
-
-
-@dataclass(frozen=True, slots=True)
-class _Command:
-    """A lock or unlock of one lock: its task (its ``_Outcome`` as the result) and its
-    action."""
-
-    task: asyncio.Task[_Outcome]
-    action: str
+type _Send = Callable[..., Coroutine[Any, Any, LockState]]
+# A command's end: the library's error, or None once the lock reported the asked state.
+type _Outcome = EufySecurityError | None
 
 
 async def async_setup_entry(
@@ -117,36 +103,22 @@ class EufyLock(EufyPushAvailability, EufyDeviceEntity, LockEntity):
         station = coordinator.station
         super().__init__(coordinator, None if serial == station.serial else serial, LOCK_KEY)
         self._serial = serial
-        self._command: _Command | None = None
-        # The lock's last report over MQTT, and the station's reading it is newer than.
-        self._broker_reading: LockReading | None = None
-        self._station_at_broker: LockReading | None = None
-
-    def _station_reading(self) -> LockReading | None:
-        """The station's last lock reading; None before one, or for a device the latest
-        device list no longer pairs here (the reload follows)."""
-        try:
-            return self.coordinator.station.lock_state(self._serial)
-        except UnsupportedError:
-            return None
+        # The running lock or unlock of this lock: one at a time.
+        self._command: asyncio.Task[_Outcome] | None = None
 
     @property
     def _reading(self) -> LockReading | None:
-        """The newest report: the MQTT one while the station has taken nothing since."""
-        station = self._station_reading()
-        if self._broker_reading is not None and station is self._station_at_broker:
-            return self._broker_reading
-        return station
+        """The library's merged reading of the lock; None before a report, or for a device
+        the latest device list no longer names (the reload follows)."""
+        try:
+            return self.coordinator.config_entry.runtime_data.eufy.lock_state(self._serial)
+        except UnsupportedError:
+            return None
 
     @property
     def _state(self) -> LockState | None:
         reading = self._reading
         return None if reading is None else reading.state
-
-    def _waiting(self, action: str) -> bool:
-        """Whether a command ``action`` of this lock still waits for the lock's report."""
-        command = self._command
-        return command is not None and not command.task.done() and command.action == action
 
     @property
     @override
@@ -164,14 +136,14 @@ class EufyLock(EufyPushAvailability, EufyDeviceEntity, LockEntity):
     @property
     @override
     def is_locking(self) -> bool:
-        """The lock reports locking, or a lock command waits for its report."""
-        return self._state is LockState.LOCKING or self._waiting(_LOCK)
+        """The lock reports locking, or the library reads it so after a lock it took."""
+        return self._state is LockState.LOCKING
 
     @property
     @override
     def is_unlocking(self) -> bool:
-        """The lock reports unlocking, or an unlock command waits for its report."""
-        return self._state is LockState.UNLOCKING or self._waiting(_UNLOCK)
+        """The lock reports unlocking, or the library reads it so after an unlock it took."""
+        return self._state is LockState.UNLOCKING
 
     @property
     @override
@@ -196,23 +168,12 @@ class EufyLock(EufyPushAvailability, EufyDeviceEntity, LockEntity):
                 self._async_on_lock_state,
             )
         )
-        self.async_on_remove(
-            async_dispatcher_connect(
-                self.hass,
-                detections.lock_push_signal(self.coordinator.config_entry.entry_id, self._serial),
-                self.async_write_ha_state,
-            )
-        )
 
     @callback
     def _async_on_lock_state(self, event: LockStateChanged) -> None:
-        """Show the change: a lock's own report naming no station (over MQTT) as the
-        event says it, any other from ``Station.lock_state``, which already holds it."""
-        if event.station_sn is None:
-            self._broker_reading = LockReading(
-                state=event.state, source=event.source, raw=event.raw
-            )
-            self._station_at_broker = self._station_reading()
+        """Show the reading the library took, also one repeating the state (another source
+        or raw value); ``EufySecurity.lock_state`` already holds it."""
+        del event
         self.async_write_ha_state()
 
     @override
@@ -235,7 +196,7 @@ class EufyLock(EufyPushAvailability, EufyDeviceEntity, LockEntity):
         awaits between the checks and the start, so two calls at once cannot both start.
         """
         command = self._command
-        if command is not None and not command.task.done():
+        if command is not None and not command.done():
             raise errors.lock_command_waiting()
         entry = self.coordinator.config_entry
         try:
@@ -247,17 +208,13 @@ class EufyLock(EufyPushAvailability, EufyDeviceEntity, LockEntity):
         task = entry.async_create_background_task(
             self.hass, self._async_run(send, action), f"{LOCK_KEY} {action}"
         )
-        self._command = _Command(task, action)
-        task.add_done_callback(self._on_command_done)
-        self.async_write_ha_state()
+        self._command = task
         await asyncio.wait((task,))
         if task.cancelled():
             raise errors.lock_command_cancelled()
         failure = task.result()
-        if isinstance(failure, EufySecurityError):
-            raise self._failed(failure) from failure
         if failure is not None:
-            raise errors.lock_command_timed_out() from failure
+            raise self._failed(failure) from failure
 
     def _failed(self, err: EufySecurityError) -> HomeAssistantError:
         """The translated error for ``err``; a message naming the station names this lock
@@ -277,30 +234,14 @@ class EufyLock(EufyPushAvailability, EufyDeviceEntity, LockEntity):
         )
 
     async def _async_run(self, send: _Send, action: str) -> _Outcome:
-        """Send the command and wait for the lock, within ``LOCK_COMMAND_TIMEOUT_SECONDS``
-        on top of the library's own phase waits; the library's error, or the bound's
-        TimeoutError, is returned, so a caller that stopped waiting leaves no unretrieved
-        exception."""
+        """Send the command and wait for the lock, the whole call capped by the library at
+        ``LOCK_COMMAND_TIMEOUT_SECONDS`` (``DeviceTimeoutError``); the library's error is
+        returned, so a caller that stopped waiting leaves no unretrieved exception."""
         try:
-            async with asyncio.timeout(LOCK_COMMAND_TIMEOUT_SECONDS):
-                await send(self._serial)
+            await send(self._serial, timeout=LOCK_COMMAND_TIMEOUT_SECONDS)
         except EufySecurityError as err:
             _LOGGER.debug(
                 "%s: the %s command failed: %s", self.entity_id, action, type(err).__name__
             )
             return err
-        except TimeoutError as err:
-            _LOGGER.debug(
-                "%s: the %s command did not end within %.0f s",
-                self.entity_id,
-                action,
-                LOCK_COMMAND_TIMEOUT_SECONDS,
-            )
-            return err
         return None
-
-    @callback
-    def _on_command_done(self, task: asyncio.Task[_Outcome]) -> None:
-        """End the locking or unlocking shown while the command waited."""
-        del task
-        self.async_write_ha_state()

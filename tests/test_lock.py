@@ -39,6 +39,8 @@ LOCK_CHANNEL: Final = 1
 LOCK_STATE_PARAM: Final = 1912
 # A lock push reporting a mechanical fault.
 JAMMED_PUSH: Final = 517
+# A lock push reporting the lock locked (by hand).
+LOCK_PUSH: Final = 262
 
 pytestmark = pytest.mark.usefixtures("built_clients")
 
@@ -164,6 +166,36 @@ async def test_a_jammed_push_shows_jammed(
     assert state is not None
     assert state.state == HALockState.JAMMED
     assert state.attributes[ATTR_LOCK_STATE] == "jammed"
+    assert ATTR_RAW_VALUE not in state.attributes
+
+
+async def test_a_report_repeating_the_state_shows_its_own_source(
+    hass: HomeAssistant, fake_station: FakeStation, seed_warm_cache: Callable[..., None]
+) -> None:
+    """A push repeating the locked state (``LockStateChanged.changed`` False) is the lock's
+    reading now: the state stays and the reported raw value goes with the earlier report."""
+    _seed_lock(fake_station, "4")
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = _lock_id(hass)
+    before = hass.states.get(entity_id)
+    assert before is not None
+    assert before.attributes[ATTR_RAW_VALUE] == "4"
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+
+    assert station.note_lock_push(
+        SecurityEvent(
+            source=EventSource.CLOUD,
+            station_sn=SYNTHETIC.station_sn,
+            device_sn=LOCK_SN,
+            event_type=LOCK_PUSH,
+            frame_cipher=None,
+        )
+    )
+    await hass.async_block_till_done()
+
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.state == HALockState.LOCKED
     assert ATTR_RAW_VALUE not in state.attributes
 
 

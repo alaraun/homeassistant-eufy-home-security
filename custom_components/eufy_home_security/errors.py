@@ -65,11 +65,14 @@ from eufy_home_security import (
     DeviceTimeoutError,
     EufySecurityError,
     GuardMode,
+    GuestAccessError,
     HandshakeError,
     KeyRejectedError,
     LiveStreamLimitError,
+    LockNotMovedError,
     LoginChallengeError,
     LoginVerificationError,
+    MqttAccountRequiredError,
     PathWarning,
     PtzAction,
     PtzActionUnsupportedError,
@@ -87,11 +90,6 @@ from eufy_home_security import (
 )
 from eufy_home_security.cloud.const import LOGIN_BUDGET, LOGIN_BUDGET_WINDOW_SECONDS, scope_country
 from eufy_home_security.devices import Support, product_name
-from eufy_home_security.exceptions import (
-    GuestAccessError,
-    LockNotMovedError,
-    MqttAccountRequiredError,
-)
 
 from . import detections
 from .const import (
@@ -605,12 +603,6 @@ def lock_command_waiting() -> ServiceValidationError:
     )
 
 
-def lock_command_timed_out() -> HomeAssistantError:
-    """A lock command the integration's bound ended before the library did: the same
-    message as the library's own timeout."""
-    return HomeAssistantError(translation_domain=DOMAIN, translation_key=EXC_LOCK_TIMEOUT)
-
-
 def lock_command_cancelled() -> HomeAssistantError:
     """A lock command the entry's unload ended before the lock reported."""
     return HomeAssistantError(translation_domain=DOMAIN, translation_key=EXC_LOCK_COMMAND_CANCELLED)
@@ -641,8 +633,10 @@ def lock_failed(
     - ``KeyRejectedError`` and ``CipherUnusableError``: the station's key repairs.
     - ``CloudError`` (the lock's public key, the MQTT certificate, a sign-in): routed
       through :func:`route_cloud_error` (reauth, or the account's repair issue).
-    - ``DeviceTimeoutError``; any other ``CommunicationError`` or ``HandshakeError``: the
-      lock or its station was not reached. Anything else: a generic failure.
+    - ``DeviceTimeoutError`` (a wait, or the cap on the whole call); any other
+      ``CommunicationError`` (also an MQTT lock while its connection is not up, nothing
+      sent) or ``HandshakeError``: the lock or the way to it was not reached. Anything
+      else: a generic failure.
 
     A cloud error is routed for a session replaced too. Never the library's message text,
     never a serial.

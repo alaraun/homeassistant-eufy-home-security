@@ -358,14 +358,15 @@ EXC_SIREN_ACCOUNT_REJECTED: Final = "siren_account_rejected"
 EXC_SIREN_UNSUPPORTED: Final = "siren_unsupported"
 # A HomeBase siren duration above the longest the library sends; nothing was sent.
 EXC_SIREN_DURATION_INVALID: Final = "siren_duration_invalid"
-# Seconds a lock or unlock may take in all, connect and send included, bounded from outside
-# the library so its own phase waits stay the eufy app's: over MQTT those add up to 75 s
-# (10 s connect, 15 s for the broker to take the command, 20 s for the lock's answer, 30 s
-# for its state); over a station 50 s after the send.
+# Seconds a lock or unlock may take in all, connect and send included: the library's cap on
+# the whole call (``timeout=``), within which its own waits keep the eufy app's values (over
+# MQTT 15 s for the broker to take the command, 20 s for the lock's answer, 30 s for its
+# state; over a station 50 s after the send).
 LOCK_COMMAND_TIMEOUT_SECONDS: Final = 75.0
-# Seconds an unload waits for the locks' MQTT account to stop before the client closes; the
-# library finishes a stop given up on in the background. Inside Home Assistant's 10 s wait
-# for an entry's unload tasks, with the client's close after it.
+# Seconds an unload waits for the locks' MQTT account to stop before the client closes; a
+# stop given up on still stops every client (the library tells each to stop before it
+# waits). Inside Home Assistant's 10 s wait for an entry's unload tasks, with the client's
+# close after it.
 LOCK_MQTT_STOP_TIMEOUT_SECONDS: Final = 5.0
 # Lock and unlock refused before anything is sent: the library cannot send to this lock
 # (with the library's reason), or a command of the lock still waits.

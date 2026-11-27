@@ -430,8 +430,9 @@ def start_lock_mqtt(
     to the client (``use_mqtt``) and started with the device list in the background (a
     connect can take the library's whole wait). None, and nothing built, when no lock of
     ``locks`` takes its commands over MQTT, or without the library's ``mqtt`` extra (one
-    warning; those locks then refuse lock and unlock). Stop it with
-    :func:`async_stop_lock_mqtt`.
+    warning; those locks then refuse lock and unlock). Its certificate fetch never signs
+    in: a cloud error there reaches the entry's router as the client's ``CloudProblem``
+    (reauth or the account's repair). Stop it with :func:`async_stop_lock_mqtt`.
     """
     served = mqtt_lock_serials(eufy, locks)
     if not served:
@@ -479,9 +480,9 @@ async def async_update_lock_mqtt(eufy: EufySecurity, account: EufyMqttAccount | 
 
 async def async_stop_lock_mqtt(account: EufyMqttAccount) -> None:
     """Stop the account's connections, waiting at most ``LOCK_MQTT_STOP_TIMEOUT_SECONDS``:
-    a stop given up on goes on in the library's background, so the client's close (which
-    takes the account back with ``use_mqtt(None)`` and saves the account store) still ends
-    inside Home Assistant's unload wait, before a reload builds the next client."""
+    a stop given up on still stops every client, so the client's close (which takes the
+    account back with ``use_mqtt(None)`` and saves the account store) ends inside Home
+    Assistant's unload wait, before a reload builds the next client."""
     try:
         async with asyncio.timeout(LOCK_MQTT_STOP_TIMEOUT_SECONDS):
             await account.async_stop()

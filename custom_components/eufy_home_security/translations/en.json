@@ -548,13 +548,13 @@
       "message": "The lock took the command but then reported {state}: the bolt may be stuck. Check the lock."
     },
     "lock_timeout": {
-      "message": "The lock did not report the asked state in time. It shows the state it last reported; check the lock."
+      "message": "The lock did not report the asked state in time; check the lock. Its next report shows whether it moved."
     },
     "lock_unreachable": {
-      "message": "The lock or its station could not be reached, so the command was not confirmed. The lock shows the state it last reported."
+      "message": "The lock, its station or eufy's broker could not be reached, so the command was not confirmed; try again in a moment. The lock's next report shows whether it moved."
     },
     "lock_command_failed": {
-      "message": "The lock command failed and was not confirmed. The lock shows the state it last reported."
+      "message": "The lock command failed and was not confirmed. The lock's next report shows whether it moved."
     },
     "lock_session_replaced": {
       "message": "Another app or device signed in with the eufy account and ended Home Assistant's session, so the lock command was not sent. Open the account's repair under Settings > System > Repairs to sign in again, or use Reconfigure on the account entry; Home Assistant does not sign in again by itself."

@@ -80,9 +80,7 @@ shows or what the user must be told:
   device.
 - ``DeviceAlarmChanged`` goes to that device's siren on its device alarm signal, inside
   the consuming window, as ``AlarmChanged``.
-- ``LockStateChanged`` goes to that lock's entity on its lock signal; a push about a
-  lock also reaches it on its lock push signal, on the next loop turn (the station takes
-  the push after the client emitted it, without an event when the state repeats); and
+- ``LockStateChanged`` goes to that lock's entity on its lock signal, and
   ``GarageDoorChanged`` to that door's cover on its garage door signal, inside the
   consuming window. Outside it they are dropped: setup reads each state afresh.
 - ``PresetsChanged`` goes to the preset manager (``PresetManager.async_apply_presets``),
@@ -386,14 +384,6 @@ class EventRouter:
             errors.raise_credentials_refreshed_notice(self._hass, self._entry, event)
         elif isinstance(event, SecurityEvent):
             self._handle_security_event(event)
-            if self._consuming and event.device_sn and detections.has_lock(event.device_sn):
-                # The client emits a push before its station takes it as the lock's state:
-                # the lock reads it on the next loop turn.
-                self._hass.loop.call_soon(
-                    async_dispatcher_send,
-                    self._hass,
-                    detections.lock_push_signal(self._entry.entry_id, event.device_sn),
-                )
         elif isinstance(event, AlarmChanged):
             if self._consuming and event.station_sn in self._coordinators:
                 async_dispatcher_send(

@@ -637,15 +637,6 @@ def lock_signal(entry_id: str, device_sn: str) -> SignalType[LockStateChanged]:
     return SignalType(f"{DOMAIN}_lock_state_changed_{entry_id}_{device_sn}")
 
 
-def lock_push_signal(entry_id: str, device_sn: str) -> SignalType[()]:
-    """The dispatcher signal of a cloud push about one lock in one entry, sent once the
-    station has had the push (it may take it without a state change).
-
-    The name is never logged or stored.
-    """
-    return SignalType(f"{DOMAIN}_lock_push_{entry_id}_{device_sn}")
-
-
 def garage_door_signal(entry_id: str, device_sn: str, door: int) -> SignalType[GarageDoorChanged]:
     """The dispatcher signal of one garage door's state changes in one entry.
 

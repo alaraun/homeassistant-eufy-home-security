@@ -3,14 +3,14 @@
 The entry starts the library's ``EufyMqttAccount`` and hands it to the client
 (``use_mqtt``) only when one of its locks takes its commands over MQTT, follows each
 device-list refresh with it and stops it at unload. Without the library's ``mqtt``
-extra such a lock refuses lock and unlock. The account is a recording stand-in here:
-the library's own client needs ``aiomqtt``, which the test environment does not hold.
+extra such a lock refuses lock and unlock. The account's cloud errors reach the entry's
+reauth or repair. The account is a recording stand-in here: the library's own client
+needs ``aiomqtt``, which the test environment does not hold.
 """
 
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import logging
 from collections.abc import AsyncIterator, Callable, Iterable
 from typing import Any, Final
@@ -18,6 +18,8 @@ from typing import Any, Final
 import pytest
 from conftest import entity_id_for, set_up_warm, state_of
 from eufy_home_security import (
+    AuthenticationError,
+    CloudError,
     CommunicationError,
     EufySecurity,
     EventSource,
@@ -26,6 +28,7 @@ from eufy_home_security import (
     LockStateSource,
     MissingDependencyError,
     SecurityEvent,
+    SessionReplacedError,
 )
 from eufy_home_security.cloud.models import CloudDevice
 from eufy_home_security.p2p.messages import STANDALONE_RECEIPT_LEN
@@ -35,11 +38,14 @@ from homeassistant.components.lock import DOMAIN as LOCK_DOMAIN
 from homeassistant.components.lock import LockState as HALockState
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import issue_registry as ir
 
 from custom_components.eufy_home_security import runtime
 from custom_components.eufy_home_security.const import (
+    DOMAIN,
     EXC_LOCK_MQTT_REQUIRED,
+    EXC_LOCK_UNREACHABLE,
     LOCK_KEY,
     LOCK_MQTT_STOP_TIMEOUT_SECONDS,
     REFRESH_DEVICE_LIST_KEY,
@@ -59,8 +65,10 @@ pytestmark = pytest.mark.usefixtures("built_clients")
 
 
 class FakeMqttAccount:
-    """Records what the integration asks of the library's ``EufyMqttAccount``; each call
-    named in ``failing`` raises the library's communication error."""
+    """Records what the integration and the client ask of the library's
+    ``EufyMqttAccount``; each call named in ``failing`` raises the library's communication
+    error. It serves no lock (``serves``), as while the account starts, and records every
+    request it is asked to send."""
 
     built: list[FakeMqttAccount]
     failing: frozenset[str] = frozenset()
@@ -69,12 +77,29 @@ class FakeMqttAccount:
         self.cloud = cloud
         self.calls: list[tuple[str, tuple[str, ...]]] = []
         self.listeners: list[Callable[[Any], None]] = []
+        self.cloud_listeners: list[Callable[[CloudError], None]] = []
+        self.requests: list[str] = []
         self.updated_with: list[list[CloudDevice]] = []
         self.built.append(self)
 
     def add_listener(self, listener: Callable[[Any], None]) -> Callable[[], None]:
         self.listeners.append(listener)
         return lambda: self.listeners.remove(listener)
+
+    def add_cloud_error_listener(
+        self, listener: Callable[[CloudError], None]
+    ) -> Callable[[], None]:
+        self.cloud_listeners.append(listener)
+        return lambda: self.cloud_listeners.remove(listener)
+
+    def serves(self, device_sn: str) -> bool:
+        del device_sn
+        return False
+
+    async def async_request(self, device_sn: str, *args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        self.requests.append(device_sn)
+        raise CommunicationError("not connected")
 
     async def async_start(self, devices: Iterable[CloudDevice], **_: Any) -> None:
         self.calls.append(("start", tuple(sorted(d.device_sn for d in devices))))
@@ -243,15 +268,16 @@ async def test_without_the_mqtt_extra_the_lock_refuses_and_setup_goes_on(
     assert raised.value.translation_key == EXC_LOCK_MQTT_REQUIRED
 
 
-async def test_a_lock_report_over_mqtt_shows_until_the_station_reports_again(
+async def test_the_lock_shows_the_librarys_reading_not_the_events_state(
     hass: HomeAssistant,
-    fake_station: FakeStation,
     seed_warm_cache: Callable[..., None],
     accounts: list[FakeMqttAccount],
 ) -> None:
-    """The lock's own report over MQTT (no station) sets the shown state; the next change
-    the station path reports (here a cloud push naming the station) replaces it."""
+    """The entity shows ``EufySecurity.lock_state``, the library's one merged reading of
+    every source: an event's own state is not kept beside it (here one naming no station
+    while the library still reads locked), and a push the library takes shows."""
     entry = await set_up_warm(hass, seed_warm_cache)
+    eufy = entry.runtime_data.eufy
     assert state_of(hass, _lock_id(hass)) == HALockState.LOCKED
 
     entry.runtime_data.router.handle(
@@ -263,7 +289,8 @@ async def test_a_lock_report_over_mqtt_shows_until_the_station_reports_again(
         )
     )
     await hass.async_block_till_done()
-    assert state_of(hass, _lock_id(hass)) == HALockState.UNLOCKED
+    assert eufy.lock_state(MQTT_LOCK_SN).state is LockState.LOCKED
+    assert state_of(hass, _lock_id(hass)) == HALockState.LOCKED
 
     station = entry.runtime_data.coordinators[MQTT_LOCK_SN].station
     assert station.note_lock_push(
@@ -309,71 +336,61 @@ async def test_mqtt_account_failures_are_logged_and_setup_goes_on(
     ]
 
 
-# A lock push reporting an unlock.
-UNLOCK_PUSH: Final = 257
-
-
-def _lock_push(event_type: int) -> SecurityEvent:
-    return SecurityEvent(
-        source=EventSource.CLOUD,
-        station_sn=MQTT_LOCK_SN,
-        device_sn=MQTT_LOCK_SN,
-        event_type=event_type,
-        frame_cipher=None,
-    )
-
-
-def _mqtt_report(state: LockState) -> LockStateChanged:
-    return LockStateChanged(device_sn=MQTT_LOCK_SN, state=state, source=LockStateSource.LOCK)
-
-
-async def test_a_newer_push_replaces_the_mqtt_report_even_repeating_the_station_state(
+async def test_a_command_while_the_account_serves_no_client_is_unreachable(
     hass: HomeAssistant,
     seed_warm_cache: Callable[..., None],
     accounts: list[FakeMqttAccount],
 ) -> None:
-    """Push unlocked, then an MQTT report locked, then a push unlocked again: the station's
-    state does not change (no LockStateChanged), yet the newest report shows. The push is
-    delivered as the client does: its event first, then the station takes it."""
+    """The account is still starting (or its start failed): the library sends nothing and
+    the call ends with the unreachable message, not a validation error."""
     entry = await set_up_warm(hass, seed_warm_cache)
-    router = entry.runtime_data.router
-    station = entry.runtime_data.coordinators[MQTT_LOCK_SN].station
-    assert station.note_lock_push(_lock_push(UNLOCK_PUSH))
-    await hass.async_block_till_done()
-    assert state_of(hass, _lock_id(hass)) == HALockState.UNLOCKED
+    assert entry.runtime_data.eufy.lock_control(MQTT_LOCK_SN).writable
 
-    router.handle(_mqtt_report(LockState.LOCKED))
-    await hass.async_block_till_done()
+    with pytest.raises(HomeAssistantError) as raised:
+        await hass.services.async_call(
+            LOCK_DOMAIN, "unlock", {ATTR_ENTITY_ID: _lock_id(hass)}, blocking=True
+        )
+
+    assert raised.value.translation_key == EXC_LOCK_UNREACHABLE
+    assert not isinstance(raised.value, ServiceValidationError)
+    assert accounts[0].requests == []
     assert state_of(hass, _lock_id(hass)) == HALockState.LOCKED
 
-    push = _lock_push(UNLOCK_PUSH)
-    router.handle(push)
-    assert station.note_lock_push(push)
-    await hass.async_block_till_done()
 
-    assert station.lock_state(MQTT_LOCK_SN).state is LockState.UNLOCKED
-    assert state_of(hass, _lock_id(hass)) == HALockState.UNLOCKED
-
-
-async def test_a_push_the_station_drops_keeps_the_newer_mqtt_report(
+@pytest.mark.parametrize(
+    ("error", "route"),
+    [(AuthenticationError("refused"), "reauth"), (SessionReplacedError("replaced"), "issue")],
+    ids=["AuthenticationError", "SessionReplacedError"],
+)
+async def test_the_mqtt_accounts_cloud_errors_reach_reauth_or_the_repair(
     hass: HomeAssistant,
     seed_warm_cache: Callable[..., None],
     accounts: list[FakeMqttAccount],
+    error: CloudError,
+    route: str,
 ) -> None:
-    """A push about the lock that the station does not take (older than its state) is no
-    newer report: the MQTT report stays shown."""
+    """A cloud error of the account's certificate fetch arrives as the client's
+    ``CloudProblem`` naming no station; it goes to reauth or the account's repair issue,
+    as the other cloud problems do."""
     entry = await set_up_warm(hass, seed_warm_cache)
-    router = entry.runtime_data.router
-    station = entry.runtime_data.coordinators[MQTT_LOCK_SN].station
-    router.handle(_mqtt_report(LockState.LOCKED))
+    assert len(accounts[0].cloud_listeners) == 1
+
+    accounts[0].cloud_listeners[0](error)
     await hass.async_block_till_done()
 
-    stale = dataclasses.replace(_lock_push(UNLOCK_PUSH), event_time_ms=1)
-    router.handle(stale)
-    assert not station.note_lock_push(stale)
-    await hass.async_block_till_done()
-
-    assert state_of(hass, _lock_id(hass)) == HALockState.LOCKED
+    issues = [
+        issue_id
+        for (domain, issue_id) in ir.async_get(hass).issues
+        if domain == DOMAIN and issue_id.startswith("session_replaced")
+    ]
+    flows = [
+        flow
+        for flow in hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+        if flow["context"].get("source") == "reauth"
+        and flow["context"].get("entry_id") == entry.entry_id
+    ]
+    assert bool(issues) is (route == "issue")
+    assert bool(flows) is (route == "reauth")
 
 
 async def test_a_stuck_mqtt_stop_does_not_hold_the_clients_close_on_reload(

@@ -1,8 +1,9 @@
 """Lock and unlock of a lock the library can send to (``EufySecurity.lock_control``).
 
 The command goes through the library to the fake station's fake lock; the entity shows
-locking or unlocking while it waits and the state the lock reports after, never the
-call's return. One command per lock at a time; refusals send nothing.
+the library's reading (``EufySecurity.lock_state``): locking or unlocking once the lock
+took the command, then the state the lock reports, never the call's return. One command
+per lock at a time; refusals send nothing.
 """
 
 from __future__ import annotations
@@ -24,24 +25,23 @@ from eufy_home_security import (
     DeviceBusyError,
     DeviceTimeoutError,
     EufySecurityError,
+    GuestAccessError,
     HandshakeError,
     KeyRejectedError,
+    LockNotMovedError,
     LockState,
+    MqttAccountRequiredError,
     RateLimitedError,
     SessionReplacedError,
     UnsupportedError,
 )
-from eufy_home_security.exceptions import (
-    GuestAccessError,
-    LockNotMovedError,
-    MqttAccountRequiredError,
-)
+from eufy_home_security.lock_commands import control as lock_commands_control
 from eufy_home_security.lock_commands.control import (
     LOCK_ANSWER_TIMEOUT,
     LOCK_CONFIRM_TIMEOUT,
     LOCK_PUBLISH_TIMEOUT,
+    NOT_SELECTED_FOR_MQTT,
 )
-from eufy_home_security.mqtt.client import CONNECT_WAIT_SECONDS
 from eufy_home_security.station import lock_control as lock_control_module
 from eufy_home_security.testing import FakeCloud, FakeLock, FakeStation, camera_device
 from homeassistant.components.lock import DOMAIN as LOCK_DOMAIN
@@ -92,9 +92,15 @@ pytestmark = pytest.mark.usefixtures("built_clients")
 
 
 @pytest.fixture
-def fake_lock() -> FakeLock:
+def lock_sn() -> str:
+    """The lock's serial; a test parametrizes another product."""
+    return LOCK_SN
+
+
+@pytest.fixture
+def fake_lock(lock_sn: str) -> FakeLock:
     """The lock on the fake HomeBase's channel 1, unlocked."""
-    return FakeLock(serial=LOCK_SN, channel=LOCK_CHANNEL)
+    return FakeLock(serial=lock_sn, channel=LOCK_CHANNEL)
 
 
 @pytest.fixture
@@ -107,7 +113,7 @@ def member() -> dict[str, Any]:
 def fake_cloud(fake_station: FakeStation, fake_lock: FakeLock, member: dict[str, Any]) -> FakeCloud:
     """The fake HomeBase with its camera and the lock, which serves its public keys."""
     cloud = FakeCloud.for_stations(fake_station)
-    device = camera_device(LOCK_SN, station_sn=fake_station.serial, channel=LOCK_CHANNEL)
+    device = camera_device(fake_lock.serial, station_sn=fake_station.serial, channel=LOCK_CHANNEL)
     cloud.devices.append(device | {"member": member})
     cloud.lock_public_keys.update(fake_lock.public_keys())
     fake_station.locks[LOCK_CHANNEL] = fake_lock
@@ -116,9 +122,11 @@ def fake_cloud(fake_station: FakeStation, fake_lock: FakeLock, member: dict[str,
 
 @pytest.fixture
 def short_lock_waits(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Half-second answer and state waits; the library waits 20 s and 30 s."""
+    """Half-second answer and state waits; the library waits 20 s and 30 s. The state wait
+    also bounds how long a failed command's move shows (one second here)."""
     monkeypatch.setattr(lock_control_module, "LOCK_ANSWER_TIMEOUT", 0.5)
     monkeypatch.setattr(lock_control_module, "LOCK_CONFIRM_TIMEOUT", 0.5)
+    monkeypatch.setattr(lock_commands_control, "LOCK_CONFIRM_TIMEOUT", 1.0)
 
 
 def _seed(station: FakeStation, lock: FakeLock, raw: str) -> None:
@@ -167,8 +175,9 @@ async def test_a_command_is_sent_and_shows_the_reported_state(
     waiting: str,
     shown: str,
 ) -> None:
-    """The lock gets the asked action once; the entity shows the moving state while the
-    command waits and the lock's report after."""
+    """The lock gets the asked action once; the entity shows the lock's report after (the
+    fake lock reports at once, so the moving state between is covered by the held
+    command below)."""
     _seed(fake_station, fake_lock, before)
     await set_up_warm(hass, seed_warm_cache)
     states = record_states(hass, _lock_id(hass))
@@ -176,7 +185,7 @@ async def test_a_command_is_sent_and_shows_the_reported_state(
     await _call(hass, service)
 
     assert [str(action.name).lower() for _, action, _ in fake_lock.received] == [service]
-    assert _shown(states) == [waiting, shown]
+    assert _shown(states)[-1] == shown
     assert state_of(hass, _lock_id(hass)) == shown
 
 
@@ -268,14 +277,15 @@ async def test_two_commands_at_once_send_one(
     assert len(fake_lock.received) == 1
 
 
-async def test_a_refused_command_shows_the_last_report_again(
+async def test_a_refused_command_never_shows_a_move(
     hass: HomeAssistant,
     fake_station: FakeStation,
     fake_lock: FakeLock,
     seed_warm_cache: Callable[..., None],
 ) -> None:
-    """The lock refuses: the call raises the refusal with its code, and the entity goes
-    from locking back to the state the lock last reported."""
+    """The lock refuses: the call raises the refusal with its code, and the entity keeps
+    the state the lock last reported, with no locking in between (the lock never took the
+    command)."""
     fake_lock.answer_code = 1
     _seed(fake_station, fake_lock, UNLOCKED)
     await set_up_warm(hass, seed_warm_cache)
@@ -283,31 +293,39 @@ async def test_a_refused_command_shows_the_last_report_again(
 
     with pytest.raises(HomeAssistantError) as raised:
         await _call(hass, "lock")
+    await hass.async_block_till_done()
 
     assert raised.value.translation_key == EXC_LOCK_COMMAND_REJECTED
     assert raised.value.translation_placeholders == {"code": "1"}
-    assert _shown(states) == [HALockState.LOCKING, HALockState.UNLOCKED]
+    assert HALockState.LOCKING not in states
+    assert state_of(hass, _lock_id(hass)) == HALockState.UNLOCKED
 
 
 @pytest.mark.usefixtures("short_lock_waits")
-async def test_no_report_within_the_wait_raises_the_timeout(
+async def test_no_report_within_the_wait_raises_the_timeout_and_the_move_shows_on(
     hass: HomeAssistant,
     fake_station: FakeStation,
     fake_lock: FakeLock,
     seed_warm_cache: Callable[..., None],
 ) -> None:
     """The lock took the command and never reports: the library's wait ends the call with
-    the translated timeout, and the entity shows the last report again."""
+    the translated timeout. The library keeps the lock locking until its next report or
+    the end of its state wait after the take; the entity shows that, then the last report
+    again."""
     fake_lock.report = False
     _seed(fake_station, fake_lock, UNLOCKED)
-    await set_up_warm(hass, seed_warm_cache)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    states = record_states(hass, _lock_id(hass))
 
     with pytest.raises(HomeAssistantError) as raised:
         async with asyncio.timeout(5):
             await _call(hass, "lock")
 
     assert raised.value.translation_key == EXC_LOCK_TIMEOUT
-    assert state_of(hass, _lock_id(hass)) == HALockState.UNLOCKED
+    assert entry.runtime_data.eufy.lock_state(LOCK_SN).state is LockState.LOCKING
+    assert state_of(hass, _lock_id(hass)) == HALockState.LOCKING
+    await wait_until(lambda: state_of(hass, _lock_id(hass)) == HALockState.UNLOCKED)
+    assert _shown(states) == [HALockState.LOCKING, HALockState.UNLOCKED]
 
 
 async def test_a_jammed_report_raises_not_moved_and_shows_jammed(
@@ -497,6 +515,43 @@ async def test_an_account_without_an_mqtt_lock_builds_no_mqtt_account(
     assert built == []
 
 
+# A T8506 serial variant (7th character 8) whose route is MQTT, while eufy's MQTT
+# connection does not serve it: the library cannot send its commands.
+UNSERVED_MQTT_LOCK_SN: Final = "T8506P8000000001"
+
+
+@pytest.mark.parametrize("lock_sn", [UNSERVED_MQTT_LOCK_SN])
+async def test_a_lock_the_mqtt_connection_does_not_serve_is_read_only(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    fake_lock: FakeLock,
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    lock_sn: str,
+) -> None:
+    """Its lock shows its state, refuses lock and unlock with the library's reason, and
+    the entry builds no MQTT connection for it."""
+    built: list[object] = []
+    monkeypatch.setattr(runtime, "EufyMqttAccount", built.append)
+    _seed(fake_station, fake_lock, LOCKED)
+    entry = await set_up_warm(hass, seed_warm_cache)
+    control = entry.runtime_data.eufy.lock_control(lock_sn)
+    entity_id = entity_id_for(hass, LOCK_DOMAIN, lock_sn, LOCK_KEY)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await hass.services.async_call(
+            LOCK_DOMAIN, "unlock", {ATTR_ENTITY_ID: entity_id}, blocking=True
+        )
+
+    assert control.form == "mqtt"
+    assert control.reason == NOT_SELECTED_FOR_MQTT
+    assert raised.value.translation_key == EXC_LOCK_NOT_WRITABLE
+    assert raised.value.translation_placeholders == {"reason": NOT_SELECTED_FOR_MQTT}
+    assert built == []
+    assert fake_lock.received == []
+    assert state_of(hass, entity_id) == HALockState.LOCKED
+
+
 # Errors whose remedy is the account's or the station's (a repair, a sign-in): the key, and
 # what the failure routes to (None, a repair issue of the account, or the reauth flow).
 _ROUTED: Final = (
@@ -581,7 +636,7 @@ async def test_an_account_refusal_names_the_station_and_the_lock(
 
 
 @pytest.mark.parametrize("service", ["lock", "unlock"])
-async def test_each_command_keeps_the_librarys_own_waits(
+async def test_each_command_hands_the_library_its_bound(
     hass: HomeAssistant,
     fake_station: FakeStation,
     fake_lock: FakeLock,
@@ -589,8 +644,8 @@ async def test_each_command_keeps_the_librarys_own_waits(
     monkeypatch: pytest.MonkeyPatch,
     service: str,
 ) -> None:
-    """No timeout is handed to the library: its answer and state waits stay the eufy app's
-    20 s and 30 s, so a lock that does not answer fails after the answer wait."""
+    """The library caps the whole call at ``LOCK_COMMAND_TIMEOUT_SECONDS``; its own answer
+    and state waits keep their defaults within it."""
     _seed(fake_station, fake_lock, LOCKED if service == "unlock" else UNLOCKED)
     entry = await set_up_warm(hass, seed_warm_cache)
     calls: list[dict[str, Any]] = []
@@ -603,52 +658,40 @@ async def test_each_command_keeps_the_librarys_own_waits(
     monkeypatch.setattr(entry.runtime_data.eufy, f"async_{service}", records)
     await _call(hass, service)
 
-    assert calls == [{}]
+    assert calls == [{"timeout": LOCK_COMMAND_TIMEOUT_SECONDS}]
 
 
-async def test_the_outer_bound_ends_a_stuck_command_as_a_timeout(
+async def test_the_librarys_bound_ends_an_unanswered_command_as_a_timeout(
     hass: HomeAssistant,
     fake_station: FakeStation,
     fake_lock: FakeLock,
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A call the library does not end (a connect that hangs) is ended by the integration's
-    bound: the timeout message, the last report shown again, the lock free for the next
-    command."""
+    """A command no one answers (the station sends no result), with the library's 20 s
+    answer wait left as it is: the integration's bound (cut to 0.3 s here) ends the call as
+    the lock's timeout, the last report stays shown and the next command is sent."""
+    fake_lock.result = False
     _seed(fake_station, fake_lock, UNLOCKED)
-    entry = await set_up_warm(hass, seed_warm_cache)
-    monkeypatch.setattr(lock_module, "LOCK_COMMAND_TIMEOUT_SECONDS", 0.2)
-    sent: list[str] = []
-    ended: list[str] = []
+    await set_up_warm(hass, seed_warm_cache)
+    monkeypatch.setattr(lock_module, "LOCK_COMMAND_TIMEOUT_SECONDS", 0.3)
 
-    async def hangs(device_sn: str) -> LockState:
-        sent.append(device_sn)
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            ended.append(device_sn)
-            raise
-        return LockState.LOCKED
-
-    monkeypatch.setattr(entry.runtime_data.eufy, "async_lock", hangs)
-    for _ in range(2):
+    for sent in (1, 2):
         with pytest.raises(HomeAssistantError) as raised:
             async with asyncio.timeout(5):
                 await _call(hass, "lock")
         assert raised.value.translation_key == EXC_LOCK_TIMEOUT
         assert not isinstance(raised.value, ServiceValidationError)
         assert state_of(hass, _lock_id(hass)) == HALockState.UNLOCKED
-
-    assert sent == [LOCK_SN, LOCK_SN]
-    assert ended == [LOCK_SN, LOCK_SN]
+        assert len(fake_lock.received) == sent
 
 
 def test_the_command_bound_covers_the_librarys_waits_on_both_paths() -> None:
-    """Over MQTT: the connect wait, the broker's take, the lock's answer and its state; the
-    station path's answer and state waits are within that."""
-    mqtt = CONNECT_WAIT_SECONDS + LOCK_PUBLISH_TIMEOUT + LOCK_ANSWER_TIMEOUT + LOCK_CONFIRM_TIMEOUT
-    assert LOCK_COMMAND_TIMEOUT_SECONDS >= mqtt > LOCK_ANSWER_TIMEOUT + LOCK_CONFIRM_TIMEOUT
+    """Over MQTT: the broker's take (a connect included), the lock's answer and its state;
+    the station path's answer and state waits are within that, with room for its connect
+    and the lock's key."""
+    mqtt = LOCK_PUBLISH_TIMEOUT + LOCK_ANSWER_TIMEOUT + LOCK_CONFIRM_TIMEOUT
+    assert LOCK_COMMAND_TIMEOUT_SECONDS > mqtt > LOCK_ANSWER_TIMEOUT + LOCK_CONFIRM_TIMEOUT
 
 
 async def test_a_caller_that_stops_waiting_leaves_the_command_running(
