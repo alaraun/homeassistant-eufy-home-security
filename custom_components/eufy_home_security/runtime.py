@@ -429,10 +429,11 @@ def start_lock_mqtt(
     """Serve the entry's MQTT locks: one ``EufyMqttAccount`` on the client's cloud, handed
     to the client (``use_mqtt``) and started with the device list in the background (a
     connect can take the library's whole wait). None, and nothing built, when no lock of
-    ``locks`` takes its commands over MQTT, or without the library's ``mqtt`` extra (one
-    warning; those locks then refuse lock and unlock). Its certificate fetch never signs
-    in: a cloud error there reaches the entry's router as the client's ``CloudProblem``
-    (reauth or the account's repair). Stop it with :func:`async_stop_lock_mqtt`.
+    ``locks`` takes its commands over MQTT, or when the install lacks the library's ``mqtt``
+    extra the manifest requires (one warning; those locks then refuse lock and unlock). Its
+    certificate fetch never signs in: a cloud error there reaches the entry's router as the
+    client's ``CloudProblem`` (reauth or the account's repair). Stop it with
+    :func:`async_stop_lock_mqtt`.
     """
     served = mqtt_lock_serials(eufy, locks)
     if not served:
@@ -441,8 +442,10 @@ def start_lock_mqtt(
         account = EufyMqttAccount(eufy.cloud)
     except MissingDependencyError as err:
         _LOGGER.warning(
-            "%d lock(s) of this account take their commands over eufy's MQTT broker, which "
-            "needs eufy-home-security[%s]; they show their state but refuse lock and unlock",
+            "%d lock(s) of this account take their commands over eufy's MQTT broker, but the "
+            "library's MQTT client (eufy-home-security[%s], a requirement of this "
+            "integration) is not installed; they show their state but refuse lock and "
+            "unlock until the integration is installed again",
             len(served),
             err.extra,
         )

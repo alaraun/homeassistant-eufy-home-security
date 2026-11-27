@@ -97,8 +97,10 @@ reloads the integration.
   tested on hardware.
 - The MQTT broker connection is opened only for an account with such a lock: one per
   account entry, following each **Refresh device list**, closed when the entry unloads.
-  It needs the library's `mqtt` extra (`eufy-home-security[mqtt]`); without it the log
-  says so once at setup, and those locks show their state but refuse lock and unlock.
+  The integration's requirement includes the library's MQTT client
+  (`eufy-home-security[mqtt]`); only an install that lacks it (a broken install) leaves
+  those locks showing their state but refusing lock and unlock, and the log says so once
+  at setup: install the integration again.
   While the connection is still starting, or after it failed to start, a command sends
   nothing and ends with the lock-unreachable message; try again in a moment.
 - The state is the library's one reading of the lock: its station's reports, pushes and
@@ -122,7 +124,8 @@ reloads the integration.
   - an account that is a guest of the lock (the eufy app gives guests no lock control),
     or whose device list names no member record for the lock;
   - a lock that takes its commands over eufy's MQTT broker while the account has no
-    connection to it (the library's `mqtt` extra is missing; the log says so);
+    connection to it (the library's MQTT client is missing from the install; the log says
+    so);
   - a second lock or unlock while a command of the same lock still waits.
 - Unloading or reloading the account entry stops a waiting command; the call then ends
   with an error, and whether the lock moved shows with its next report.

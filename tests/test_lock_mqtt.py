@@ -11,6 +11,7 @@ needs ``aiomqtt``, which the test environment does not hold.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from collections.abc import AsyncIterator, Callable, Iterable
 from typing import Any, Final
@@ -31,8 +32,11 @@ from eufy_home_security import (
     SessionReplacedError,
 )
 from eufy_home_security.cloud.models import CloudDevice
+from eufy_home_security.lock_commands.actions import LockAction
+from eufy_home_security.mqtt.account import EufyMqttAccount
 from eufy_home_security.p2p.messages import STANDALONE_RECEIPT_LEN
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation
+from eufy_home_security.testing.mqtt import FakeMqttBroker, FakeMqttLock, make_mqtt_pki
 from homeassistant.components.button import DOMAIN as BUTTON_DOMAIN
 from homeassistant.components.lock import DOMAIN as LOCK_DOMAIN
 from homeassistant.components.lock import LockState as HALockState
@@ -486,3 +490,50 @@ async def test_an_unload_cancels_a_start_still_running(
         assert await hass.config_entries.async_unload(entry.entry_id)
 
     assert ended == ["cancelled"]
+
+
+async def test_an_unlock_over_the_broker_is_confirmed_by_the_locks_report(
+    hass: HomeAssistant,
+    seed_warm_cache: Callable[..., None],
+    fake_cloud: FakeCloud,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the library's ``mqtt`` extra installed the entry builds the library's own
+    account; it connects (here to a loopback broker with the fake cloud's certificate),
+    the unlock goes over it and the lock's status report confirms it."""
+    pki = make_mqtt_pki()
+    fake_cloud.mqtt_answer = pki.register_answer()
+    broker = FakeMqttBroker(pki)
+    await broker.async_start()
+    lock = FakeMqttLock(
+        broker=broker,
+        serial=MQTT_LOCK_SN,
+        product_code="T8531",
+        # The member record names no member user id: keyed by the account's own id.
+        owner_user_id=SYNTHETIC.account_id,
+        state_code=4,
+    )
+    lock.attach()
+    monkeypatch.setattr(
+        runtime,
+        "EufyMqttAccount",
+        functools.partial(EufyMqttAccount, port=broker.port, server_ca_pem=pki.ca_pem),
+    )
+    try:
+        entry = await set_up_warm(hass, seed_warm_cache)
+        account = entry.runtime_data.lock_mqtt
+        assert isinstance(account, EufyMqttAccount)
+        await account.async_wait_connected(5)
+        await broker.wait_for(lambda: any(t.endswith("/res") for _, t, _ in broker.subscriptions))
+
+        async with asyncio.timeout(10):
+            await hass.services.async_call(
+                LOCK_DOMAIN, "unlock", {ATTR_ENTITY_ID: _lock_id(hass)}, blocking=True
+            )
+
+        assert [action for action, _ in lock.received] == [LockAction.UNLOCK]
+        assert lock.refused == []
+        assert state_of(hass, _lock_id(hass)) == HALockState.UNLOCKED
+        assert await hass.config_entries.async_unload(entry.entry_id)
+    finally:
+        await broker.async_stop()
