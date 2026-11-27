@@ -39,7 +39,8 @@ picture: auto                    # optional: auto | landscape | portrait
 show_header: true                # optional: false hides the header (name, status, camera menu)
 show_history: true               # optional: false hides History
 show_settings: true              # optional: false hides Settings
-show_controls: true              # optional: false leaves the buttons off the picture (a clean tile)
+show_event: true                 # optional: false hides the still's chip on the picture (Event · 5 min ago)
+show_controls: true              # optional: false leaves the buttons off the picture in the card (a clean tile)
 tap_to_live: true                # optional: a tap on the picture starts or stops live view (default off)
 double_tap_fullscreen: true      # optional: a double tap on the picture enters or leaves full screen (default off)
 digital_zoom: false              # optional: false turns off pinch / Ctrl + wheel zoom of the picture (default on)
@@ -63,11 +64,19 @@ settings_groups:                 # optional: Settings tabs to show, in this orde
 - `auto_live` wakes the camera every time the card is shown (dashboard opened, view entered, tab shown again),
   so it costs battery. Stop holds until the next showing.
 - `live_on_detection` starts a timed live view (`live_seconds`) when one of the shown camera's detection sensors (person, vehicle, pet, motion) turns on while the card is shown: its view open, the browser tab or app in front, the card not hidden. A detection that began while the card was not shown does not start it, and Stop holds until every detection sensor is off. Every start wakes the camera, so it costs battery. A card scrolled out of sight on the open view counts as shown.
-- `show_controls: false` leaves every button off the picture: play and ∞, the live view bar (Stop, ∞, Record,
-  sound, presets and the `live_buttons`), the preset row, the pan/tilt pad, the zoom pill and the full-screen button.
-  The chips (status, `● LIVE`, name, battery, `● REC`) and messages stay; the header menu (when shown) still offers
-  live view, record and full screen. In full screen the exit button stays at the top right. Together with
-  `show_header`, `show_history` and `show_settings` off the card is a bare picture for a wall tablet.
+- `show_controls: false` leaves every button off the picture in the card: play and ∞, the live view bar (Stop, ∞,
+  Record, sound, presets and the `live_buttons`), the preset row, the pan/tilt pad, the zoom pill and the full-screen
+  button. The chips (status, `● LIVE`, name, battery, `● REC`) and messages stay; the header menu (when shown) still
+  offers live view, record and, during live view, full screen. Full screen (a double tap with
+  `double_tap_fullscreen`, or the header menu) shows the controls again, pan/tilt, zoom and presets included, as
+  with `show_controls: true`; leaving full screen hides them again. Together with `show_header`, `show_history` and
+  `show_settings` off the card is a bare picture for a wall tablet.
+- `show_event: false` hides the chip that says what the still is, at the top left of the picture:
+  `Event · 5 min ago`, or `Snapshot` after a live view. It gives a narrow tile room for the camera's name chip
+  (shown when the header is off), which then takes the freed width. The other chips stay: `● LIVE`, `● REC`, the
+  name, the battery and `No still yet` (which explains an empty picture), as does the chip of a picture opened from
+  History. It applies in full screen too; the header's status line (with the latest detection or ring) is not
+  affected.
 - `tap_to_live` and `double_tap_fullscreen` act on a tap on the picture itself (not on a chip or button), with or
   without the controls. A tap starts a timed live view (`live_seconds`) or stops the running one, as the play and Stop
   buttons do; on a camera without live video, or over a picture opened from History, it does nothing. A double tap
@@ -75,8 +84,8 @@ settings_groups:                 # optional: Settings tabs to show, in this orde
   over a picture opened from History in the card; with `double_tap_fullscreen` set, a single tap acts only after a
   quarter second, so the first tap of a double tap never starts or stops live view. A press that moves, or one with
   two fingers, is no tap. With the controls shown, a tap that brings faded controls back does only that; without
-  `tap_to_live` a tap hides them as before. With `tap_to_live` and `show_controls: false` the picture is also a
-  keyboard button: Tab to it, Enter or Space starts or stops live view.
+  `tap_to_live` a tap hides them as before. With `tap_to_live` and `show_controls: false` the picture in the card is
+  also a keyboard button: Tab to it, Enter or Space starts or stops live view (in full screen the buttons are back).
 - `digital_zoom` (on unless set to `false`): see Zoom on the picture below.
 - `layout: auto` switches to the compact layout (one column of settings rows) below 400 px card width.
 - `history_folder` is needed only when the camera was renamed after its files were saved.
@@ -91,8 +100,8 @@ settings_groups:                 # optional: Settings tabs to show, in this orde
   `auto_live` starts the chosen camera's view. `name`, `history_folder` and the `<role>_entity` keys apply to
   the first camera only; the other cameras use their own entity names, device-name folders and the entities of
   their own devices. Every other option applies to every camera of the card: `picture`, `show_header` /
-  `show_history` / `show_settings` / `show_controls`, `tap_to_live`, `double_tap_fullscreen`, `layout`,
-  `live_seconds`, `auto_live`, `live_on_detection`, `live_buttons` (the same buttons on each camera's live view
+  `show_history` / `show_settings` / `show_event` / `show_controls`, `tap_to_live`, `double_tap_fullscreen`,
+  `layout`, `live_seconds`, `auto_live`, `live_on_detection`, `live_buttons` (the same buttons on each camera's live view
   bar) and `settings_include` / `settings_exclude` / `settings_groups` (an entity id
   there only matters on the camera whose device it belongs to). The card starts at the first camera when the
   page loads. In full screen the list is a name chip on the picture, after the `● LIVE` chip, and a running
@@ -139,9 +148,9 @@ the card never wakes a camera for it. Live view opens only on a press and ends:
   and `Refresh event image`. A doorbell reads `Ringing` (a bell on the button) for a minute after a press, then
   `Ring 5 min ago` while the ring is its newest event.
 - **Picture:** a 16:9 frame, or the camera's portrait shape (see `picture`). Top left says what the still is
-  (`Event · 2 h ago`, `Snapshot`, `No still yet`) or `● LIVE 1:42` while live, in the card and in full screen; next
-  to it the camera's name chip when the header is hidden or in full screen, then the battery chip (charging and
-  solar charging shown on its icon). Top right: the full-screen button.
+  (`Event · 2 h ago`, `Snapshot`, `No still yet`; see `show_event`) or `● LIVE 1:42` while live, in the card and in
+  full screen; next to it the camera's name chip when the header is hidden or in full screen, then the battery chip
+  (charging and solar charging shown on its icon). Top right: the full-screen button.
   - Idle: a play button (timed live view) and ∞ (continuous). A camera without live video shows
     `No live view for this model` instead, and its menu has no live view, `Record a clip` or `New still`
     (unless the card sets `capture_entity`).

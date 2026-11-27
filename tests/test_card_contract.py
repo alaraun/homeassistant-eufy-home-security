@@ -300,6 +300,21 @@ def test_the_card_words_a_pin_protected_save_in_a_one_line_toast() -> None:
     assert f"er.code === '{station_recordings.ERR_PIN_PROTECTED}'" in _SOURCE
 
 
+def test_every_show_option_of_the_editor_is_labelled_on_by_default_and_documented() -> None:
+    """A ``show_*`` option in the editor has a label, shows on when unset (the card
+    treats only ``false`` as off) and is in the options block of docs/card.md."""
+    shown = set(re.findall(r"name: 'show_(\w+)'", _block("EDITOR_SCHEMA")))
+    assert {"header", "controls", "event"} <= shown
+    labels = set(re.findall(r"\b(show_\w+):", _block("EDITOR_LABELS")))
+    default_on = re.search(r"\[([^\]]*)\]\.forEach\(\(k\) => \{ if \(d\[`show_\$\{k\}`\]", _SOURCE)
+    assert default_on, "the editor's default-on show_* list"
+    docs = (_ROOT.parent.parent / "docs" / "card.md").read_text(encoding="utf-8")
+    documented = set(re.findall(r"^show_(\w+): ", docs, re.MULTILINE))
+    assert {f"show_{k}" for k in shown} <= labels
+    assert shown == set(re.findall(r"'(\w+)'", default_on.group(1)))
+    assert shown <= documented
+
+
 def test_the_preset_picture_the_card_sends_fits_the_command() -> None:
     """Save view sends ``PRESET_IMAGE_WS`` with fields its schema takes, at most the size
     it keeps, and counts the library's preset slots."""

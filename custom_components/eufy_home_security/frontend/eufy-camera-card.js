@@ -5,7 +5,7 @@
 // `entity` is required; the settings rows are the device's settings, in tabs by the integration's settings layout
 // (the library's sections), a setting that applies only in one state of another nested under it.
 
-const CARD_VERSION = '2026.11.26-3';
+const CARD_VERSION = '2026.11.27-1';
 
 const INVALID = ['unavailable', 'unknown', 'none', ''];
 const DOMAIN = 'eufy_home_security';
@@ -435,6 +435,8 @@ class EufyCameraCard extends HTMLElement {
   }
 
   _show(k) { return !this._raw || this._raw[`show_${k}`] !== false; }
+  // The buttons on the picture: show_controls, and always in full screen (the tile's own view stays clean)
+  _ctls() { return this._show('controls') || this._isFull(); }
 
   // The shown camera and a test that it is still shown: an async action's answer updates the card only then
   _camRef() {
@@ -1783,7 +1785,7 @@ class EufyCameraCard extends HTMLElement {
       if (this._live) this._userStop(); else this._start(false);
       return;
     }
-    if (!this._show('controls')) return;
+    if (!this._ctls()) return;
     if (this._preOpen && !this._psave && this._dd !== CAM_DD) { this._preOpen = false; this.render(); }
     this._hush();
   }
@@ -2386,6 +2388,8 @@ class EufyCameraCard extends HTMLElement {
     if (!this.isConnected) return;
     const full = this._isFull();
     if (this._wasFull && !full) this._dzReset();
+    // Full screen opens with its controls shown (a tile without them faded them out unseen)
+    if (full && !this._wasFull) this._awake(true);
     this._wasFull = full;
     this._homeDd();
     if (this._stream) this._stream.fitMode = this._fit();
@@ -2780,9 +2784,9 @@ class EufyCameraCard extends HTMLElement {
     const L = this._live;
     const multi = this._cams.length > 1;
     const showHdr = this._show('header');
-    // show_controls: false leaves the picture without buttons (live, record, full screen, pan/tilt, zoom, presets,
-    // live view buttons); the chips, messages and the exit from full screen stay
-    const ctls = this._show('controls');
+    // show_controls: false leaves the picture in the card without buttons (live, record, full screen, pan/tilt, zoom,
+    // presets, live view buttons); the chips and messages stay, and full screen shows the buttons
+    const ctls = this._ctls();
     const recording = avail && this._recording();
     if (!recording) this._recStop = false;
     const recStop = recording && this._recStop;
@@ -3069,7 +3073,8 @@ class EufyCameraCard extends HTMLElement {
     } else if (L && L.video) tl = `<span class="chip tl rec live" role="img" aria-label="${L.continuous ? 'Live, continuous' : 'Live'}"><i class="dot"></i><span>LIVE</span><span class="tv" data-tick></span></span>`;
     // The integration keeps no still until a detection or New still; it never wakes the camera for one
     else if (!L && avail && still.err) tl = chip('tl', '', '<ha-icon icon="mdi:image-off-outline"></ha-icon><span>No still yet</span>', 'No still yet');
-    else if (!L && avail && still.src) {
+    // show_event: false drops the still's own chip (Event · 5 min ago, Snapshot) only
+    else if (!L && avail && still.src && this._show('event')) {
       const t = srcKind === 'live' ? 'Snapshot' : `Event${isNaN(stillMs) ? '' : ` · ${this._ago(stillMs)}`}`;
       tl = chip('tl', '', `<ha-icon icon="${srcKind === 'live' ? 'mdi:camera-iris' : 'mdi:motion-sensor'}"></ha-icon><span>${escapeHtml(t)}</span>`, `Still: ${t}`);
     }
@@ -3846,6 +3851,8 @@ const CSS_TEXT = `
   .crow > .chip { position: static; flex: none; max-width: 100%; pointer-events: auto; }
   .crow > .chip.tl { flex: 0 1 auto; min-width: 0; }
   .crow > .chip.camchip { flex: 0 1000 auto; min-width: 48px; max-width: 50%; padding-right: 4px; }
+  /* No status chip before it (show_event: false, no still): the name takes the room it leaves */
+  .crow > .chip.camchip:first-child { max-width: none; }
   .crow > .chip.camchip.one { min-width: 28px; padding-right: 6px; }
   /* Without controls (show_controls: false) the chips take the full-screen button's place, and the scrim only the top */
   .noctl:not(.winfull, :fullscreen) .crow { right: 10px; }
@@ -4330,6 +4337,7 @@ const EDITOR_SCHEMA = [
   { name: 'show_header', selector: { boolean: {} } },
   { name: 'show_history', selector: { boolean: {} } },
   { name: 'show_settings', selector: { boolean: {} } },
+  { name: 'show_event', selector: { boolean: {} } },
   { name: 'show_controls', selector: { boolean: {} } },
   { name: 'tap_to_live', selector: { boolean: {} } },
   { name: 'double_tap_fullscreen', selector: { boolean: {} } },
@@ -4344,7 +4352,8 @@ const EDITOR_SCHEMA = [
     { value: 'auto', label: 'Auto (compact below 400 px)' }, { value: 'compact', label: 'Compact' }, { value: 'regular', label: 'Regular' }] } } },
 ];
 const EDITOR_LABELS = { entity: 'Camera', entities: 'More cameras', picture: 'Picture shape', show_header: 'Header',
-  show_history: 'History', show_settings: 'Settings', show_controls: 'Controls on the picture',
+  show_history: 'History', show_settings: 'Settings', show_event: 'Still chip on the picture',
+  show_controls: 'Controls on the picture',
   tap_to_live: 'Tap the picture: live view on or off', double_tap_fullscreen: 'Double tap the picture: full screen',
   digital_zoom: 'Zoom the picture', live_buttons: 'Live view buttons', name: 'Name', history_folder: 'History folder', auto_live: 'Start live view when the dashboard opens', live_on_detection: 'Start live view on detection', live_seconds: 'Live view length', layout: 'Layout',
   settings_include: 'Settings to add', settings_exclude: 'Hidden settings', settings_groups: 'Settings tabs' };
@@ -4361,7 +4370,8 @@ const EDITOR_HELPERS = {
   entities: 'With more than one camera, the name opens a list to switch cameras; history and settings follow. Name and history folder apply to the first camera',
   picture: 'Auto takes the shape of the camera\'s picture (a portrait doorbell shows upright); portrait shows the whole picture, at most 80 % of the screen high',
   show_header: 'Name, status and the camera menu; off with History and Settings off leaves the picture alone. Several cameras: the name moves onto the picture',
-  show_controls: 'Off: no buttons on the picture (play, live view bar, full screen, pan/tilt, zoom, presets) for a clean tile; the chips and messages stay. Combine with the tap options below',
+  show_event: 'Off: no chip saying what the still is (Event · 5 min ago, Snapshot), for room on a narrow tile; the name, live, recording and battery chips stay',
+  show_controls: 'Off: no buttons on the picture (play, live view bar, full screen, pan/tilt, zoom, presets) for a clean tile; full screen still shows them, the chips and messages stay. Combine with the tap options below',
   tap_to_live: 'A tap on the picture starts a timed live view or stops the running one',
   double_tap_fullscreen: 'A double tap on the picture enters or leaves full screen; a single tap then acts a quarter second later',
   digital_zoom: 'Pinch with two fingers, or Ctrl + mouse wheel, to enlarge the picture up to 4x and drag to look around; back to 1x when live view starts or stops and on leaving full screen. The camera itself does not move',
@@ -4418,7 +4428,7 @@ class EufyCameraCardEditor extends HTMLElement {
     const d = { ...(this._config || {}) };
     if (d.auto_live === true) d.auto_live = 'timed';
     ['live_on_detection', 'tap_to_live', 'double_tap_fullscreen'].forEach((k) => { if (d[k]) d[k] = true; });
-    ['header', 'history', 'settings', 'controls'].forEach((k) => { if (d[`show_${k}`] === undefined) d[`show_${k}`] = true; });
+    ['header', 'history', 'settings', 'event', 'controls'].forEach((k) => { if (d[`show_${k}`] === undefined) d[`show_${k}`] = true; });
     if (d.digital_zoom === undefined) d.digital_zoom = true;
     if (!PICTURE_MODES.includes(d.picture)) d.picture = 'auto';
     const secs = this._lay && this._lay.secs;
