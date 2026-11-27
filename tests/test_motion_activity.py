@@ -36,6 +36,8 @@ async def test_activity_events_register_beside_original_detection(
 ) -> None:
     """All three event entities exist on the same synthetic camera."""
     entry = await set_up_warm(hass, seed_warm_cache)
+    assert _entity_id(hass, "detected_events_counted").endswith("_motion_activity")
+    assert _entity_id(hass, "recorded_events_counted").endswith("_recording_activity")
     for key in ("detection", "detected_events_counted", "recorded_events_counted"):
         entity_id = _entity_id(hass, key)
         state = hass.states.get(entity_id)

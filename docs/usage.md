@@ -186,8 +186,31 @@ still rises with each recording: see [Automation triggers](#automation-triggers)
 
 ### Counter-derived camera activity events
 
-For supported cameras, two additional event entities complement the existing
-**Detection** event. They consume the library's `DetectedEventsCounted` (1192)
+For supported cameras, two additional local event entities complement the
+existing **Detection** event:
+
+- **Motion Activity:** locally observed motion-related activity, based on
+  increases in the camera's detection counter.
+- **Recording Activity:** locally observed recording activity, based on
+  increases in the camera's recording counter.
+
+Both events use camera counters read locally through station polling,
+independently of cloud push and individual detection notifications.
+This has been verified on a HomeBase 2 with cloud push and Notification
+switched off.
+
+**Note:** Motion Activity and Recording Activity are polling-based events,
+not instant push notifications. Their responsiveness depends on the station's
+polling interval, which is 45 seconds by default. To observe activity sooner,
+enable **Enable fast camera activity polling** in the integration's configuration
+options. Five seconds is the recommended starting interval.
+See [Optional faster camera activity polling](#optional-faster-camera-activity-polling)
+for supported stations, configuration and resource implications.
+
+Use these event entities directly in automations. Separate counter sensor
+entities are not required, and faster polling is optional.
+
+They consume the library's `DetectedEventsCounted` (1192)
 and `RecordedEventsCounted` (1193) observations.
 
 The detected-events counter includes camera triggers that may subsequently be
@@ -195,14 +218,18 @@ discarded. It does not confirm an accepted or classified detection. The
 recorded-events counter is independent and does not prove that a recording has
 finished or become available for playback.
 
+Linked-camera automations in the eufy app can also increase these counters.
+The events do not distinguish linked activity from direct detections or
+identify the originating camera.
+
 Each positive increase generates one aggregate event carrying `count` and
 `observed_at`. For example, an increase of +3 produces one event with `count: 3`,
 not three individually timestamped events. `observed_at` is the UTC time the
 library observed the increase, not the original detection or recording time.
 
-First readings, unavailable counters, offline devices, reconnects and counter
-resets establish fresh baselines without generating activity events. These events
-are derived exclusively from counters: **there is no push fallback**. Existing
+First readings, counter resets and recovery after loss of counter availability
+or connection state establish fresh baselines without generating activity events.
+These events are derived exclusively from counters: **there is no push fallback**. Existing
 push-delivered `SecurityEvent` detections remain independent.
 
 Counter observations require an updated station parameter snapshot. Reporting
@@ -227,11 +254,12 @@ reloads the integration.
 
 **Each refresh reads the full station parameter snapshot**, including all
 paired-device parameters, rather than only counters 1192 and 1193. Fast polling
-therefore increases local P2P traffic and station work. For context, one
+therefore increases local P2P traffic, station work and CPU usage. For context, one
 HomeBase 2 test returned roughly 51 KB per read; response sizes vary by
 station and firmware. One-second polling was tested on that HomeBase 2, but
 is not guaranteed to be suitable for other models. Choose a longer interval
 if responsiveness is less important than reducing station traffic.
+Five seconds is the recommended starting interval when enabling fast polling.
 
 On-demand battery stations retain the normal coordinator interval. Their
 cached state is returned without waking them for a fresh read, so the fast
@@ -246,8 +274,9 @@ into individual detection events. Existing detection pushes remain separate.
 
 In the eufy app each camera has a **Notification** switch per security mode (Security
 mode → the mode → the camera). With it off, the station sends none of that camera's
-detections while the mode is in force: its detection sensors and **Detection** event stay
-unchanged, and the camera still records. Turning Notification on also notifies your phone.
+individual detection notifications while the mode is in force: its conventional
+detection sensors and **Detection** event stay unchanged. Recording can continue
+according to the camera's mode settings. Turning Notification on also notifies your phone.
 Seen on HomeBase 3 stations; other stations follow the eufy app's mode settings, not tested.
 
 Each camera and doorbell has a **Detections in current mode** diagnostic sensor:
@@ -255,7 +284,7 @@ Each camera and doorbell has a **Detections in current mode** diagnostic sensor:
 | State | Meaning |
 |---|---|
 | `sent` | Notification is on for the device in the mode in force |
-| `not_sent_in_mode` | Notification is off: no detections from it while this mode is in force |
+| `not_sent_in_mode` | Notification is off: no individual detection notifications from it while this mode is in force |
 | `unknown` | not known: no mode settings reported yet, the mode in force unknown, or a mode without per-device settings (Geofencing) |
 
 Attributes: `mode` (the mode in force) and `sending_modes` (the armed modes that send
@@ -601,7 +630,7 @@ push. Whether a HomeBase 3 also delivers these events over LAN is unverified.
   that does not send them over the LAN: a standalone camera, a HomeBase 2 and its
   cameras, or a station model not yet checked. A HomeBase 3 reports its cameras'
   detections over the LAN without it.
-- While it is off and such a station is set up, the repair **eufy detections need
+- While it is off and such a station is set up, the repair **eufy detection notifications need
   cloud push** names the stations; its **Fix** switches the option on and reloads.
 - A detection that arrives both over the LAN and from the cloud fires once. When a
   later push of the same detection names a more specific kind (motion, then a
@@ -684,7 +713,34 @@ HomeBase (version strings by parameter id; the subsystems are unnamed) and
 One trigger per subsection; replace the entity ids with your own. To add one, open a pull
 request that edits this section.
 
+### Recording Activity event
+
+Use the camera's **Recording Activity** event directly:
+
+```yaml
+triggers:
+  - trigger: event.received
+    target:
+      entity_id: event.front_door_recording_activity
+    options:
+      event_type:
+        - counted
+actions:
+  - action: notify.notify
+    data:
+      message: Front door recording activity
+```
+
+Use your camera's actual entity ID and notification action.
+For motion activity, use its **Motion Activity** event instead.
+
+See [Counter-derived camera activity events](#counter-derived-camera-activity-events)
+for attributes and limitations.
+
 ### A recording was counted
+
+Where the diagnostic counter sensor is available, the following alternative
+trigger can also be used.
 
 The camera's **Recorded events** sensor rises when the camera records. It works in a
 security mode whose Notification switch is off, where the **Detection** event does not
