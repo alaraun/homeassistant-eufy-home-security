@@ -198,6 +198,18 @@ wheels = [
 ]
 
 [[package]]
+name = "aiomqtt"
+version = "2.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "paho-mqtt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/70/44/cfc58272783a11729462dc6df5adbfeabd084f840f609054ac772ae98c19/aiomqtt-2.5.1.tar.gz", hash = "sha256:25a0a47d157e8f158d2da1110ea4786c0615518751e94f7b04976c977a8ff20d", size = 86641, upload-time = "2026-03-05T18:28:56.421Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/01/9e/5089fa596220bf0dc73deeb23db27904e4b3504986caf08571f6f5cb84a8/aiomqtt-2.5.1-py3-none-any.whl", hash = "sha256:fd58c3593160e4d475d90ce911cdfc4239cd64de96b0ba22edf6c86bd7afa278", size = 16051, upload-time = "2026-03-05T18:28:55.14Z" },
+]
+
+[[package]]
 name = "aiooui"
 version = "0.1.9"
 source = { registry = "https://pypi.org/simple" }
@@ -949,6 +961,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a4/24/6daf05f1f7524d9c0550a58cb5245597cd7c49e8b771d7dc35ed44170784/eufy_home_security-0.4.21-py3-none-any.whl", hash = "sha256:824fb9a6b98bcd84a31c236e8de4b1d874ff404e4f26386491af53f30ba98a6a", size = 1610352, upload-time = "2026-11-27T14:33:18.838Z" },
 ]
 
+[package.optional-dependencies]
+mqtt = [
+    { name = "aiomqtt" },
+]
+
 [[package]]
 name = "execnet"
 version = "2.1.2"
@@ -1264,7 +1281,7 @@ source = { virtual = "." }
 [package.dev-dependencies]
 dev = [
     { name = "av" },
-    { name = "eufy-home-security" },
+    { name = "eufy-home-security", extra = ["mqtt"] },
     { name = "mypy" },
     { name = "pytest-homeassistant" },
     { name = "pytest-timeout" },
@@ -1277,7 +1294,7 @@ dev = [
 [package.metadata.requires-dev]
 dev = [
     { name = "av", specifier = "==19.0.0" },
-    { name = "eufy-home-security", specifier = "==0.4.21" },
+    { name = "eufy-home-security", extras = ["mqtt"], specifier = "==0.4.21" },
     { name = "mypy" },
     { name = "pytest-homeassistant", specifier = "==2026.11.0" },
     { name = "pytest-timeout" },

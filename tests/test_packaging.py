@@ -60,7 +60,8 @@ _REQUIRED_MANIFEST_KEYS = (
 # requirement. These tests hold the rule locally, including the PEP 440 shape.
 # An exact pin: Home Assistant installs a requirement only when the installed
 # version does not satisfy it, so a wildcard never upgrades an existing install.
-_LIBRARY_REQUIREMENT = "eufy-home-security==0.4.21"
+# The `mqtt` extra brings the MQTT client the locks served over eufy's broker need.
+_LIBRARY_REQUIREMENT = "eufy-home-security[mqtt]==0.4.21"
 _SANCTIONED_REQUIREMENTS = [_LIBRARY_REQUIREMENT]
 
 
