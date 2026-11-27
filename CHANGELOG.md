@@ -5,6 +5,23 @@ All notable changes to this project. The project follows
 release may change entities, options or actions. From 0.1.0 on, release-please writes the
 entries from the conventional commits.
 
+## [0.4.23](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.22...v0.4.23) (2026-11-27)
+
+
+### Features
+
+* **card:** show_event: false hides the Event chip on the picture, so a narrow tile shows the camera's name ([issue 206](https://github.com/alaraun/homeassistant-eufy-home-security/issues/206)) ([e528d1a](https://github.com/alaraun/homeassistant-eufy-home-security/commit/e528d1a3e091acbbc12d737d4d1a78241a63d6b8))
+* **card:** with show_controls: false, full screen shows the controls again (pan/tilt, zoom and presets included) and leaving it hides them ([issue 206](https://github.com/alaraun/homeassistant-eufy-home-security/issues/206)) ([e528d1a](https://github.com/alaraun/homeassistant-eufy-home-security/commit/e528d1a3e091acbbc12d737d4d1a78241a63d6b8))
+* **lock:** lock and unlock eufy smart locks where the library sends the command, confirmed by the lock's report, showing locking or unlocking once the lock took it (library 0.4.21; not tested on lock hardware) ([0b8612b](https://github.com/alaraun/homeassistant-eufy-home-security/commit/0b8612b5eaf8b4022daab3bfac3afc0583d3e1a5))
+* **lock:** Wi-Fi locks that take their commands over eufy's MQTT broker lock and unlock too; the integration now installs the library's MQTT client (library 0.4.21; not tested on lock hardware) ([0b8612b](https://github.com/alaraun/homeassistant-eufy-home-security/commit/0b8612b5eaf8b4022daab3bfac3afc0583d3e1a5))
+
+
+### Bug Fixes
+
+* **binary_sensor:** Storage problem follows the station model's own storage status table; a standalone T8115 reporting status 30 shows a problem (library 0.4.21) ([3a62b9c](https://github.com/alaraun/homeassistant-eufy-home-security/commit/3a62b9c0719d74570f6d05405a946141f91672be))
+* **lock:** a lock's state no longer goes back to a stale or undated cloud copy after a newer report (library 0.4.21) ([3a62b9c](https://github.com/alaraun/homeassistant-eufy-home-security/commit/3a62b9c0719d74570f6d05405a946141f91672be))
+* **recordings:** more recordings protected by Local Advanced Encryption (version-9 records and history rows) get the repair at once instead of failed retries (library 0.4.21) ([3a62b9c](https://github.com/alaraun/homeassistant-eufy-home-security/commit/3a62b9c0719d74570f6d05405a946141f91672be))
+
 ## [0.4.22](https://github.com/alaraun/homeassistant-eufy-home-security/compare/v0.4.21...v0.4.22) (2026-11-26)
 
 
