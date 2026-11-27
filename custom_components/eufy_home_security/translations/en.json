@@ -542,7 +542,7 @@
       "message": "Another command for this lock is still waiting for the lock, so nothing was sent. Try again when the lock has reported its state."
     },
     "lock_command_rejected": {
-      "message": "The lock or its station refused the command (code {code}). The lock shows the state it last reported."
+      "message": "The lock or its station refused the command (code {code}); the lock did not move for it."
     },
     "lock_not_moved": {
       "message": "The lock took the command but then reported {state}: the bolt may be stuck. Check the lock."

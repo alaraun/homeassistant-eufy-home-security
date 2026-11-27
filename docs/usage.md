@@ -111,11 +111,13 @@ reloads the integration.
   app, a lock that does not answer fails after 20 s, and one that answers but does not
   report the asked state after another 30 s. An automation's lock or unlock step waits up
   to 75 s; a step stopped meanwhile leaves the command running. A lock that refuses the
-  command (it never shows a move then), reports a jammed bolt or reports nothing in time
-  ends the call with an error. A lock that took the command but whose call failed keeps
-  showing **Locking** or **Unlocking** until its next report, at most 30 s after it took
-  the command, then the state it last reported. The shown state is always the lock's own
-  report.
+  command, reports a jammed bolt or reports nothing in time ends the call with an error.
+  A refusal in the lock's answer shows no move; a lock that refuses in its status report
+  after taking the command ends the **Locking** or **Unlocking** it showed at once. A lock
+  that took the command but whose call failed otherwise keeps showing **Locking** or
+  **Unlocking** until its next report, at most 30 s after it took the command, then the
+  state it last reported; a refused command leaves such a move of an earlier command as
+  it is. The shown state is always the lock's own report.
 - Refused before anything is sent, with a message that says why:
   - a lock whose command the library does not send (T8500, T8510: Bluetooth frames
     through the station; T8504: no command route; a T8506 whose serial's 7th character
