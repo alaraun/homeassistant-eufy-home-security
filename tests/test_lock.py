@@ -13,7 +13,7 @@ from typing import Final
 
 import pytest
 from conftest import entity_id_for, record_states, set_up_warm, state_of, wait_until
-from eufy_home_security import EventSource, SecurityEvent, entity_unique_id
+from eufy_home_security import EventSource, SecurityEvent, UnsupportedError, entity_unique_id
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation, camera_device
 from homeassistant.components.cover import DOMAIN as COVER_DOMAIN
 from homeassistant.components.lock import DOMAIN as LOCK_DOMAIN
@@ -197,6 +197,30 @@ async def test_a_report_repeating_the_state_shows_its_own_source(
     assert state is not None
     assert state.state == HALockState.LOCKED
     assert ATTR_RAW_VALUE not in state.attributes
+
+
+async def test_a_lock_the_device_list_no_longer_names_shows_unknown(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Between a refresh that drops the lock and the reload that follows, the library has
+    no reading for it (``UnsupportedError``): the lock shows unknown, and the write does
+    not fail."""
+    _seed_lock(fake_station, "4")
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = _lock_id(hass)
+    assert state_of(hass, entity_id) == HALockState.LOCKED
+
+    def unlisted(device_sn: str) -> None:
+        raise UnsupportedError(f"{device_sn} is not in the device list")
+
+    monkeypatch.setattr(entry.runtime_data.eufy, "lock_state", unlisted)
+    _seed_lock(fake_station, "3")
+    fake_station.send_param_dump()
+
+    await wait_until(lambda: state_of(hass, entity_id) == STATE_UNKNOWN)
 
 
 @pytest.mark.parametrize("service", ["lock", "unlock"])

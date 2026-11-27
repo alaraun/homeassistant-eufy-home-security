@@ -42,7 +42,6 @@ from eufy_home_security import (
     MissingDependencyError,
     RateLimitedError,
     StationClaims,
-    UnsupportedError,
 )
 from eufy_home_security.mqtt.account import EufyMqttAccount
 
@@ -409,18 +408,10 @@ async def async_run_push(eufy: EufySecurity) -> None:
 
 
 def mqtt_lock_serials(eufy: EufySecurity, serials: Iterable[str]) -> list[str]:
-    """The locks among ``serials`` the library commands over eufy's MQTT broker
-    (``lock_control(...).path`` ``mqtt``); a serial the device list no longer names is
-    left out."""
-    found: list[str] = []
-    for serial in serials:
-        try:
-            path = eufy.lock_control(serial).path
-        except UnsupportedError:
-            continue
-        if path == "mqtt":
-            found.append(serial)
-    return found
+    """The locks among ``serials`` (devices of the client's built stations, which
+    ``lock_control`` always finds) the library commands over eufy's MQTT broker
+    (``lock_control(...).path`` ``mqtt``)."""
+    return [serial for serial in serials if eufy.lock_control(serial).path == "mqtt"]
 
 
 def start_lock_mqtt(

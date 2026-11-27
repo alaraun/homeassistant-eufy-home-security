@@ -269,6 +269,29 @@ async def test_an_unload_stops_the_mqtt_account(
     assert accounts[0].calls[-1] == ("stop", ())
 
 
+async def test_an_unload_stops_the_mqtt_account_before_the_client_closes(
+    hass: HomeAssistant,
+    seed_warm_cache: Callable[..., None],
+    accounts: list[FakeMqttAccount],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The account's bounded stop comes first, then the client's close (which takes the
+    account back and saves the account store), both inside the unload."""
+    close = EufySecurity.async_close
+
+    async def recorded_close(self: EufySecurity) -> None:
+        accounts[0].calls.append(("close", ()))
+        await close(self)
+
+    monkeypatch.setattr(EufySecurity, "async_close", recorded_close)
+    entry = await set_up_warm(hass, seed_warm_cache)
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert [tag for tag, _ in accounts[0].calls][-2:] == ["stop", "close"]
+
+
 async def test_without_the_mqtt_extra_the_lock_refuses_and_setup_goes_on(
     hass: HomeAssistant,
     seed_warm_cache: Callable[..., None],
