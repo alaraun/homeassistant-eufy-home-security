@@ -228,6 +228,33 @@ async def test_a_device_list_refresh_updates_the_mqtt_account(
     assert accounts[0].calls == [("start", (MQTT_LOCK_SN,)), ("update", (MQTT_LOCK_SN,))]
 
 
+async def test_a_refresh_that_reloads_the_entry_leaves_the_mqtt_account_alone(
+    hass: HomeAssistant,
+    seed_warm_cache: Callable[..., None],
+    accounts: list[FakeMqttAccount],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fetched list changed the paired devices (the router schedules a reload during
+    the fetch): the old account is not updated, the reload builds the next one."""
+    entry = await set_up_warm(hass, seed_warm_cache)
+    eufy = entry.runtime_data.eufy
+    router = entry.runtime_data.router
+    fetch = eufy.async_discover
+
+    async def fetch_that_changes_the_pairing(*args: Any, **kwargs: Any) -> Any:
+        found = await fetch(*args, **kwargs)
+        router.async_reload_soon("paired devices changed")
+        return found
+
+    monkeypatch.setattr(eufy, "async_discover", fetch_that_changes_the_pairing)
+    button = entity_id_for(hass, BUTTON_DOMAIN, entry.entry_id, REFRESH_DEVICE_LIST_KEY)
+    await hass.services.async_call(BUTTON_DOMAIN, "press", {ATTR_ENTITY_ID: button}, blocking=True)
+    await hass.async_block_till_done()
+
+    assert [tag for tag, _ in accounts[0].calls] == ["start", "stop"]
+    assert len(accounts) == 2
+
+
 async def test_an_unload_stops_the_mqtt_account(
     hass: HomeAssistant,
     seed_warm_cache: Callable[..., None],
