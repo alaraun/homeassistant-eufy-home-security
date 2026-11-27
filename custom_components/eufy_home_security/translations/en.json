@@ -523,8 +523,53 @@
     "siren_duration_invalid": {
       "message": "The HomeBase siren sounds for at most {max} seconds. Choose a duration of {max} seconds or less."
     },
-    "lock_not_supported": {
-      "message": "Locking and unlocking from Home Assistant is not supported yet. Use the eufy app."
+    "lock_not_writable": {
+      "message": "Home Assistant cannot lock or unlock this lock: {reason}. Nothing was sent; use the eufy app."
+    },
+    "lock_command_waiting": {
+      "message": "The lock's last command is still waiting for the lock to report its state, so nothing was sent. Try again when it has."
+    },
+    "lock_guest": {
+      "message": "The eufy account is a guest of this lock, and eufy gives guests no lock or unlock, so nothing was sent. Use the eufy app with the owner's account."
+    },
+    "lock_mqtt_required": {
+      "message": "This lock takes its commands over eufy's MQTT broker, and this install lacks the MQTT client the integration requires (the log says so), so nothing was sent. Install the integration again, or use the eufy app."
+    },
+    "lock_unsupported": {
+      "message": "eufy's device list or sign-in gives this account no lock control of this lock yet, so nothing was sent. Use the eufy app."
+    },
+    "lock_device_busy": {
+      "message": "Another command for this lock is still waiting for the lock, so nothing was sent. Try again when the lock has reported its state."
+    },
+    "lock_command_rejected": {
+      "message": "The lock or its station refused the command (code {code}); the lock did not move for it."
+    },
+    "lock_not_moved": {
+      "message": "The lock took the command but then reported {state}: the bolt may be stuck. Check the lock."
+    },
+    "lock_timeout": {
+      "message": "The lock did not report the asked state in time; check the lock. Its next report shows whether it moved."
+    },
+    "lock_unreachable": {
+      "message": "The lock, its station or eufy's broker could not be reached, so the command was not confirmed; try again in a moment. The lock's next report shows whether it moved."
+    },
+    "lock_command_failed": {
+      "message": "The lock command failed and was not confirmed. The lock's next report shows whether it moved."
+    },
+    "lock_session_replaced": {
+      "message": "Another app or device signed in with the eufy account and ended Home Assistant's session, so the lock command was not sent. Open the account's repair under Settings > System > Repairs to sign in again, or use Reconfigure on the account entry; Home Assistant does not sign in again by itself."
+    },
+    "lock_cloud_unavailable": {
+      "message": "The lock command needed eufy's servers (the lock's key or the connection for its commands), and eufy could not be reached or refused this account, so it was not sent. Check Settings > System > Repairs for this account and try again later."
+    },
+    "lock_key_rejected": {
+      "message": "The lock's station rejected its key, so the lock command was not sent. Open the station's repair under Settings > System > Repairs to let Home Assistant fetch its key once more."
+    },
+    "lock_key_unusable": {
+      "message": "eufy serves no key the lock's station can use, so the lock command was not sent. See the station's repair under Settings > System > Repairs."
+    },
+    "lock_command_cancelled": {
+      "message": "The lock command was stopped because the eufy account entry was unloaded, before the lock reported its state. Check the lock."
     },
     "garage_door_position_unknown": {
       "message": "The garage door's position is unknown. Use the eufy app to move it."

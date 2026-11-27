@@ -358,8 +358,37 @@ EXC_SIREN_ACCOUNT_REJECTED: Final = "siren_account_rejected"
 EXC_SIREN_UNSUPPORTED: Final = "siren_unsupported"
 # A HomeBase siren duration above the longest the library sends; nothing was sent.
 EXC_SIREN_DURATION_INVALID: Final = "siren_duration_invalid"
-# A lock or unlock asked of a lock entity: the library sends no lock command yet.
-EXC_LOCK_NOT_SUPPORTED: Final = "lock_not_supported"
+# Seconds a lock or unlock may take in all, connect and send included: the library's cap on
+# the whole call (``timeout=``), within which its own waits keep the eufy app's values (over
+# MQTT 15 s for the broker to take the command, 20 s for the lock's answer, 30 s for its
+# state; over a station 50 s after the send).
+LOCK_COMMAND_TIMEOUT_SECONDS: Final = 75.0
+# Seconds an unload waits for the locks' MQTT account to stop before the client closes; a
+# stop given up on still stops every client (the library tells each to stop before it
+# waits). Inside Home Assistant's 10 s wait for an entry's unload tasks, with the client's
+# close after it.
+LOCK_MQTT_STOP_TIMEOUT_SECONDS: Final = 5.0
+# Lock and unlock refused before anything is sent: the library cannot send to this lock
+# (with the library's reason), or a command of the lock still waits.
+EXC_LOCK_NOT_WRITABLE: Final = "lock_not_writable"
+EXC_LOCK_COMMAND_WAITING: Final = "lock_command_waiting"
+# A lock command's library error, one key per error class.
+EXC_LOCK_GUEST: Final = "lock_guest"
+EXC_LOCK_MQTT_REQUIRED: Final = "lock_mqtt_required"
+EXC_LOCK_UNSUPPORTED: Final = "lock_unsupported"
+EXC_LOCK_DEVICE_BUSY: Final = "lock_device_busy"
+EXC_LOCK_COMMAND_REJECTED: Final = "lock_command_rejected"
+EXC_LOCK_NOT_MOVED: Final = "lock_not_moved"
+EXC_LOCK_TIMEOUT: Final = "lock_timeout"
+EXC_LOCK_UNREACHABLE: Final = "lock_unreachable"
+EXC_LOCK_COMMAND_FAILED: Final = "lock_command_failed"
+# A lock command that needed the cloud or the station's key and did not get it.
+EXC_LOCK_SESSION_REPLACED: Final = "lock_session_replaced"
+EXC_LOCK_CLOUD_UNAVAILABLE: Final = "lock_cloud_unavailable"
+EXC_LOCK_KEY_REJECTED: Final = "lock_key_rejected"
+EXC_LOCK_KEY_UNUSABLE: Final = "lock_key_unusable"
+# A lock command ended by the entry's unload before the lock reported.
+EXC_LOCK_COMMAND_CANCELLED: Final = "lock_command_cancelled"
 # An open or close of a garage door whose position is unknown; nothing was sent.
 EXC_GARAGE_DOOR_POSITION_UNKNOWN: Final = "garage_door_position_unknown"
 # An open or close of a garage door while another command of that door, or of the other

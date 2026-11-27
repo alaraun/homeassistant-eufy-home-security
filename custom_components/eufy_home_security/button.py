@@ -357,10 +357,11 @@ class EufyRefreshDeviceListButton(ButtonEntity):
         ``StationsChanged``, and the router schedules the reload; a station added is
         also found here by comparing the served stations with the client's. Every
         device of the entry the list no longer names is removed at once, the station
-        itself included. Only registries are touched after the
-        fetch when a reload follows, so the reload cannot unload this entity mid-press;
-        the pending invitations are read for their repair, at once or at the setup of
-        the reload that follows.
+        itself included. The locks' MQTT account, when the entry runs one, follows the new
+        list unless the router has a reload pending (the reload builds the next account).
+        That update is the only await after the fetch, and only when no reload is pending, so
+        a reload cannot unload this entity mid-press; the pending invitations are read for
+        their repair, at once or at the setup of the reload that follows.
         """
         runtime_data = self._entry.runtime_data
         router = runtime_data.router
@@ -382,6 +383,8 @@ class EufyRefreshDeviceListButton(ButtonEntity):
             raise errors.device_list_refresh_failed(self.hass, self._entry, err) from err
         finally:
             self._refreshing = False
+        if not router.reload_pending:
+            await runtime.async_update_lock_mqtt(runtime_data.eufy, runtime_data.lock_mqtt)
         stale_devices.async_remove_unlisted(
             self.hass, self._entry, runtime.listed_serials(runtime_data.eufy)
         )

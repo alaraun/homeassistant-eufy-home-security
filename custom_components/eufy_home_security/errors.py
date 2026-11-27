@@ -54,17 +54,25 @@ from eufy_home_security import (
     CloudProblem,
     CommandError,
     CommandNotAppliedError,
+    CommandRejectedError,
     CommandUnsupportedError,
+    CommunicationError,
     ConnectionChanged,
     CredentialsRefreshed,
     DetectionDelivery,
     DetectionDeliveryReport,
+    DeviceBusyError,
+    DeviceTimeoutError,
     EufySecurityError,
     GuardMode,
+    GuestAccessError,
+    HandshakeError,
     KeyRejectedError,
     LiveStreamLimitError,
+    LockNotMovedError,
     LoginChallengeError,
     LoginVerificationError,
+    MqttAccountRequiredError,
     PathWarning,
     PtzAction,
     PtzActionUnsupportedError,
@@ -112,7 +120,22 @@ from .const import (
     EXC_GUARD_MODE_REJECTED,
     EXC_LIGHT_CONTROL_OFF,
     EXC_LIVE_STREAM_LIMIT,
-    EXC_LOCK_NOT_SUPPORTED,
+    EXC_LOCK_CLOUD_UNAVAILABLE,
+    EXC_LOCK_COMMAND_CANCELLED,
+    EXC_LOCK_COMMAND_FAILED,
+    EXC_LOCK_COMMAND_REJECTED,
+    EXC_LOCK_COMMAND_WAITING,
+    EXC_LOCK_DEVICE_BUSY,
+    EXC_LOCK_GUEST,
+    EXC_LOCK_KEY_REJECTED,
+    EXC_LOCK_KEY_UNUSABLE,
+    EXC_LOCK_MQTT_REQUIRED,
+    EXC_LOCK_NOT_MOVED,
+    EXC_LOCK_NOT_WRITABLE,
+    EXC_LOCK_SESSION_REPLACED,
+    EXC_LOCK_TIMEOUT,
+    EXC_LOCK_UNREACHABLE,
+    EXC_LOCK_UNSUPPORTED,
     EXC_ON_DEMAND_UNREACHABLE,
     EXC_PAN_TILT_NOT_APPLIED,
     EXC_PAN_TILT_UNSUPPORTED,
@@ -562,10 +585,112 @@ def siren_failed(
     )
 
 
-def lock_not_supported() -> ServiceValidationError:
-    """A lock or unlock asked of a lock: the library sends no lock command yet, so nothing
+def lock_not_writable(reason: str | None) -> ServiceValidationError:
+    """A lock or unlock of a lock the library cannot send to; nothing was sent. The
+    placeholder is the library's ``LockControl.reason``, a text it words for a UI."""
+    return ServiceValidationError(
+        translation_domain=DOMAIN,
+        translation_key=EXC_LOCK_NOT_WRITABLE,
+        translation_placeholders={"reason": reason or "unknown"},
+    )
+
+
+def lock_command_waiting() -> ServiceValidationError:
+    """A lock or unlock while a command of that lock still waits for its report; nothing
     was sent."""
-    return ServiceValidationError(translation_domain=DOMAIN, translation_key=EXC_LOCK_NOT_SUPPORTED)
+    return ServiceValidationError(
+        translation_domain=DOMAIN, translation_key=EXC_LOCK_COMMAND_WAITING
+    )
+
+
+def lock_command_cancelled() -> HomeAssistantError:
+    """A lock command the entry's unload ended before the lock reported."""
+    return HomeAssistantError(translation_domain=DOMAIN, translation_key=EXC_LOCK_COMMAND_CANCELLED)
+
+
+def lock_failed(
+    hass: HomeAssistant,
+    entry: ConfigEntry[Any],
+    err: EufySecurityError,
+    *,
+    station_name: str,
+    station_target: str,
+) -> HomeAssistantError:
+    """A lock or unlock that ended with the library's ``err``, one key per error class.
+
+    Checked in this order, because the classes nest:
+
+    - :func:`is_session_replaced_failure`: another client's login ended the eufy session;
+      the message points at the account's repair.
+    - ``CameraWakeError`` (also a ``CommandError``): the station answered but could not wake
+      the lock's device; not reached, as below.
+    - ``CommandError``: the station's or the lock's answer to a command that was sent.
+      ``LockNotMovedError`` (placeholder ``state``, the library's state name),
+      ``AccountRejectedError`` (-104: the shared ``account_rejected`` sharing hint, naming
+      ``station_name`` and ``station_target``), any other ``CommandRejectedError``
+      (placeholder ``code``; ``CommandUnsupportedError`` is also an ``UnsupportedError``
+      but was sent), any other a generic failure.
+    - Refused before sending (a ``ServiceValidationError``): ``GuestAccessError``,
+      ``MqttAccountRequiredError``, any other ``UnsupportedError``, ``DeviceBusyError``.
+    - ``KeyRejectedError`` and ``CipherUnusableError``: the station's key repairs.
+    - ``CloudError`` (the lock's public key, the MQTT certificate, a sign-in): routed
+      through :func:`route_cloud_error` (reauth, or the account's repair issue).
+    - ``DeviceTimeoutError`` (a wait, or the cap on the whole call); any other
+      ``CommunicationError`` (also an MQTT lock while its connection is not up, nothing
+      sent) or ``HandshakeError``: the lock or the way to it was not reached. Anything
+      else: a generic failure.
+
+    A cloud error is routed for a session replaced too. Never the library's message text,
+    never a serial.
+    """
+    if isinstance(err, CloudError):
+        route_cloud_error(hass, entry, err)
+    placeholders: dict[str, str] = {}
+    if is_session_replaced_failure(err):
+        key = EXC_LOCK_SESSION_REPLACED
+    elif isinstance(err, CameraWakeError):
+        key = EXC_LOCK_UNREACHABLE
+    elif isinstance(err, CommandError):
+        if isinstance(err, LockNotMovedError):
+            key = EXC_LOCK_NOT_MOVED
+            placeholders["state"] = str(err.state)
+        elif isinstance(err, AccountRejectedError):
+            key = EXC_ACCOUNT_REJECTED
+            placeholders.update(station=station_name, target=station_target)
+        elif isinstance(err, CommandRejectedError):
+            key = EXC_LOCK_COMMAND_REJECTED
+            placeholders["code"] = str(err.code)
+        else:
+            key = EXC_LOCK_COMMAND_FAILED
+    else:
+        refused: str | None = None
+        if isinstance(err, GuestAccessError):
+            refused = EXC_LOCK_GUEST
+        elif isinstance(err, MqttAccountRequiredError):
+            refused = EXC_LOCK_MQTT_REQUIRED
+        elif isinstance(err, UnsupportedError):
+            refused = EXC_LOCK_UNSUPPORTED
+        elif isinstance(err, DeviceBusyError):
+            refused = EXC_LOCK_DEVICE_BUSY
+        if refused is not None:
+            return ServiceValidationError(translation_domain=DOMAIN, translation_key=refused)
+        if isinstance(err, KeyRejectedError):
+            key = EXC_LOCK_KEY_REJECTED
+        elif isinstance(err, CipherUnusableError):
+            key = EXC_LOCK_KEY_UNUSABLE
+        elif isinstance(err, CloudError):
+            key = EXC_LOCK_CLOUD_UNAVAILABLE
+        elif isinstance(err, DeviceTimeoutError):
+            key = EXC_LOCK_TIMEOUT
+        elif isinstance(err, (CommunicationError, HandshakeError)):
+            key = EXC_LOCK_UNREACHABLE
+        else:
+            key = EXC_LOCK_COMMAND_FAILED
+    return HomeAssistantError(
+        translation_domain=DOMAIN,
+        translation_key=key,
+        translation_placeholders=placeholders or None,
+    )
 
 
 def garage_door_position_unknown() -> ServiceValidationError:

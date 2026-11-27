@@ -1,7 +1,9 @@
-"""Smart locks: a read-only lock entity per device the library grades as a lock.
+"""Smart locks: a lock entity per device the library grades as a lock.
 
 The state is the library's lock reading, mapped as the library's guide suggests, and
-follows ``LockStateChanged``; lock and unlock are refused with nothing sent.
+follows ``LockStateChanged``. The lock here takes a command form the library does not
+send, so lock and unlock are refused with the library's reason and nothing is sent
+(commands of a writable lock: ``test_lock_control.py``).
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ from typing import Final
 
 import pytest
 from conftest import entity_id_for, record_states, set_up_warm, state_of, wait_until
-from eufy_home_security import EventSource, SecurityEvent, entity_unique_id
+from eufy_home_security import EventSource, SecurityEvent, UnsupportedError, entity_unique_id
 from eufy_home_security.testing import SYNTHETIC, FakeCloud, FakeStation, camera_device
 from homeassistant.components.cover import DOMAIN as COVER_DOMAIN
 from homeassistant.components.lock import DOMAIN as LOCK_DOMAIN
@@ -25,7 +27,7 @@ from custom_components.eufy_home_security.const import (
     ATTR_LOCK_STATE,
     ATTR_RAW_VALUE,
     DOMAIN,
-    EXC_LOCK_NOT_SUPPORTED,
+    EXC_LOCK_NOT_WRITABLE,
     LOCK_KEY,
 )
 
@@ -37,6 +39,8 @@ LOCK_CHANNEL: Final = 1
 LOCK_STATE_PARAM: Final = 1912
 # A lock push reporting a mechanical fault.
 JAMMED_PUSH: Final = 517
+# A lock push reporting the lock locked (by hand).
+LOCK_PUSH: Final = 262
 
 pytestmark = pytest.mark.usefixtures("built_clients")
 
@@ -165,6 +169,60 @@ async def test_a_jammed_push_shows_jammed(
     assert ATTR_RAW_VALUE not in state.attributes
 
 
+async def test_a_report_repeating_the_state_shows_its_own_source(
+    hass: HomeAssistant, fake_station: FakeStation, seed_warm_cache: Callable[..., None]
+) -> None:
+    """A push repeating the locked state (``LockStateChanged.changed`` False) is the lock's
+    reading now: the state stays and the reported raw value goes with the earlier report."""
+    _seed_lock(fake_station, "4")
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = _lock_id(hass)
+    before = hass.states.get(entity_id)
+    assert before is not None
+    assert before.attributes[ATTR_RAW_VALUE] == "4"
+    station = entry.runtime_data.coordinators[SYNTHETIC.station_sn].station
+
+    assert station.note_lock_push(
+        SecurityEvent(
+            source=EventSource.CLOUD,
+            station_sn=SYNTHETIC.station_sn,
+            device_sn=LOCK_SN,
+            event_type=LOCK_PUSH,
+            frame_cipher=None,
+        )
+    )
+    await hass.async_block_till_done()
+
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.state == HALockState.LOCKED
+    assert ATTR_RAW_VALUE not in state.attributes
+
+
+async def test_a_lock_the_device_list_no_longer_names_shows_unknown(
+    hass: HomeAssistant,
+    fake_station: FakeStation,
+    seed_warm_cache: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Between a refresh that drops the lock and the reload that follows, the library has
+    no reading for it (``UnsupportedError``): the lock shows unknown, and the write does
+    not fail."""
+    _seed_lock(fake_station, "4")
+    entry = await set_up_warm(hass, seed_warm_cache)
+    entity_id = _lock_id(hass)
+    assert state_of(hass, entity_id) == HALockState.LOCKED
+
+    def unlisted(device_sn: str) -> None:
+        raise UnsupportedError(f"{device_sn} is not in the device list")
+
+    monkeypatch.setattr(entry.runtime_data.eufy, "lock_state", unlisted)
+    _seed_lock(fake_station, "3")
+    fake_station.send_param_dump()
+
+    await wait_until(lambda: state_of(hass, entity_id) == STATE_UNKNOWN)
+
+
 @pytest.mark.parametrize("service", ["lock", "unlock"])
 async def test_lock_and_unlock_are_refused_and_send_nothing(
     hass: HomeAssistant,
@@ -172,10 +230,14 @@ async def test_lock_and_unlock_are_refused_and_send_nothing(
     seed_warm_cache: Callable[..., None],
     service: str,
 ) -> None:
-    """Lock and unlock raise the translated refusal; nothing is sent and the state stays."""
+    """Lock and unlock raise the translated refusal with the library's reason; nothing is
+    sent and the state stays."""
     _seed_lock(fake_station, "4")
-    await set_up_warm(hass, seed_warm_cache)
+    entry = await set_up_warm(hass, seed_warm_cache)
     entity_id = _lock_id(hass)
+    control = entry.runtime_data.eufy.lock_control(LOCK_SN)
+    assert not control.writable
+    assert control.reason
     sent = len(fake_station.received)
 
     with pytest.raises(ServiceValidationError) as raised:
@@ -184,6 +246,7 @@ async def test_lock_and_unlock_are_refused_and_send_nothing(
         )
 
     assert raised.value.translation_domain == DOMAIN
-    assert raised.value.translation_key == EXC_LOCK_NOT_SUPPORTED
+    assert raised.value.translation_key == EXC_LOCK_NOT_WRITABLE
+    assert raised.value.translation_placeholders == {"reason": control.reason}
     assert len(fake_station.received) == sent
     assert state_of(hass, entity_id) == HALockState.LOCKED

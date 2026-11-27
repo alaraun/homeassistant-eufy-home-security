@@ -86,8 +86,51 @@ reloads the integration.
 ## Locks
 
 - **Lock** of a smart lock, a video smart lock included, where the library reads the
-  lock's state. It shows that state only: lock and unlock raise "Locking and unlocking
-  from Home Assistant is not supported yet. Use the eufy app." and send nothing.
+  lock's state.
+- Lock and unlock where the library sends the lock's command over the route the eufy app
+  uses for it: through the lock's HomeBase or its own station session (T8501, T8502,
+  T8503, T8506, T8520, T8530, and T8531, T8532, T85M0, T85M1, T85V0 behind a HomeBase),
+  or over eufy's MQTT broker (a T8531, T8532, T85M0, T85M1 or T85V0 that is its own
+  station, and a Wi-Fi lock that gets an entity: T85D0, T85D2, T85F0, T85F1, T85L0,
+  T85L1, T85P0, T85P1). The library also sends to a T85F2 or T85F3, which get no lock
+  entity yet (the library reads no lock state for them). Declared from the eufy app, not
+  tested on hardware.
+- The MQTT broker connection is opened only for an account with such a lock: one per
+  account entry, following each **Refresh device list**, closed when the entry unloads.
+  The integration's requirement includes the library's MQTT client
+  (`eufy-home-security[mqtt]`); only an install that lacks it (a broken install) leaves
+  those locks showing their state but refusing lock and unlock, and the log says so once
+  at setup: install the integration again.
+  While the connection is still starting, or after it failed to start, a command sends
+  nothing and ends with the lock-unreachable message; try again in a moment.
+- The state is the library's one reading of the lock: its station's reports, pushes and
+  the lock's own reports over its station or the broker, the newest winning.
+- A command counts only once the lock reports the asked state: the call waits for that
+  report, up to 75 s in all (connecting and sending included). Once the lock has taken
+  the command it shows **Locking** or **Unlocking** until its next report. As in the eufy
+  app, a lock that does not answer fails after 20 s, and one that answers but does not
+  report the asked state after another 30 s. An automation's lock or unlock step waits up
+  to 75 s; a step stopped meanwhile leaves the command running. A lock that refuses the
+  command, reports a jammed bolt or reports nothing in time ends the call with an error.
+  A refusal in the lock's answer shows no move; a lock that refuses in its status report
+  after taking the command ends the **Locking** or **Unlocking** it showed at once. A lock
+  that took the command but whose call failed otherwise keeps showing **Locking** or
+  **Unlocking** until its next report, at most 30 s after it took the command, then the
+  state it last reported; a refused command leaves such a move of an earlier command as
+  it is. The shown state is always the lock's own report.
+- Refused before anything is sent, with a message that says why:
+  - a lock whose command the library does not send (T8500, T8510: Bluetooth frames
+    through the station; T8504: no command route; a T8506 whose serial's 7th character
+    is 8: its route is eufy's broker, which serves no connection for it), with the
+    library's reason;
+  - an account that is a guest of the lock (the eufy app gives guests no lock control),
+    or whose device list names no member record for the lock;
+  - a lock that takes its commands over eufy's MQTT broker while the account has no
+    connection to it (the library's MQTT client is missing from the install; the log says
+    so);
+  - a second lock or unlock while a command of the same lock still waits.
+- Unloading or reloading the account entry stops a waiting command; the call then ends
+  with an error, and whether the lock moved shows with its next report.
 - Locked, unlocked, locking, unlocking and jammed as the lock reports them; passage mode
   shows unlocked, privacy mode locked, a bolt stopped between its positions jammed.
   Uncalibrated, calibrating and nothing reported yet show unknown. The attributes

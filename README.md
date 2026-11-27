@@ -45,7 +45,7 @@ tracker](https://github.com/alaraun/python-eufy-home-security/issues).
 | Video doorbells | as a camera, plus a ring event |
 | Motion and entry sensors | motion or door binary sensor, battery or tamper where reported |
 | Smoke sensors | smoke, problem, end of life, low battery, alarm muted and testing binary sensors |
-| Smart locks, video smart locks included, where the library reads their state (Wi-Fi locks without a HomeBase not yet) | lock showing locked, unlocked or jammed; locking and unlocking from Home Assistant come later |
+| Smart locks, video smart locks included, where the library reads their state (not yet: Wi-Fi locks the library reaches through no station) | lock showing locked, unlocked or jammed, with lock and unlock where the library sends the lock's command (declared from the eufy app, not tested on hardware) |
 | Garage door cameras (T8452, T8453) | a garage door per door, open and close where a motor is connected |
 | Keypads and other eufy devices | added as devices, with the settings the library knows |
 
