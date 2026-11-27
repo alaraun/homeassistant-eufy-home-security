@@ -622,6 +622,8 @@ def lock_failed(
 
     - :func:`is_session_replaced_failure`: another client's login ended the eufy session;
       the message points at the account's repair.
+    - ``CameraWakeError`` (also a ``CommandError``): the station answered but could not wake
+      the lock's device; not reached, as below.
     - ``CommandError``: the station's or the lock's answer to a command that was sent.
       ``LockNotMovedError`` (placeholder ``state``, the library's state name),
       ``AccountRejectedError`` (-104: the shared ``account_rejected`` sharing hint, naming
@@ -646,6 +648,8 @@ def lock_failed(
     placeholders: dict[str, str] = {}
     if is_session_replaced_failure(err):
         key = EXC_LOCK_SESSION_REPLACED
+    elif isinstance(err, CameraWakeError):
+        key = EXC_LOCK_UNREACHABLE
     elif isinstance(err, CommandError):
         if isinstance(err, LockNotMovedError):
             key = EXC_LOCK_NOT_MOVED

@@ -17,6 +17,7 @@ from conftest import entity_id_for, record_states, set_up_warm, state_of, wait_u
 from eufy_home_security import (
     AccountRejectedError,
     AuthenticationError,
+    CameraWakeError,
     CipherUnusableError,
     CloudError,
     CommandRejectedError,
@@ -409,6 +410,8 @@ _ERRORS: Final = (
         False,
     ),
     (DeviceTimeoutError("no state"), EXC_LOCK_TIMEOUT, None, False),
+    # The station's answer, but it could not wake the lock's device: not reached.
+    (CameraWakeError(1940, -204), EXC_LOCK_UNREACHABLE, None, False),
     (CommunicationError("closed"), EXC_LOCK_UNREACHABLE, None, False),
     (EufySecurityError("other"), EXC_LOCK_COMMAND_FAILED, None, False),
 )
