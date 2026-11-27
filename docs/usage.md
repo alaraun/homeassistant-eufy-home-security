@@ -548,7 +548,7 @@ stays in the recorder, and automations on those entity ids stop working.
 | Camera | **Working days** | diagnostic sensor, days | Days since the last USB charge |
 | Camera | **Detected events**, **Recorded events** | diagnostic sensors, total increasing | Counted since the last USB charge; as automation triggers see [Automation triggers](#automation-triggers) |
 | Motion or entry sensor | **Battery low** | diagnostic binary sensor (battery) | The sensor's own low-battery flag |
-| HomeBase | **Storage problem** | diagnostic binary sensor (problem) | On when the storage status is not one the app shows as normal. Attribute `storage_status` (raw code) |
+| HomeBase, or a camera that is its own station | **Storage problem** | diagnostic binary sensor (problem) | On when the storage status is not one the app shows as normal for that model. Attribute `storage_status` (raw code) |
 
 **Disk and eMMC** entities (used, free, size, used percentage, temperature, wear,
 problem, formatting) come from the HomeBase's storage record, read every 30 minutes.
