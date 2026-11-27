@@ -685,12 +685,13 @@ async def test_unload_during_a_wait_cancels_it_quietly(
         assert ours == [], seen
     finally:
         loop.set_exception_handler(None)
-    # All but the storage poll's known failure: the fake HomeBase 2 answers no storage
-    # query, and that poll may log at any time.
+    # All but asyncio's slow-callback warning (a loaded runner) and the storage poll's known
+    # failure: the fake HomeBase 2 answers no storage query, and that poll may log at any time.
     loud = [
         r.getMessage()
         for r in caplog.records
         if r.levelno >= logging.WARNING
+        and not (r.name == "asyncio" and r.getMessage().startswith("Executing "))
         and not (
             r.name == "custom_components.eufy_home_security.storage"
             and r.getMessage().startswith("Error fetching")
