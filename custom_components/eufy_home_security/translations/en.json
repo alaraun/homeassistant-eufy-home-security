@@ -84,7 +84,19 @@
             "data_description": {
               "detection_hold": "5–300 s, 10 by default. A detection sensor turns off this long after the detection's own time. A detection that arrives after its hold has run out still fires its event.",
               "alarm_timeout": "1–60 min, 10 by default. A safety net for an alarm whose end the HomeBase never reports: the panel then leaves Triggered or Pending, shows the guard mode last reported and reads it again.",
-              "mode_holds_detections_repair": "On by default. A repair names the cameras whose Notification action is off in the armed security mode in force, so the station sends none of their detections. Off removes these repairs and raises none; the cameras, the modes and their notifications are unchanged, and each camera's Detections in current mode sensor still shows it."
+              "mode_holds_detections_repair": "On by default. A repair names the cameras whose Notification action is off in the armed security mode in force, so the station sends none of their individual detection notifications. Off removes these repairs and raises none; the cameras, the modes and their notifications are unchanged, and each camera's Detections in current mode sensor still shows it. Motion Activity and Recording Activity events can still report activity locally from supported cameras without cloud notifications. Activity is normally checked every 45 seconds. You can reduce the delay by enabling faster polling for continuously connected stations in the integration configuration."
+            }
+          },
+          "camera_activity": {
+            "name": "Camera activity polling",
+            "description": "Use Motion Activity and Recording Activity events to trigger automations based on local camera activity, without relying on cloud notifications. Activity is normally checked every 45 seconds. Enable faster polling for more responsive automations.",
+            "data": {
+              "fast_activity_poll": "Enable fast camera activity polling",
+              "fast_activity_poll_interval": "Activity polling interval (seconds)"
+            },
+            "data_description": {
+              "fast_activity_poll": "Off by default. Checks camera activity more frequently on continuously connected stations, including HomeBases. This increases network traffic and CPU usage. Stations that connect on demand are unaffected.",
+              "fast_activity_poll_interval": "1–44 seconds, 5 by default. Each check reads the status of the station and its paired devices. Shorter intervals use more resources. One-second polling has only been tested on a HomeBase 2."
             }
           },
           "camera_images": {
@@ -137,7 +149,7 @@
             "data_description": {
               "country": "The country your eufy app signs in with (shown on its sign-in screen). eufy lists a device only under the country it was set up or shared under. Empty means Home Assistant's country. A change asks eufy once for the devices, which can cost a sign-in.",
               "session_probe": "On by default. A minute after start and every 6 hours, one device-list read with the saved session, never a sign-in. When another app or device has ended Home Assistant's session, the repair then shows within that time. Off: noticed at the next command that needs eufy or the next restart.",
-              "cloud_push": "Off by default. Needed for detections from a station that does not send them over the local network: a HomeBase 2, a camera without a HomeBase (such as a T8170 SoloCam) or a model not yet checked; a repair names each one. A HomeBase 3 sends its cameras' detections locally, and one that arrives both ways fires once. Home Assistant listens for eufy's push messages like the phone app, which keeps working. The messages pass through eufy's and Google's servers and can arrive late or not at all."
+              "cloud_push": "Off by default. Needed for individual detection notifications from a station that does not send them over the local network: a HomeBase 2, a camera without a HomeBase (such as a T8170 SoloCam) or a model not yet checked; a repair names each one. A HomeBase 3 sends its cameras' detections locally, and one that arrives both ways fires once. Home Assistant listens for eufy's push messages like the phone app, which keeps working. The messages pass through eufy's and Google's servers and can arrive late or not at all. Motion Activity and Recording Activity events can still report activity locally from supported cameras without cloud notifications. Activity is normally checked every 45 seconds. You can reduce the delay by enabling faster polling for continuously connected stations in the integration configuration."
             }
           },
           "more_countries": {
@@ -240,15 +252,15 @@
     },
     "push_not_running": {
       "title": "eufy cloud push is not running for {account}",
-      "description": "Cloud push is switched on for the eufy account {account}, but Home Assistant is not receiving eufy's push messages right now. Until it is, detections from stations that do not send them locally (a HomeBase 2, a camera without a HomeBase), and changes made in the eufy app, arrive late or not at all. Local control and detections from a HomeBase 3 keep working. Home Assistant keeps retrying by itself, and this notice clears when push runs again. If it stays, check that Home Assistant can reach the internet, and look at the log for the reason. To stop using cloud push, switch it off in the integration's options."
+      "description": "Cloud push is switched on for the eufy account {account}, but Home Assistant is not receiving eufy's push messages right now. Until it is, individual detection notifications from stations that do not send them locally (a HomeBase 2, a camera without a HomeBase), and changes made in the eufy app, arrive late or not at all. Local control and individual detection notifications from a HomeBase 3 keep working.\n\nMotion Activity and Recording Activity events can still report activity locally from supported cameras without cloud notifications. Activity is normally checked every 45 seconds. You can reduce the delay by enabling faster polling for continuously connected stations in the integration configuration.\n\nHome Assistant keeps retrying by itself, and this notice clears when push runs again. If it stays, check that Home Assistant can reach the internet, and look at the log for the reason. To stop using cloud push, switch it off in the integration's options."
     },
     "push_needed": {
-      "title": "eufy detections need cloud push for {account}",
+      "title": "eufy detection notifications need cloud push for {account}",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Switch on cloud push",
-            "description": "These stations of the eufy account {account} do not send their cameras' detections over the local network: {stations}. Their detection sensors and events stay off until cloud push is on. Confirm to switch on Cloud push for detections in the integration's options: Home Assistant reloads the eufy account and then listens for eufy's push messages, which pass through eufy's and Google's servers. To leave it off, ignore this repair; it is checked again on every reload."
+            "description": "These stations of the eufy account {account} do not send their cameras' individual detection notifications over the local network: {stations}. Their existing detection sensors and Detection event require cloud push.\n\nMotion Activity and Recording Activity events can still report activity locally from supported cameras without cloud notifications. Activity is normally checked every 45 seconds. You can reduce the delay by enabling faster polling for continuously connected stations in the integration configuration.\n\nConfirm to switch on Cloud push for detections in the integration's options: Home Assistant reloads the eufy account and then listens for eufy's push messages, which pass through eufy's and Google's servers. To leave it off, ignore this repair; it is checked again on every reload."
           }
         },
         "abort": {
@@ -265,12 +277,12 @@
       "description": "Some recordings of {camera_markdown} are protected by the eufy app's Local Advanced Encryption, so Home Assistant cannot save or play them. They stay on the HomeBase and play in the eufy app. To have new recordings saved here, turn off Local Advanced Encryption in the eufy app under Settings > Security > Media Content Encryption. Recordings made while it was on stay encrypted."
     },
     "mode_holds_detections": {
-      "title": "{station}: no detections from some cameras in {mode} mode",
-      "description": "In {mode} mode the station sends no detections for {devices}: their Notification action is off in this mode, so Home Assistant gets no motion or person events from them until a mode that sends them is in force ({sending_modes}). To receive them in {mode}, open the eufy app → Security mode → {mode} → each camera, and turn on Notification (this also notifies your phone). Ignore this if you keep {mode} silent on purpose. To stop these repairs for every mode, switch off the option Repair when a security mode holds detections back (the integration → Configure)."
+      "title": "{station}: detection notifications off for some cameras in {mode} mode",
+      "description": "In {mode} mode the station sends no individual detection notifications for {devices}: their Notification action is off in this mode, so Home Assistant gets no individual motion or person notifications from them until a mode that sends them is in force ({sending_modes}).\n\nMotion Activity and Recording Activity events can still report activity locally from supported cameras without cloud notifications. Activity is normally checked every 45 seconds. You can reduce the delay by enabling faster polling for continuously connected stations in the integration configuration.\n\nTo receive individual detection notifications in {mode}, open the eufy app → Security mode → {mode} → each camera, and turn on Notification (this also notifies your phone). Ignore this if you keep {mode} silent on purpose. To stop these repairs for every mode, switch off the option Repair when a security mode holds detections back (the integration → Configure)."
     },
     "mode_holds_detections_nowhere": {
-      "title": "{station}: no detections from some cameras in {mode} mode",
-      "description": "In {mode} mode the station sends no detections for {devices}: their Notification action is off in this mode, so Home Assistant gets no motion or person events from them in any armed mode the station reports. To receive them in {mode}, open the eufy app → Security mode → {mode} → each camera, and turn on Notification (this also notifies your phone). Ignore this if you keep {mode} silent on purpose. To stop these repairs for every mode, switch off the option Repair when a security mode holds detections back (the integration → Configure)."
+      "title": "{station}: detection notifications off for some cameras in {mode} mode",
+      "description": "In {mode} mode the station sends no individual detection notifications for {devices}: their Notification action is off in this mode, so Home Assistant gets no individual motion or person notifications from them in any armed mode the station reports.\n\nMotion Activity and Recording Activity events can still report activity locally from supported cameras without cloud notifications. Activity is normally checked every 45 seconds. You can reduce the delay by enabling faster polling for continuously connected stations in the integration configuration.\n\nTo receive individual detection notifications in {mode}, open the eufy app → Security mode → {mode} → each camera, and turn on Notification (this also notifies your phone). Ignore this if you keep {mode} silent on purpose. To stop these repairs for every mode, switch off the option Repair when a security mode holds detections back (the integration → Configure)."
     },
     "cipher_unavailable": {
       "title": "eufy has no key for {station}",
@@ -848,6 +860,26 @@
           "event_type": {
             "state": {
               "ring": "Ring"
+            }
+          }
+        }
+      },
+      "detected_events_counted": {
+        "name": "Motion Activity",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "counted": "Counted"
+            }
+          }
+        }
+      },
+      "recorded_events_counted": {
+        "name": "Recording Activity",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "counted": "Counted"
             }
           }
         }

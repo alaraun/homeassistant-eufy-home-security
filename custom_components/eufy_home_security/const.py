@@ -14,6 +14,14 @@ DOMAIN: Final = "eufy_home_security"
 # The station poll is a safety net, not the main path: guard-mode changes
 # arrive by push. 45 s is the middle of a 30-60 s band.
 POLL_INTERVAL_SECONDS: Final = 45
+
+# Optional faster full-station reads for activity counter observations.
+# This is not a counter-only query. Off by default.
+CONF_FAST_ACTIVITY_POLL: Final = "fast_activity_poll"
+CONF_FAST_ACTIVITY_POLL_INTERVAL: Final = "fast_activity_poll_interval"
+DEFAULT_FAST_ACTIVITY_POLL_SECONDS: Final = 5
+MIN_FAST_ACTIVITY_POLL_SECONDS: Final = 1
+MAX_FAST_ACTIVITY_POLL_SECONDS: Final = 44
 # The storage record's own read, on its own timer: disk use moves slowly, and the
 # station pushes a new record whenever a format ends or another client reads it
 # (the library guide's "about 30 min").
@@ -131,6 +139,7 @@ OPTIONS_STEP_INIT: Final = "init"
 # The options form's collapsible sections, in form order; each holds the options
 # OPTIONS_SECTIONS in config_flow.py names. The options are stored flat.
 OPTIONS_SECTION_DETECTIONS: Final = "detections"
+OPTIONS_SECTION_CAMERA_ACTIVITY: Final = "camera_activity"
 OPTIONS_SECTION_CAMERA_IMAGES: Final = "camera_images"
 OPTIONS_SECTION_LIVE_VIEW: Final = "live_view"
 OPTIONS_SECTION_HISTORY: Final = "history"
@@ -188,6 +197,9 @@ ATTR_SIREN_ACTIONS: Final = "siren_actions"
 # The detection event entity's translation key and unique-id key: one per camera,
 # fired once per detection the library delivers, and again for a more specific kind.
 DETECTION_EVENT_KEY: Final = "detection"
+# Native activity event keys (distinct from the binary sensor keys).
+DETECTED_EVENTS_COUNTED_EVENT_KEY: Final = "detected_events_counted"
+RECORDED_EVENTS_COUNTED_EVENT_KEY: Final = "recorded_events_counted"
 # A camera's detection binary sensors, each the translation key and the key of its
 # unique id: on at a detection of its class, off a hold later.
 MOTION_DETECTED_KEY: Final = "motion_detected"

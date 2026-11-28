@@ -3,13 +3,15 @@
 ## Options
 
 **Settings → Devices & services → Anker eufy Home Security → Configure**. The options
-sit in six collapsible sections.
+sit in seven collapsible sections.
 
 | Section | Option | Default | Description |
 |---|---|---|---|
 | Detections and alarm | Detection hold (seconds) | 10 | 5–300. How long a detection sensor stays on; the HomeBase never reports a detection's end |
 | | Alarm safety-net timeout (minutes) | 10 | 1–60. Ends Triggered or Pending if the HomeBase never reports the alarm's end |
 | | Repair when a security mode holds detections back | On | The repair naming cameras whose detections the security mode in force holds back. Off removes it and raises none; each camera's **Detections in current mode** sensor still shows it. See [Detections in the security mode](#detections-in-the-security-mode) |
+| Camera activity polling | Enable fast camera activity polling | Off | Check camera activity more frequently; see [Optional faster camera activity polling](#optional-faster-camera-activity-polling) |
+| | Activity polling interval (seconds) | 5 | 1–44 seconds when enabled; continuously connected stations only |
 | Camera images | Event image | Thumbnail, then HD | What a detection and **Refresh event image** show; see [Camera images](#camera-images) |
 | | Refresh event image keyframe | 1 | 1–5. Selects the keyframe for Refresh event image unless Event image is Thumbnail only. Later keyframes take longer and can delay image fetches for other cameras on the same HomeBase. Short recordings use their last keyframe; detection images are unchanged |
 | | Live snapshot for cameras without a detection image | Off | A camera with live video and without a detection image takes one live still, at most every 5 min. Wakes battery cameras |
@@ -36,7 +38,8 @@ reloads the integration.
   except Off and Geofencing, Schedule and the Custom modes included, under their names
   (in an automation: `select.select_option`). It shows the selected mode (Schedule while
   a schedule runs); the panel shows the mode in force.
-- A mode changed in the eufy app shows within 45 s.
+- A mode changed in the eufy app is reflected by the next scheduled station read
+  (45 seconds by default, faster when configured), or sooner if the HomeBase reports it.
 - **Entry delay:** when an armed HomeBase starts its alarm delay for a trigger (an
   entry sensor's door opened in a mode with a delay), the panel shows **Pending**
   with the attributes `delay_seconds` (the delay) and `delay_until` (when it runs
@@ -44,7 +47,7 @@ reloads the integration.
   - the alarm sounds: **Triggered**, as for any alarm;
   - the HomeBase ends the delay without an alarm: the mode again;
   - a disarm in Home Assistant, on a keypad or in the eufy app: **Disarmed** as soon
-    as the HomeBase reports it (its own report comes at once; otherwise the 45 s
+    as the HomeBase reports it (its own report comes at once; otherwise the next scheduled station
     refresh shows it);
   - another trigger during the delay: Pending runs to whichever end is later;
   - nothing more is heard: Pending ends on its own 2 s after `delay_until` (the
@@ -178,23 +181,91 @@ entity. A detection turns on only the sensor of its own kind (a person detection
 leaves Motion off) for the **Detection hold** seconds; the event entity fires for every
 kind, so an automation for "anything detected" triggers on it.
 
-For a camera whose mode sends no detections (below), the **Recorded events** counter
-still rises with each recording: see [Automation triggers](#automation-triggers).
+When detection notifications are disabled, supported cameras can still report
+local activity using the events described below.
+
+### Local camera activity events
+
+Two additional event entities let Home Assistant respond to activity
+from supported cameras without relying on cloud notifications:
+
+- **Motion Activity:** reports newly observed motion-related activity.
+- **Recording Activity:** reports newly observed recording activity.
+
+Both complement the existing **Detection** event and can work even
+when Notification is switched off in the eufy app's security mode.
+This has been verified on a HomeBase 2 with cloud push disabled.
+
+Activity is normally checked every **45 seconds**. You can enable
+faster polling in the integration configuration for more responsive
+automations.
+
+Use these events directly in [automations](#recording-activity-event).
+Separate diagnostic counter sensors are not required.
+
+#### Optional faster camera activity polling
+
+Open **Settings → Devices & services → Anker eufy Home Security →
+Configure → Camera activity polling**.
+
+- **Enable fast camera activity polling:** off by default.
+- **Activity polling interval (seconds):** 1–44 seconds; 5 by default.
+
+Start with 5 seconds. Faster polling applies to continuously connected
+stations, including HomeBases. Changing these options reloads the
+integration.
+
+Each check reads the status of the station and its paired devices.
+Shorter intervals increase network traffic, station workload and CPU
+usage. One HomeBase 2 test returned approximately 51 KB per read.
+One-second polling has only been tested on that HomeBase 2 setup.
+
+Stations that connect on demand retain their normal polling interval
+and are not woken by this option.
+
+#### Event details and limitations
+
+These events use activity counters reported locally by the cameras.
+
+- Motion Activity may include triggers subsequently discarded by the
+  camera. It does not identify a person, vehicle or other detection type.
+- Recording Activity does not guarantee that a recording has finished
+  or is ready for playback.
+- Activity initiated by linked cameras may also be reported. The
+  originating camera cannot be identified.
+- Both entities use the event type `counted`. Several activities
+  observed together produce one event with a `count` attribute.
+- `observed_at` is the UTC observation time, not the original time
+  of the individual detection or recording.
+
+Initial readings, counter resets and recovery after loss of counter
+availability or connection state establish fresh baselines without
+firing activity events.
+
+The entities are offered for camera types that receive the Detection
+event. Whether activity is reported depends on the camera, station
+and firmware. An entity may remain unknown if the relevant activity
+information is not reported.
+
+Faster polling cannot guarantee a specific response time. Existing
+Detection events remain independent.
 
 ### Detections in the security mode
 
 In the eufy app each camera has a **Notification** switch per security mode (Security
 mode → the mode → the camera). With it off, the station sends none of that camera's
-detections while the mode is in force: its detection sensors and **Detection** event stay
-unchanged, and the camera still records. Turning Notification on also notifies your phone.
-Seen on HomeBase 3 stations; other stations follow the eufy app's mode settings, not tested.
+individual detection notifications while the mode is in force: its conventional
+detection sensors and **Detection** event stay unchanged. Recording can continue
+according to the camera's mode settings. Turning Notification on also notifies your phone.
+Seen on HomeBase 3 stations. Local activity events with Notification switched off
+have also been verified on a HomeBase 2.
 
 Each camera and doorbell has a **Detections in current mode** diagnostic sensor:
 
 | State | Meaning |
 |---|---|
 | `sent` | Notification is on for the device in the mode in force |
-| `not_sent_in_mode` | Notification is off: no detections from it while this mode is in force |
+| `not_sent_in_mode` | Notification is off: no individual detection notifications from it while this mode is in force |
 | `unknown` | not known: no mode settings reported yet, the mode in force unknown, or a mode without per-device settings (Geofencing) |
 
 Attributes: `mode` (the mode in force) and `sending_modes` (the armed modes that send
@@ -540,7 +611,9 @@ push. Whether a HomeBase 3 also delivers these events over LAN is unverified.
   that does not send them over the LAN: a standalone camera, a HomeBase 2 and its
   cameras, or a station model not yet checked. A HomeBase 3 reports its cameras'
   detections over the LAN without it.
-- While it is off and such a station is set up, the repair **eufy detections need
+- Motion Activity and Recording Activity do not require cloud push.
+  See [Local camera activity events](#local-camera-activity-events).
+- While it is off and such a station is set up, the repair **eufy detection notifications need
   cloud push** names the stations; its **Fix** switches the option on and reloads.
 - A detection that arrives both over the LAN and from the cloud fires once. When a
   later push of the same detection names a more specific kind (motion, then a
@@ -567,7 +640,8 @@ push. Whether a HomeBase 3 also delivers these events over LAN is unverified.
 
 ## Power and storage state
 
-Read from the HomeBase's parameter report, refreshed every 45 s; nothing wakes a
+Read from the HomeBase's parameter report, refreshed every 45 seconds by
+default (or faster on eligible stations when configured); nothing wakes a
 camera. Each entity appears once its device reports the value; a value its device
 stops reporting shows unknown. The code meanings are declared from eufy's app code,
 not checked against the app's display.
@@ -622,7 +696,37 @@ HomeBase (version strings by parameter id; the subsystems are unnamed) and
 One trigger per subsection; replace the entity ids with your own. To add one, open a pull
 request that edits this section.
 
+### Recording Activity event
+
+Use the camera's **Recording Activity** event directly:
+
+```yaml
+triggers:
+  - trigger: event.received
+    target:
+      entity_id: event.front_door_recording_activity
+    options:
+      event_type:
+        - counted
+actions:
+  - action: button.press
+    target:
+      entity_id: button.front_door_refresh_event_image
+```
+
+This automation requests the camera's latest event image when recording
+activity is observed. Use your camera's actual event and refresh button
+entity IDs. The newest recording may not yet be ready when the event fires.
+You can also use a notification action instead of refreshing the image.
+For motion activity, use its **Motion Activity** event instead.
+
+See [Local camera activity events](#local-camera-activity-events)
+for attributes and limitations.
+
 ### A recording was counted
+
+Where the diagnostic counter sensor is available, the following alternative
+trigger can also be used.
 
 The camera's **Recorded events** sensor rises when the camera records. It works in a
 security mode whose Notification switch is off, where the **Detection** event does not
@@ -648,10 +752,12 @@ actions:
 
 - `not_from` and the condition skip a restart or reload (the change to and from
   unavailable, the entity added or removed) and the counter's reset after a USB charge.
-- The station counts a recording some seconds after it starts, and the sensor shows the
-  count at the next refresh (45 s), so the trigger fires up to about a minute after the
-  recording started. Several recordings between two refreshes fire once; `to - from` is
-  their number.
+- The station counts a recording some seconds after it starts. The sensor shows the
+  count at the next station refresh: normally every 45 seconds, or at the configured
+  faster interval for an eligible station when fast camera activity polling is enabled.
+  Actual notification delay also depends on when the station updates its counter,
+  so the polling interval is not a guaranteed detection latency. Several recordings
+  between refreshes fire once; `to - from` is their number.
 - It carries no time, kind, picture or clip. Where the **Detection** event fires, an
   automation on both notifies twice.
 
@@ -765,7 +871,7 @@ the camera and its settings. The limits above apply.
   settings page is listed under Diagnostic. A
   status the device has not reported shows unknown. The door (and tamper) state
   follows each open and close as the HomeBase reports it, without waiting for the
-  45 s refresh.
+  scheduled station refresh.
 - A setting it can only read but the app offers as a control is a diagnostic sensor
   or binary sensor, disabled until you enable it. A value the app does not show, one
   another entity already gives (battery, firmware update in progress), a status made

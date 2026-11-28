@@ -67,6 +67,7 @@ from .const import (
 )
 from .coordinator import StationCoordinator
 from .entity import EufyDeviceEntity, EufyPushAvailability, EufyStationEntity
+from .event_activity import EufyDetectedEventsCountedEvent, EufyRecordedEventsCountedEvent
 
 if TYPE_CHECKING:
     from .runtime import EufyConfigEntry
@@ -81,7 +82,7 @@ async def async_setup_entry(
     entry: EufyConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Add each station's alarm and arming events, then its devices' detection and ring events."""
+    """Add each station's alarm and arming events, then its devices' detection, activity and ring events."""
     del hass  # the coordinators carry everything this platform needs
     entities: list[EventEntity] = []
     for coordinator in entry.runtime_data.coordinators.values():
@@ -90,6 +91,8 @@ async def async_setup_entry(
         for device_sn, kind in detections.paired_device_kinds(coordinator.station).items():
             if detections.has_detection_entities(kind):
                 entities.append(EufyDetectionEvent(coordinator, device_sn))
+                entities.append(EufyDetectedEventsCountedEvent(coordinator, device_sn))
+                entities.append(EufyRecordedEventsCountedEvent(coordinator, device_sn))
             elif detections.has_motion_sensor_entities(device_sn):
                 entities.append(EufyMotionSensorEvent(coordinator, device_sn))
             if detections.has_doorbell_entity(device_sn):

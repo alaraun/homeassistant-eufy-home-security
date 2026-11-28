@@ -1,4 +1,4 @@
-"""The entry's sixteen options, driven through the real options flow.
+"""The entry's eighteen options, driven through the real options flow.
 
 Each option but the recording length and the sessions per HomeBase is read once at
 setup, so the automatic reload is what applies a change.
@@ -7,6 +7,7 @@ setup, so the automatic reload is what applies a change.
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,8 @@ from custom_components.eufy_home_security.const import (
     CONF_EVENT_HISTORY_DAYS,
     CONF_EVENT_VIDEOS,
     CONF_EXTRA_COUNTRIES,
+    CONF_FAST_ACTIVITY_POLL,
+    CONF_FAST_ACTIVITY_POLL_INTERVAL,
     CONF_FULL_RESOLUTION_CAPTURE,
     CONF_LIVE_SNAPSHOT,
     CONF_MODE_HOLDS_DETECTIONS_REPAIR,
@@ -52,9 +55,11 @@ from custom_components.eufy_home_security.const import (
     DEFAULT_ALARM_TIMEOUT_MINUTES,
     DEFAULT_DETECTION_HOLD_SECONDS,
     DEFAULT_EVENT_HISTORY_DAYS,
+    DEFAULT_FAST_ACTIVITY_POLL_SECONDS,
     DEFAULT_RECORD_LENGTH_SECONDS,
     DEFAULT_REFRESH_KEYFRAME,
     DOMAIN,
+    OPTIONS_SECTION_CAMERA_ACTIVITY,
     OPTIONS_SECTION_CAMERA_IMAGES,
     OPTIONS_SECTION_DETECTIONS,
     OPTIONS_SECTION_EUFY_ACCOUNT,
@@ -115,12 +120,13 @@ async def test_the_options_form_offers_its_sixteen_options_with_their_defaults(
     sections = result["data_schema"].schema
     assert [str(name) for name in sections] == [
         OPTIONS_SECTION_DETECTIONS,
+        OPTIONS_SECTION_CAMERA_ACTIVITY,
         OPTIONS_SECTION_CAMERA_IMAGES,
         OPTIONS_SECTION_LIVE_VIEW,
         OPTIONS_SECTION_HISTORY,
         OPTIONS_SECTION_EUFY_ACCOUNT,
         OPTIONS_SECTION_MORE_COUNTRIES,
-    ], "the options form does not show its six sections, in order"
+    ], "the options form does not show its seven sections, in order"
     assert all(
         isinstance(group, section) and group.options["collapsed"] for group in sections.values()
     ), "every options section starts collapsed"
@@ -133,6 +139,8 @@ async def test_the_options_form_offers_its_sixteen_options_with_their_defaults(
         CONF_DETECTION_HOLD,
         CONF_ALARM_TIMEOUT,
         CONF_MODE_HOLDS_DETECTIONS_REPAIR,
+        CONF_FAST_ACTIVITY_POLL,
+        CONF_FAST_ACTIVITY_POLL_INTERVAL,
         CONF_CAMERA_IMAGE,
         CONF_REFRESH_KEYFRAME,
         CONF_LIVE_SNAPSHOT,
@@ -146,11 +154,13 @@ async def test_the_options_form_offers_its_sixteen_options_with_their_defaults(
         CONF_CLOUD_PUSH,
         CONF_EXTRA_COUNTRIES,
         CONF_SCAN_REGIONS,
-    ], "the options form does not offer exactly its sixteen options, in order"
+    ], "the options form does not offer exactly its eighteen options, in order"
     (
         hold,
         timeout,
         repair,
+        fast_enabled,
+        fast_interval,
         camera_image,
         refresh_keyframe,
         live,
@@ -168,6 +178,8 @@ async def test_the_options_form_offers_its_sixteen_options_with_their_defaults(
     assert hold.default() == DEFAULT_DETECTION_HOLD_SECONDS == 10
     assert timeout.default() == DEFAULT_ALARM_TIMEOUT_MINUTES == 10
     assert repair.default() is True, "the mode-holds-detections repair shows by default"
+    assert fast_enabled.default() is False, "fast full-station polling must be opt-in"
+    assert fast_interval.default() == DEFAULT_FAST_ACTIVITY_POLL_SECONDS == 5
     assert camera_image.default() == "hd", "the camera image does not default to HD"
     assert refresh_keyframe.default() == DEFAULT_REFRESH_KEYFRAME == 1
     assert live.default() is False, "the live snapshot wakes battery cameras: opt-in only"
@@ -268,14 +280,14 @@ async def test_hold_and_timeout_outside_their_ranges_are_refused(
     await hass.async_block_till_done()
 
 
-async def test_the_saved_options_are_exactly_the_sixteen_offered(
+async def test_the_saved_options_are_exactly_the_eighteen_offered(
     hass: HomeAssistant,
     fake_station: FakeStation,
     built_clients: list[EufySecurity],
     seed_warm_cache: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The save is rebuilt from the sixteen keys, seven bools, six ints, a choice, a
+    """The save is rebuilt from the eighteen keys, eight bools, seven ints, a choice, a
     country and a country list; it reloads."""
 
     async def no_push(_eufy: EufySecurity) -> None:
@@ -292,6 +304,8 @@ async def test_the_saved_options_are_exactly_the_sixteen_offered(
             CONF_DETECTION_HOLD: 20.0,
             CONF_ALARM_TIMEOUT: 5.0,
             CONF_MODE_HOLDS_DETECTIONS_REPAIR: False,
+            CONF_FAST_ACTIVITY_POLL: True,
+            CONF_FAST_ACTIVITY_POLL_INTERVAL: 8.7,
             CONF_CAMERA_IMAGE: "hd_only",
             CONF_REFRESH_KEYFRAME: 2.7,
             CONF_LIVE_SNAPSHOT: True,
@@ -312,6 +326,8 @@ async def test_the_saved_options_are_exactly_the_sixteen_offered(
         CONF_DETECTION_HOLD: 20,
         CONF_ALARM_TIMEOUT: 5,
         CONF_MODE_HOLDS_DETECTIONS_REPAIR: False,
+        CONF_FAST_ACTIVITY_POLL: True,
+        CONF_FAST_ACTIVITY_POLL_INTERVAL: 9,
         CONF_CAMERA_IMAGE: "hd_only",
         CONF_REFRESH_KEYFRAME: 3,
         CONF_LIVE_SNAPSHOT: True,
@@ -326,6 +342,11 @@ async def test_the_saved_options_are_exactly_the_sixteen_offered(
         CONF_RECORD_LENGTH: 45,
         CONF_STATION_SESSIONS: 3,
     }
+    assert type(entry.options[CONF_FAST_ACTIVITY_POLL]) is bool
+    assert type(entry.options[CONF_FAST_ACTIVITY_POLL_INTERVAL]) is int
+    assert entry.runtime_data.coordinators[SYNTHETIC.station_sn].update_interval == timedelta(
+        seconds=9
+    )
     assert type(entry.options[CONF_EVENT_HISTORY_DAYS]) is int
     assert type(entry.options[CONF_STATION_SESSIONS]) is int
     assert type(entry.options[CONF_CAMERA_IMAGE]) is str
