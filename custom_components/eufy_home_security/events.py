@@ -22,7 +22,7 @@ shows or what the user must be told:
   when a format finishes and when another client reads the record.
 
   None of these three goes through the coordinator's set-updated-data method, which
-  cancels and reschedules its timer: the 45 s poll stays authoritative for guard
+  cancels and reschedules its timer: the scheduled poll stays authoritative for guard
   mode, and the storage timer keeps its schedule.
 - ``ConnectionChanged`` drives availability once setup has made its first reads: a
   lost session marks the coordinator failed once it has stayed down for
@@ -71,6 +71,10 @@ shows or what the user must be told:
   picture also goes to the snapshot manager, enriching copies included. One the library
   must match to its recording (``Station.needs_recording_match``: a HomeBase 2's cloud
   push names none) goes to the recording matcher (``recording_match.py``).
+- ``DetectedEventsCounted`` and ``RecordedEventsCounted`` go to the camera's
+  activity entities on a private dispatcher signal, inside the consuming window
+  and only for a device belonging to the delivering station. The library tracks
+  baselines. These events have no detection or event-bus fallback.
 - ``AlarmChanged`` goes to that station's panel and alarm event on its alarm signal,
   inside the consuming window. The library has already authenticated and ordered
   it, so it needs no check here. Outside the window it is dropped: it is not a push,

@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from conftest import detection_event, entity_id_for, now_ms, set_up_warm
+from conftest import detection_event, entity_id_for, now_ms, record_states, set_up_warm
 from eufy_home_security import (
     DetectedEventsCounted,
     DetectionType,
@@ -57,6 +57,9 @@ async def test_aggregate_counter_motion_does_not_fire_the_original_detection(
     motion_id = _entity_id(hass, "detected_events_counted")
     detection_id = _entity_id(hass, "detection")
     recorded_id = _entity_id(hass, "recorded_events_counted")
+    motion_states = record_states(hass, motion_id)
+    recorded_states = record_states(hass, recorded_id)
+    detection_states = record_states(hass, detection_id)
     before_detection = hass.states.get(detection_id)
     assert before_detection is not None
     observed_at = datetime.now(UTC)
@@ -76,6 +79,9 @@ async def test_aggregate_counter_motion_does_not_fire_the_original_detection(
     assert "source" not in state.attributes
     assert state.attributes["count"] == 3
     assert state.attributes["observed_at"] == observed_at.isoformat()
+    assert motion_states == [state.state]
+    assert recorded_states == []
+    assert detection_states == []
     original = hass.states.get(detection_id)
     assert original is not None
     assert original.state == before_detection.state

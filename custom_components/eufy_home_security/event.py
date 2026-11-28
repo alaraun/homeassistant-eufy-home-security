@@ -82,7 +82,7 @@ async def async_setup_entry(
     entry: EufyConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Add each station's alarm and arming events, then its devices' detection and ring events."""
+    """Add each station's alarm and arming events, then its devices' detection, activity and ring events."""
     del hass  # the coordinators carry everything this platform needs
     entities: list[EventEntity] = []
     for coordinator in entry.runtime_data.coordinators.values():

@@ -10,7 +10,7 @@ sit in seven collapsible sections.
 | Detections and alarm | Detection hold (seconds) | 10 | 5–300. How long a detection sensor stays on; the HomeBase never reports a detection's end |
 | | Alarm safety-net timeout (minutes) | 10 | 1–60. Ends Triggered or Pending if the HomeBase never reports the alarm's end |
 | | Repair when a security mode holds detections back | On | The repair naming cameras whose detections the security mode in force holds back. Off removes it and raises none; each camera's **Detections in current mode** sensor still shows it. See [Detections in the security mode](#detections-in-the-security-mode) |
-| Camera activity polling | Enable fast camera activity polling | Off | Optional faster full-station reads for activity counters; see [Optional faster camera activity polling](#optional-faster-camera-activity-polling) |
+| Camera activity polling | Enable fast camera activity polling | Off | Check camera activity more frequently; see [Optional faster camera activity polling](#optional-faster-camera-activity-polling) |
 | | Activity polling interval (seconds) | 5 | 1–44 seconds when enabled; continuously connected stations only |
 | Camera images | Event image | Thumbnail, then HD | What a detection and **Refresh event image** show; see [Camera images](#camera-images) |
 | | Refresh event image keyframe | 1 | 1–5. Selects the keyframe for Refresh event image unless Event image is Thumbnail only. Later keyframes take longer and can delay image fetches for other cameras on the same HomeBase. Short recordings use their last keyframe; detection images are unchanged |
@@ -181,94 +181,74 @@ entity. A detection turns on only the sensor of its own kind (a person detection
 leaves Motion off) for the **Detection hold** seconds; the event entity fires for every
 kind, so an automation for "anything detected" triggers on it.
 
-For a camera whose mode sends no detections (below), the **Recorded events** counter
-still rises with each recording: see [Automation triggers](#automation-triggers).
+When detection notifications are disabled, supported cameras can still report
+local activity using the events described below.
 
-### Counter-derived camera activity events
+### Local camera activity events
 
-For supported cameras, two additional local event entities complement the
-existing **Detection** event:
+Two additional event entities let Home Assistant respond to activity
+from supported cameras without relying on cloud notifications:
 
-- **Motion Activity:** locally observed motion-related activity, based on
-  increases in the camera's detection counter.
-- **Recording Activity:** locally observed recording activity, based on
-  increases in the camera's recording counter.
+- **Motion Activity:** reports newly observed motion-related activity.
+- **Recording Activity:** reports newly observed recording activity.
 
-Both events use camera counters read locally through station polling,
-independently of cloud push and individual detection notifications.
-This has been verified on a HomeBase 2 with cloud push and Notification
-switched off.
+Both complement the existing **Detection** event and can work even
+when Notification is switched off in the eufy app's security mode.
+This has been verified on a HomeBase 2 with cloud push disabled.
 
-**Note:** Motion Activity and Recording Activity are polling-based events,
-not instant push notifications. Their responsiveness depends on the station's
-polling interval, which is 45 seconds by default. To observe activity sooner,
-enable **Enable fast camera activity polling** in the integration's configuration
-options. Five seconds is the recommended starting interval.
-See [Optional faster camera activity polling](#optional-faster-camera-activity-polling)
-for supported stations, configuration and resource implications.
+Activity is normally checked every **45 seconds**. You can enable
+faster polling in the integration configuration for more responsive
+automations.
 
-Use these event entities directly in automations. Separate counter sensor
-entities are not required, and faster polling is optional.
-
-They consume the library's `DetectedEventsCounted` (1192)
-and `RecordedEventsCounted` (1193) observations.
-
-The detected-events counter includes camera triggers that may subsequently be
-discarded. It does not confirm an accepted or classified detection. The
-recorded-events counter is independent and does not prove that a recording has
-finished or become available for playback.
-
-Linked-camera automations in the eufy app can also increase these counters.
-The events do not distinguish linked activity from direct detections or
-identify the originating camera.
-
-Each positive increase generates one aggregate event carrying `count` and
-`observed_at`. For example, an increase of +3 produces one event with `count: 3`,
-not three individually timestamped events. `observed_at` is the UTC time the
-library observed the increase, not the original detection or recording time.
-
-First readings, counter resets and recovery after loss of counter availability
-or connection state establish fresh baselines without generating activity events.
-These events are derived exclusively from counters: **there is no push fallback**. Existing
-push-delivered `SecurityEvent` detections remain independent.
-
-Counter observations require an updated station parameter snapshot. Reporting
-and latency depend on polling frequency, station model and firmware. These
-events do not remove the existing notification-delivery repair warning: detailed
-detection pushes remain unavailable when the HomeBase suppresses them.
+Use these events directly in [automations](#recording-activity-event).
+Separate diagnostic counter sensors are not required.
 
 #### Optional faster camera activity polling
 
-By default, each station coordinator refreshes its state every **45 seconds**.
-To observe changes to the camera activity counters sooner, open the eufy Home
-Security integration's **Configure** options and expand **Camera activity
-polling**:
+Open **Settings → Devices & services → Anker eufy Home Security →
+Configure → Camera activity polling**.
 
-- **Enable fast camera activity polling:** Off by default.
-- **Activity polling interval:** 1–44 seconds; 5 seconds by default when enabled.
+- **Enable fast camera activity polling:** off by default.
+- **Activity polling interval (seconds):** 1–44 seconds; 5 by default.
 
-The faster interval applies to continuously connected stations belonging to
-this integration entry. It replaces their normal 45-second coordinator interval;
-it does **not** add a second independent polling loop. Changing these options
-reloads the integration.
+Start with 5 seconds. Faster polling applies to continuously connected
+stations, including HomeBases. Changing these options reloads the
+integration.
 
-**Each refresh reads the full station parameter snapshot**, including all
-paired-device parameters, rather than only counters 1192 and 1193. Fast polling
-therefore increases local P2P traffic, station work and CPU usage. For context, one
-HomeBase 2 test returned roughly 51 KB per read; response sizes vary by
-station and firmware. One-second polling was tested on that HomeBase 2, but
-is not guaranteed to be suitable for other models. Choose a longer interval
-if responsiveness is less important than reducing station traffic.
-Five seconds is the recommended starting interval when enabling fast polling.
+Each check reads the status of the station and its paired devices.
+Shorter intervals increase network traffic, station workload and CPU
+usage. One HomeBase 2 test returned approximately 51 KB per read.
+One-second polling has only been tested on that HomeBase 2 setup.
 
-On-demand battery stations retain the normal coordinator interval. Their
-cached state is returned without waking them for a fresh read, so the fast
-option does not force those cameras awake.
+Stations that connect on demand retain their normal polling interval
+and are not woken by this option.
 
-Faster polling can reduce the delay between a counter increase becoming
-available and Home Assistant observing it. It cannot guarantee immediate
-notifications, determine the original event time, or turn aggregate counts
-into individual detection events. Existing detection pushes remain separate.
+#### Event details and limitations
+
+These events use activity counters reported locally by the cameras.
+
+- Motion Activity may include triggers subsequently discarded by the
+  camera. It does not identify a person, vehicle or other detection type.
+- Recording Activity does not guarantee that a recording has finished
+  or is ready for playback.
+- Activity initiated by linked cameras may also be reported. The
+  originating camera cannot be identified.
+- Both entities use the event type `counted`. Several activities
+  observed together produce one event with a `count` attribute.
+- `observed_at` is the UTC observation time, not the original time
+  of the individual detection or recording.
+
+Initial readings, counter resets and recovery after loss of counter
+availability or connection state establish fresh baselines without
+firing activity events.
+
+The entities are offered for camera types that receive the Detection
+event. Whether activity is reported depends on the camera, station
+and firmware. An entity may remain unknown if the relevant activity
+information is not reported.
+
+Faster polling cannot guarantee a specific response time. Existing
+Detection events remain independent.
 
 ### Detections in the security mode
 
@@ -277,7 +257,8 @@ mode → the mode → the camera). With it off, the station sends none of that c
 individual detection notifications while the mode is in force: its conventional
 detection sensors and **Detection** event stay unchanged. Recording can continue
 according to the camera's mode settings. Turning Notification on also notifies your phone.
-Seen on HomeBase 3 stations; other stations follow the eufy app's mode settings, not tested.
+Seen on HomeBase 3 stations. Local activity events with Notification switched off
+have also been verified on a HomeBase 2.
 
 Each camera and doorbell has a **Detections in current mode** diagnostic sensor:
 
@@ -630,6 +611,8 @@ push. Whether a HomeBase 3 also delivers these events over LAN is unverified.
   that does not send them over the LAN: a standalone camera, a HomeBase 2 and its
   cameras, or a station model not yet checked. A HomeBase 3 reports its cameras'
   detections over the LAN without it.
+- Motion Activity and Recording Activity do not require cloud push.
+  See [Local camera activity events](#local-camera-activity-events).
 - While it is off and such a station is set up, the repair **eufy detection notifications need
   cloud push** names the stations; its **Fix** switches the option on and reloads.
 - A detection that arrives both over the LAN and from the cloud fires once. When a
@@ -726,15 +709,18 @@ triggers:
       event_type:
         - counted
 actions:
-  - action: notify.notify
-    data:
-      message: Front door recording activity
+  - action: button.press
+    target:
+      entity_id: button.front_door_refresh_event_image
 ```
 
-Use your camera's actual entity ID and notification action.
+This automation requests the camera's latest event image when recording
+activity is observed. Use your camera's actual event and refresh button
+entity IDs. The newest recording may not yet be ready when the event fires.
+You can also use a notification action instead of refreshing the image.
 For motion activity, use its **Motion Activity** event instead.
 
-See [Counter-derived camera activity events](#counter-derived-camera-activity-events)
+See [Local camera activity events](#local-camera-activity-events)
 for attributes and limitations.
 
 ### A recording was counted
